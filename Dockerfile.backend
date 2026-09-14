@@ -1,0 +1,54 @@
+# syntax=docker/dockerfile:1
+
+FROM node:20-bookworm-slim AS build
+
+WORKDIR /app
+
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends ca-certificates openssl \
+  && rm -rf /var/lib/apt/lists/*
+
+COPY package*.json ./
+RUN npm install --omit=dev --ignore-scripts && mkdir -p node_modules
+
+COPY server.js ./
+COPY src ./src
+COPY scripts ./scripts
+COPY index.html 404.html styles.css standards.js app.js ./
+COPY modules ./modules
+COPY images ./images
+
+RUN npm run check
+
+FROM node:20-bookworm-slim AS runtime
+
+WORKDIR /app
+
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends ca-certificates openssl \
+  && rm -rf /var/lib/apt/lists/*
+
+ENV NODE_ENV=production \
+  HOST=0.0.0.0 \
+  PORT=5175 \
+  DATA_DIR=/app/data \
+  DATA_FILE=runtime/main-data.json \
+  PHOTO_DIR=/app/data/photos
+
+COPY --from=build /app/package*.json ./
+COPY --from=build /app/node_modules ./node_modules
+COPY --from=build /app/server.js ./server.js
+COPY --from=build /app/src ./src
+COPY --from=build /app/index.html /app/404.html /app/styles.css /app/standards.js /app/app.js ./
+COPY --from=build /app/modules ./modules
+COPY --from=build /app/images ./images
+
+RUN mkdir -p /app/data/photos \
+  && chown -R node:node /app/data
+
+USER node
+
+EXPOSE 5175
+
+# This project has no transpiled backend output; production runs the root entrypoint.
+CMD ["node", "server.js"]

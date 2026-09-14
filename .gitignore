@@ -1,0 +1,15 @@
+.env
+.env.*
+!.env.example
+node_modules/
+npm-debug.log*
+__pycache__/
+*.pyc
+dist/
+
+# Du lieu runtime: luu o thu muc bind mount ben ngoai, khong dua len GitHub.
+data/*
+!data/README.md
+!data/samples/
+!data/samples/**
+!data/seed-accounts.json

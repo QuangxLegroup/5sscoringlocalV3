@@ -1,0 +1,588 @@
+<!doctype html>
+<html lang="vi">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <base href="/">
+    <title>LeGroup 5S & Safety</title>
+    <link rel="icon" href="images/Logo.jpg">
+    <link rel="apple-touch-icon" href="images/Logo.jpg">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="styles.css">
+  </head>
+  <body>
+    <section class="loading-screen" id="loading-screen">
+      <div class="loading-card">
+        <img class="brand-logo" src="images/Logo.jpg" alt="LeGroup">
+        <h1>LeGroup 5S</h1>
+        <div class="loading-spinner"></div>
+        <p>Đang kết nối dữ liệu...</p>
+      </div>
+    </section>
+
+    <section class="login-screen" id="login-screen" hidden>
+      <form class="login-card" id="login-form">
+        <div class="brand-line">
+          <img class="brand-logo" src="images/Logo.jpg" alt="LeGroup">
+          <div>
+            <p class="eyebrow">Hệ thống quản trị</p>
+            <h1>Đăng nhập 5S & AT</h1>
+          </div>
+        </div>
+
+        <label>
+          <span>Tài khoản</span>
+          <input id="login-username" type="text" autocomplete="username" required>
+        </label>
+
+        <label>
+          <span>Mật khẩu</span>
+          <input id="login-password" type="password" autocomplete="current-password" required>
+        </label>
+
+        <button class="primary-button" type="submit">Vào hệ thống</button>
+      </form>
+    </section>
+
+    <div class="app-shell" id="app-shell" hidden>
+      <!-- SIDEBAR CỐ ĐỊNH CHUẨN GIAO DIỆN MỚI -->
+      <aside class="app-sidebar">
+        <div class="sidebar-brand">
+          <button class="brand-home-button" type="button" data-action="go-home" aria-label="Về trang chủ">
+            <img class="brand-logo" src="images/Logo.jpg" alt="LeGroup">
+            <div class="brand-meta">
+              <span class="eyebrow">LeGroup 5S</span>
+              <strong class="brand-name">Operations</strong>
+            </div>
+          </button>
+          <button class="sidebar-toggle-btn" id="sidebar-toggle-btn" type="button" title="Thu gọn thanh bên" aria-label="Thu gọn thanh bên">
+            <svg class="toggle-icon" viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" stroke-width="2.2" fill="none" stroke-linecap="round" stroke-linejoin="round">
+              <polyline points="15 18 9 12 15 6"></polyline>
+            </svg>
+          </button>
+        </div>
+
+        <div class="sidebar-nav">
+          <!-- NHÓM VẬN HÀNH 5S -->
+          <div class="nav-group nav-group-5s">
+            <div class="nav-group-title">Vận hành 5S</div>
+            <nav class="tabs" aria-label="Điều hướng 5S">
+              <button class="tab-button admin-only" type="button" data-tab="home">
+                <span class="tab-icon">🏠</span>
+                <span>Trang chủ</span>
+              </button>
+              <button class="tab-button assessor-only" type="button" data-tab="assessor">
+                <span class="tab-icon">📝</span>
+                <span>Phiếu chấm</span>
+              </button>
+              <button class="tab-button admin-only five-s-access-only" type="button" data-tab="summary">
+                <span class="tab-icon">📊</span>
+                <span>Tổng hợp điểm 5S</span>
+              </button>
+            </nav>
+          </div>
+
+          <!-- NHÓM AN TOÀN LAO ĐỘNG -->
+          <div class="nav-group nav-group-safety">
+            <div class="nav-group-title">An toàn lao động</div>
+            <nav class="tabs" aria-label="Điều hướng An Toàn">
+              <button class="tab-button safety-access-only" type="button" data-tab="safety" data-safety-report="assessment">
+                <span class="tab-icon">🛡️</span>
+                <span>Đánh giá an toàn</span>
+              </button>
+              <button class="tab-button admin-only" type="button" data-tab="safety" data-safety-report="identification">
+                <span class="tab-icon">⚠️</span>
+                <span>Tổng hợp nhận diện nguy cơ mất an toàn nhà máy</span>
+              </button>
+              <button class="tab-button admin-only" type="button" data-tab="safety" data-safety-report="factory">
+                <span class="tab-icon">🏭</span>
+                <span>Tổng hợp nguy cơ mất an toàn nhà máy</span>
+              </button>
+              <button class="tab-button admin-only" type="button" data-tab="issue-stats">
+                <span class="tab-icon">📈</span>
+                <span>Thống kê AT</span>
+              </button>
+            </nav>
+          </div>
+
+          <!-- NHÓM QUẢN TRỊ HỆ THỐNG -->
+          <div class="nav-group admin-only">
+            <div class="nav-group-title">Quản trị hệ thống</div>
+            <nav class="tabs" aria-label="Điều hướng Quản trị">
+              <button class="tab-button admin-only" type="button" data-tab="catalog">
+                <span class="tab-icon">🗂️</span>
+                <span>Danh mục</span>
+              </button>
+              <button class="tab-button admin-only" type="button" data-tab="accounts">
+                <span class="tab-icon">👥</span>
+                <span>Tài khoản</span>
+              </button>
+            </nav>
+          </div>
+        </div>
+
+        <div class="sidebar-footer">
+          <div class="status-indicator">
+            <span class="status-dot"></span>
+            <span>Dữ liệu nội bộ (Local)</span>
+          </div>
+        </div>
+      </aside>
+
+      <!-- MAIN WRAPPER -->
+      <div class="app-main-wrapper">
+        <header class="app-header">
+          <div class="header-left-box">
+            <button class="cyber-back-hub-btn" type="button" data-go-tab="home" title="Trở về Trung Tâm Điều Hành Cyber 5S & Safety">
+              <span class="cyber-back-icon">◀</span>
+              <span>Về Cyber Hub</span>
+            </button>
+            <h1 id="app-title">Đánh giá 5S/An toàn</h1>
+          </div>
+
+          <nav class="header-quick-nav" aria-label="Điều hướng nhanh">
+            <button class="tab-button assessor-only" type="button" data-tab="assessor" title="Phiếu chấm điểm 5S">
+              <span class="tab-icon">📝</span>
+              <span>Phiếu chấm</span>
+            </button>
+            <button class="tab-button admin-only five-s-access-only" type="button" data-tab="summary" title="Tổng hợp điểm 5S">
+              <span class="tab-icon">📊</span>
+              <span>Bảng Điểm 5S</span>
+            </button>
+            <button class="tab-button safety-access-only" type="button" data-tab="safety" data-safety-report="assessment" title="Đánh giá an toàn">
+              <span class="tab-icon">🛡️</span>
+              <span>Đánh giá AT</span>
+            </button>
+            <button class="tab-button admin-only" type="button" data-tab="safety" data-safety-report="identification" title="Tổng hợp nhận diện nguy cơ mất an toàn">
+              <span class="tab-icon">⚠️</span>
+              <span>Nhận diện</span>
+            </button>
+            <button class="tab-button admin-only" type="button" data-tab="safety" data-safety-report="factory" title="Tổng hợp nguy cơ mất an toàn nhà máy">
+              <span class="tab-icon">🏭</span>
+              <span>Nguy cơ NM</span>
+            </button>
+            <button class="tab-button admin-only" type="button" data-tab="issue-stats" title="Thống kê an toàn">
+              <span class="tab-icon">📈</span>
+              <span>Thống kê AT</span>
+            </button>
+          </nav>
+
+          <div class="header-right-tools">
+            <div class="user-box" id="user-box">
+              <button class="account-menu-button" id="account-menu-button" type="button" aria-haspopup="true" aria-expanded="false">
+                <span class="account-avatar" id="account-avatar">A</span>
+                <span class="account-summary">
+                  <strong id="current-user-name"></strong>
+                  <span id="current-user-role"></span>
+                </span>
+              </button>
+              <div class="account-menu" id="account-menu" hidden>
+                <div class="account-menu-profile">
+                  <span class="account-avatar large" id="account-menu-avatar">A</span>
+                  <div>
+                    <strong id="account-menu-name"></strong>
+                    <span id="account-menu-username"></span>
+                  </div>
+                </div>
+                <div class="account-menu-divider admin-only"></div>
+                <button class="account-menu-item admin-only" type="button" data-go-tab="accounts">
+                  <span>👤</span>
+                  Cấp tài khoản
+                </button>
+                <button class="account-menu-item admin-only" type="button" data-go-tab="catalog">
+                  <span>🗂</span>
+                  Danh mục
+                </button>
+
+                <button class="account-menu-item admin-only" type="button" data-action="show-edit-history">
+                  <span>🕘</span>
+                  Lịch sử chỉnh sửa
+                </button>
+                <button class="account-menu-item admin-only" type="button" data-action="show-problem-zone-emails">
+                  <span>📋</span>
+                  Email báo cáo zone có vấn đề
+                </button>
+                <div class="account-menu-divider"></div>
+                <button class="account-menu-logout" id="logout-button" type="button">
+                  <span>↪</span>
+                  Đăng xuất
+                </button>
+              </div>
+            </div>
+          </div>
+        </header>
+
+        <main class="app-main">
+          <!-- TAB HOME -->
+          <section class="tab-panel" id="tab-home">
+            <section class="admin-home">
+              <div class="admin-home-cards" id="admin-home-cards"></div>
+            </section>
+          </section>
+
+          <!-- TAB ASSESSOR -->
+          <section class="tab-panel assessor-only" id="tab-assessor">
+            <div class="toolbar assessor-toolbar">
+              <label>
+                <span>Kỳ đánh giá</span>
+                <select id="assessor-period-select"></select>
+              </label>
+              <label>
+                <span>Zone cần chấm</span>
+                <select id="assessor-area-select"></select>
+              </label>
+              <div class="permission-note" id="assessor-progress"></div>
+            </div>
+
+            <section class="sheet-panel">
+              <div class="section-heading">
+                <h2 id="assessor-title">Phiếu chấm 5S</h2>
+              </div>
+              <div class="assessor-sheet" id="assessor-sheet"></div>
+            </section>
+          </section>
+
+          <!-- TAB SUMMARY -->
+          <section class="tab-panel five-s-access-only" id="tab-summary">
+            <div class="toolbar compact-toolbar summary-toolbar">
+              <label>
+                <span>Kỳ đánh giá</span>
+                <select id="summary-period-select"></select>
+              </label>
+              <label class="admin-only source-toggle">
+                <span>Bảng điểm</span>
+                <select id="summary-score-source"></select>
+              </label>
+              <div class="permission-note manager-only" id="assigned-zone-summary"></div>
+              <button class="primary-button admin-only" id="export-excel-button" type="button">Xuất Excel</button>
+              <button class="secondary-button admin-only" type="button" data-action="import-page-json" data-page="five-s">Import</button>
+              <button class="secondary-button admin-only" type="button" data-action="export-page-json" data-page="five-s">Export</button>
+            </div>
+
+            <section class="sheet-panel">
+              <div class="section-heading">
+                <h2 id="summary-title">Điểm Chi Tiết Theo Từng Hạng Mục</h2>
+              </div>
+              <div class="table-wrap wide-table-wrap" data-drag-scroll>
+                <table class="matrix-table" id="summary-table"></table>
+              </div>
+            </section>
+          </section>
+
+          <!-- TAB SAFETY -->
+          <section class="tab-panel safety-access-only" id="tab-safety">
+            <div class="toolbar safety-toolbar">
+              <label>
+                <span>Kỳ nhập liệu</span>
+                <select id="safety-period-select"></select>
+              </label>
+              <label>
+                <span>Năm báo cáo</span>
+                <select id="safety-year-filter"></select>
+              </label>
+              <label>
+                <span>Tháng báo cáo</span>
+                <select id="safety-month-filter"></select>
+              </label>
+              <label>
+                <span>Zone</span>
+                <select id="safety-area-filter"></select>
+              </label>
+              <label>
+                <span>Bộ phận năm</span>
+                <select id="safety-department-filter"></select>
+              </label>
+              <div class="safety-actions">
+                <button class="primary-button safety-access-only" id="add-safety-record-button" type="button">Thêm ĐG AT</button>
+                <button class="secondary-button admin-only" id="edit-safety-meta-button" type="button">Thiết lập báo cáo</button>
+                <button class="secondary-button admin-only" id="export-safety-excel-button" type="button">Xuất ĐG AT</button>
+                <button class="secondary-button admin-only" type="button" data-action="import-page-json">Import</button>
+                <button class="secondary-button admin-only" type="button" data-action="export-page-json">Export</button>
+                <button class="primary-button admin-only" id="send-safety-mail-button" type="button">Gửi báo cáo</button>
+              </div>
+            </div>
+
+            <section class="safety-dashboard-grid" id="safety-dashboard"></section>
+          </section>
+
+          <!-- TAB ISSUE STATS -->
+          <section class="tab-panel admin-only" id="tab-issue-stats">
+            <div class="toolbar dashboard-toolbar">
+              <label>
+                <span>Kỳ đánh giá</span>
+                <select id="issue-stats-period-select"></select>
+              </label>
+            </div>
+
+            <section class="stats-grid" id="issue-stats-grid"></section>
+
+            <div class="stats-tables-grid">
+              <section class="panel">
+                <div class="section-heading">
+                  <h2>Vấn đề theo zone</h2>
+                </div>
+                <div class="compact-list" id="issue-zone-stats"></div>
+              </section>
+
+              <section class="panel">
+                <div class="section-heading">
+                  <h2>Vấn đề theo STOP 6</h2>
+                </div>
+                <div class="compact-list" id="issue-type-stats"></div>
+              </section>
+            </div>
+          </section>
+
+          <!-- TAB CATALOG -->
+          <section class="tab-panel admin-only" id="tab-catalog">
+            <div class="scope-card-layout">
+              <div class="scope-card-row" id="catalog-scope-switch"></div>
+              <section class="scope-detail-card" id="catalog-scope-detail" aria-label="Thiết lập danh mục đang chọn" hidden>
+                <div class="catalog-grid">
+                  <section class="panel catalog-period-panel">
+                    <div class="section-heading">
+                      <h2>Kỳ đánh giá</h2>
+                    </div>
+                    <form class="form-grid split-period-form" id="period-5s-form">
+                      <label>
+                        <span>Tháng 5S</span>
+                        <input id="period-5s-month" type="number" min="1" max="12" required>
+                      </label>
+                      <label>
+                        <span>Năm 5S</span>
+                        <input id="period-5s-year" type="number" min="2020" max="2100" required>
+                      </label>
+                      <label class="full-span">
+                        <span>Danh mục người của kỳ mới</span>
+                        <select id="period-5s-catalog-mode">
+                          <option value="copy">Dùng danh mục kỳ đang mở</option>
+                          <option value="reset-people">Thiết lập lại người cho kỳ mới</option>
+                        </select>
+                      </label>
+                      <button class="primary-button full-span" type="submit">Tạo kỳ chấm 5S</button>
+                    </form>
+                    <div class="compact-list period-section-list" id="period-5s-list"></div>
+                    <form class="form-grid split-period-form" id="period-safety-form">
+                      <label class="full-span">
+                        <span>Ngày đánh giá an toàn</span>
+                        <input id="period-safety-date" type="date" required>
+                      </label>
+                      <label class="full-span">
+                        <span>Danh mục người của kỳ mới</span>
+                        <select id="period-safety-catalog-mode">
+                          <option value="copy">Dùng danh mục kỳ đang mở</option>
+                          <option value="reset-people">Thiết lập lại người cho kỳ mới</option>
+                        </select>
+                      </label>
+                      <button class="primary-button full-span" type="submit">Tạo kỳ đánh giá an toàn</button>
+                    </form>
+                    <div class="compact-list period-section-list" id="period-safety-list"></div>
+                  </section>
+
+                  <section class="panel catalog-people-panel">
+                    <div class="section-heading">
+                      <h2>Người phụ trách zone / người được đánh giá</h2>
+                    </div>
+                    <form class="stacked-form" id="scorer-form">
+                      <label>
+                        <span>Tên người phụ trách zone / người được đánh giá</span>
+                        <input id="scorer-name" type="text" autocomplete="off" required>
+                      </label>
+                      <button class="primary-button" type="submit">Thêm người</button>
+                    </form>
+                    <div class="compact-list" id="scorer-list"></div>
+                  </section>
+
+                  <section class="panel department-head-email-panel">
+                    <div class="section-heading">
+                      <h2>Email trưởng phòng</h2>
+                    </div>
+                    <form class="stacked-form" id="department-head-email-form">
+                      <label>
+                        <span>Trưởng phòng</span>
+                        <select id="department-head-email-name" required></select>
+                      </label>
+                      <label>
+                        <span>Email trưởng phòng</span>
+                        <textarea id="department-head-emails" placeholder="vd: truongphong1@congty.com, truongphong2@congty.com"></textarea>
+                      </label>
+                      <button class="primary-button" type="submit">Lưu email trưởng phòng</button>
+                    </form>
+                    <div class="compact-list" id="department-head-email-list"></div>
+                  </section>
+
+                  <section class="panel catalog-assessor-panel">
+                    <div class="section-heading">
+                      <h2>Assessor</h2>
+                    </div>
+                    <form class="stacked-form" id="catalog-assessor-form">
+                      <label>
+                        <span>Tên assessor</span>
+                        <input id="catalog-assessor-name" type="text" autocomplete="off" required>
+                      </label>
+                      <button class="primary-button" type="submit">Thêm assessor</button>
+                    </form>
+                    <div class="compact-list" id="catalog-assessor-list"></div>
+                  </section>
+
+                  <section class="panel catalog-area-panel">
+                    <div class="section-heading">
+                      <h2>Zone và trưởng phòng</h2>
+                    </div>
+                    <form class="stacked-form" id="area-form">
+                      <label>
+                        <span>Mã zone</span>
+                        <input id="area-code" type="text" autocomplete="off" required>
+                      </label>
+                      <label>
+                        <span>Trưởng phòng</span>
+                        <input id="area-head" type="text" autocomplete="off">
+                      </label>
+                      <label>
+                        <span>Nhóm tổng điểm</span>
+                        <input id="area-summary-group" type="text" autocomplete="off">
+                      </label>
+                      <label>
+                        <span>Người phụ trách zone / người được đánh giá</span>
+                        <select id="area-scorer" required></select>
+                      </label>
+                      <label>
+                        <span>Assessor mặc định trên dòng cuối</span>
+                        <select id="area-assessor" required></select>
+                      </label>
+                      <label class="check-line">
+                        <input id="area-highlight" type="checkbox">
+                        <span>Tô vàng mã zone</span>
+                      </label>
+                      <button class="primary-button" type="submit">Thêm zone</button>
+                    </form>
+                    <div class="compact-list" id="area-list"></div>
+                  </section>
+
+                  <section class="panel" id="safety-department-groups-panel" hidden>
+                    <div class="section-heading">
+                      <h2>Nhóm bộ phận AT</h2>
+                    </div>
+                    <form class="stacked-form" id="safety-department-groups-form">
+                      <div id="safety-department-groups-editor"></div>
+                      <button class="primary-button" type="submit">Lưu nhóm bộ phận AT</button>
+                    </form>
+                  </section>
+
+                  <section class="panel catalog-items-panel">
+                    <div class="section-heading">
+                      <h2>Hạng mục 5S cố định</h2>
+                    </div>
+                    <div class="item-list" id="item-list"></div>
+                  </section>
+                </div>
+              </section>
+            </div>
+          </section>
+
+          <!-- TAB ACCOUNTS -->
+          <section class="tab-panel admin-only" id="tab-accounts">
+            <div class="scope-card-layout">
+              <div class="scope-card-row" id="account-scope-switch"></div>
+              <section class="scope-detail-card" id="account-scope-detail" aria-label="Cấp tài khoản đang chọn" hidden>
+                <div class="accounts-grid">
+                  <section class="panel">
+                    <div class="section-heading">
+                      <h2>Tạo tài khoản</h2>
+                    </div>
+                    <form class="stacked-form" id="account-form">
+                      <label>
+                        <span>Loại quyền</span>
+                        <select id="account-role" required>
+                          <option value="assessor5s">Assessor</option>
+                          <option value="zoneOwner">Người phụ trách zone</option>
+                        </select>
+                      </label>
+                      <label id="account-assessor-field">
+                        <span>Assessor</span>
+                        <select id="account-assessor" required></select>
+                      </label>
+                      <label id="account-manager-field" hidden>
+                        <span>Người phụ trách zone</span>
+                        <select id="account-manager"></select>
+                      </label>
+                      <div class="form-field">
+                        <span id="account-zone-label">Zone người được cấp tài khoản phụ trách</span>
+                        <div class="zone-check-list" id="account-zone-list"></div>
+                      </div>
+                      <label>
+                        <span>Tài khoản</span>
+                        <input id="account-username" type="text" autocomplete="off" required>
+                      </label>
+                      <label>
+                        <span>Mật khẩu</span>
+                        <input id="account-password" type="password" autocomplete="new-password" required minlength="4">
+                      </label>
+                      <button class="primary-button" type="submit">Thêm tài khoản</button>
+                    </form>
+                  </section>
+
+                  <section class="panel">
+                    <div class="section-heading">
+                      <h2>Danh sách tài khoản</h2>
+                    </div>
+                    <div class="account-list" id="account-list"></div>
+                  </section>
+                </div>
+              </section>
+            </div>
+          </section>
+        </main>
+      </div>
+    </div>
+
+    <!-- MODALS & TOAST -->
+    <div class="modal-backdrop" id="modal-backdrop" hidden>
+      <section class="modal-card" role="dialog" aria-modal="true" aria-labelledby="modal-title">
+        <div class="modal-header">
+          <h2 id="modal-title"></h2>
+          <button class="icon-button" id="modal-close-button" type="button" aria-label="Đóng">×</button>
+        </div>
+        <div class="modal-body" id="modal-body"></div>
+        <div class="modal-actions" id="modal-actions"></div>
+      </section>
+    </div>
+
+    <div class="toast" id="toast" role="status" aria-live="polite"></div>
+    <script src="modules/local-data-api.js"></script>
+    <script src="modules/core/page-registry.js"></script>
+    <script src="modules/pages/admin-home-page.js"></script>
+    <script src="modules/pages/assessor-page.js"></script>
+    <script src="modules/pages/summary-page.js"></script>
+    <script src="modules/pages/safety-page.js"></script>
+    <script src="modules/pages/issue-stats-page.js"></script>
+    <script src="modules/pages/catalog-page.js"></script>
+    <script src="modules/pages/accounts-page.js"></script>
+    <script src="modules/pages/data-page.js"></script>
+    <script src="standards.js"></script>
+    <script src="app.js"></script>
+  
+    <script>
+      (() => {
+        const sidebar = document.querySelector(".app-sidebar");
+        const toggleBtn = document.getElementById("sidebar-toggle-btn");
+        if (!sidebar || !toggleBtn) return;
+
+        const isCollapsed = localStorage.getItem("legroup_sidebar_collapsed") === "true";
+        if (isCollapsed) {
+          sidebar.classList.add("collapsed");
+          toggleBtn.title = "Mở rộng thanh bên";
+        }
+
+        toggleBtn.addEventListener("click", () => {
+          sidebar.classList.toggle("collapsed");
+          const collapsed = sidebar.classList.contains("collapsed");
+          localStorage.setItem("legroup_sidebar_collapsed", collapsed);
+          toggleBtn.title = collapsed ? "Mở rộng thanh bên" : "Thu gọn thanh bên";
+        });
+      })();
+    </script>
+  </body>
+</html>

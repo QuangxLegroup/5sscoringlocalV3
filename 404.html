@@ -1,0 +1,16 @@
+<!doctype html>
+<html lang="vi">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>LeGroup 5S</title>
+    <script>
+      (() => {
+        const route = window.location.pathname === "/" ? "/login" : window.location.pathname.replace(/\/+$/, "");
+        const query = window.location.search || "";
+        window.location.replace("/#" + route + query);
+      })();
+    </script>
+  </head>
+  <body></body>
+</html>

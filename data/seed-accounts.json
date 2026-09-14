@@ -1,0 +1,39 @@
+{
+  "accounts": {
+    "account-admin-001": {
+      "id": "account-admin-001",
+      "role": "admin",
+      "name": "Dương Bích Ngọc",
+      "username": "duongbichngoc",
+      "passwordHash": "pbkdf2-sha256$210000$BcS7xRCRXdaI6MiRNgDQjQ$VGXt0JNQKWKjisKHsagu0aX7w-ROcfkWlljUlaVtZUY"
+    },
+    "account-mtwjtdvp-0gswir": {
+      "id": "account-mtwjtdvp-0gswir",
+      "role": "assessor5s",
+      "name": "MrQuang",
+      "accessTypes": [
+        "safety",
+        "5s"
+      ],
+      "rolesByType": {
+        "safety": "assessorSafety",
+        "5s": "assessor5s"
+      },
+      "username": "mrquang",
+      "createdAt": "2026-09-11T06:01:39.205Z",
+      "assessorId": "",
+      "areaIds": [
+        "area-1"
+      ],
+      "safetyAssessorId": "assessor-mtkepzm9-leo6og",
+      "safetyAreaIds": [
+        "area-1"
+      ],
+      "fiveSAssessorId": "",
+      "fiveSAreaIds": [
+        "area-1"
+      ],
+      "passwordHash": "pbkdf2-sha256$210000$opCkitbseJ7Xtk8ABzcgRw$NXFRjqUV0wgRVe0XsD8p1jKhcdnssKmL0WHB-HtSN5w"
+    }
+  }
+}

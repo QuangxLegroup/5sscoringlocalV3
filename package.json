@@ -1,0 +1,12 @@
+{
+  "name": "legroup-5s-local",
+  "version": "3.0.0",
+  "private": true,
+  "description": "Ung dung danh gia 5S luu du lieu noi bo trong thu muc data.",
+  "scripts": {
+    "start": "node server.js",
+    "build": "node scripts/build-sites-worker.js",
+    "check": "node --check app.js && node --check modules/local-data-api.js && node --check modules/core/page-registry.js && node --check modules/pages/admin-home-page.js && node --check modules/pages/assessor-page.js && node --check modules/pages/summary-page.js && node --check modules/pages/safety-page.js && node --check modules/pages/issue-stats-page.js && node --check modules/pages/catalog-page.js && node --check modules/pages/accounts-page.js && node --check modules/pages/data-page.js && node --check server.js && node --check scripts/build-sites-worker.js && node --check src/server/app-server.js && node --check src/server/static-server.js && node --check src/server/data-store.js && node --check src/server/http/request.js && node --check src/server/http/response.js && node --check src/server/controllers/auth-controller.js && node --check src/server/controllers/data-controller.js && node --check src/server/controllers/mail-controller.js && node --check src/server/controllers/static-file-controller.js && node --check src/server/services/auth-service.js && node --check src/server/services/data-service.js && node --check src/server/services/smtp-mail-service.js && node --check src/server/services/static-file-service.js && node --check src/server/repositories/json-file-repository.js"
+  },
+  "dependencies": {}
+}
