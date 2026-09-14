@@ -2165,6 +2165,16 @@ table {
   text-align: center;
 }
 
+.summary-matrix-wrap .score-cell button,
+.assessor-4m-wrap .assessor-score-select {
+  cursor: grab;
+}
+
+body.is-drag-scrolling-active .summary-matrix-wrap .score-cell button,
+body.is-drag-scrolling-active .assessor-4m-wrap .assessor-score-select {
+  cursor: grabbing !important;
+}
+
 .standard-reference-level-cell.is-selected-score {
   box-shadow: inset 0 0 0 3px rgba(0, 176, 80, 0.72);
   color: #064e3b;
@@ -2786,6 +2796,13 @@ table {
   place-items: center;
   padding: 18px;
   background: rgba(15, 23, 42, 0.42);
+  overscroll-behavior: contain;
+}
+
+html.modal-open,
+body.modal-open {
+  overflow: hidden !important;
+  overscroll-behavior: none;
 }
 
 .modal-card {
@@ -2797,6 +2814,7 @@ table {
   background: #ffffff;
   box-shadow: 0 24px 70px rgba(15, 23, 42, 0.28);
   overflow: hidden;
+  overscroll-behavior: contain;
 }
 
 .modal-header,
@@ -2828,6 +2846,7 @@ table {
 .modal-body {
   overflow: auto;
   padding: 16px;
+  overscroll-behavior: contain;
 }
 
 .modal-form {
@@ -5649,6 +5668,7 @@ body {
   background: rgba(15, 23, 42, 0.48) !important;
   backdrop-filter: blur(2px) !important;
   overflow-y: auto !important;
+  overscroll-behavior: contain !important;
 }
 
 .modal-backdrop[hidden] {
@@ -5662,6 +5682,7 @@ body {
   box-shadow: 0 25px 60px -15px rgba(0, 0, 0, 0.35) !important;
   border-radius: 12px !important;
   overflow: hidden !important;
+  overscroll-behavior: contain !important;
 }
 
 .toast {
@@ -8596,6 +8617,10 @@ html, body {
   overscroll-behavior: contain;
   cursor: grab;
   touch-action: none;
+}
+
+.modal-body {
+  overscroll-behavior: contain;
 }
 
 [data-drag-scroll].is-drag-scrolling,

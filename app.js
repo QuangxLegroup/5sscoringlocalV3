@@ -5990,6 +5990,7 @@
   function openFormModal({ title, html, submitText = "Lưu", submitClass = "primary-button", extraActions = "", modalClass = "", onSubmit }) {
     modalPreviewDirty = false;
     modalSubmitSucceeded = false;
+    setModalScrollLock(true);
     elements.modalTitle.textContent = title;
     const modalCard = elements.modalBackdrop.querySelector(".modal-card");
     if (modalCard) {
@@ -6043,6 +6044,7 @@
   function closeModal() {
     const shouldRefreshPreview = modalPreviewDirty && !modalSubmitSucceeded && currentUser && state;
     elements.modalBackdrop.hidden = true;
+    setModalScrollLock(false);
     elements.modalTitle.textContent = "";
     elements.modalBody.innerHTML = "";
     elements.modalActions.innerHTML = "";
@@ -6055,6 +6057,11 @@
     if (shouldRefreshPreview) {
       renderActiveTab();
     }
+  }
+
+  function setModalScrollLock(isLocked) {
+    document.documentElement.classList.toggle("modal-open", isLocked);
+    document.body.classList.toggle("modal-open", isLocked);
   }
 
   async function prepareScorePhoto(file, existingRecord, removePhoto, periodId) {
@@ -12231,7 +12238,8 @@
     handlers[action]?.();
   }
   function isDragScrollIgnoredTarget(target) {
-    if (target?.closest?.(".assessor-4m-wrap") && target?.matches?.(".assessor-score-select")) {
+    const scoreControl = target?.closest?.(".assessor-score-select,[data-edit-score]");
+    if (scoreControl?.closest?.(".assessor-4m-wrap,.summary-matrix-wrap")) {
       return false;
     }
     return Boolean(target?.closest?.("button,input,select,textarea,a,label,[contenteditable='true'],[contenteditable='plaintext-only']"));
@@ -12374,6 +12382,14 @@
 
     const canScrollX = (el) => Boolean(el && el.scrollWidth > el.clientWidth + 1);
     const canScrollY = (el) => Boolean(el && el.scrollHeight > el.clientHeight + 1);
+    const getOpenModalBackdrop = () => (
+      elements.modalBackdrop && !elements.modalBackdrop.hidden ? elements.modalBackdrop : null
+    );
+    const getOpenModalBoundary = (fromElement) => {
+      const backdrop = getOpenModalBackdrop();
+      if (!backdrop || !fromElement?.closest) return null;
+      return fromElement.closest("#modal-backdrop") === backdrop ? backdrop : null;
+    };
     const getScrollLeft = (el) => (el ? el.scrollLeft : 0);
     const getScrollTop = (el) => (el === document.scrollingElement ? window.scrollY : el?.scrollTop || 0);
     const setScrollLeft = (el, value) => {
@@ -12389,12 +12405,15 @@
     };
 
     function findVerticalScroller(fromElement) {
+      const modalBoundary = getOpenModalBoundary(fromElement);
       let el = fromElement;
       while (el && el !== document.body) {
         if (canScrollY(el)) return el;
+        if (modalBoundary && el === modalBoundary) return null;
         el = el.parentElement;
       }
 
+      if (modalBoundary) return null;
       const root = document.scrollingElement || document.documentElement;
       return canScrollY(root) ? root : null;
     }
@@ -12433,6 +12452,8 @@
 
     document.addEventListener("pointerdown", (event) => {
       if (event.button !== 0 || isDragScrollIgnoredTarget(event.target)) return;
+      const openModalBackdrop = getOpenModalBackdrop();
+      if (openModalBackdrop && event.target?.closest?.("#modal-backdrop") !== openModalBackdrop) return;
 
       const scroller = findScrollableContainer(event.target);
       if (!scroller) return;
