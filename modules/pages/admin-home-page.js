@@ -324,7 +324,7 @@
           <!-- All Sidebar Items as Direct Cyber HUD Buttons with Drag-to-Scroll -->
           <div class="cyber-nav-links" id="cyberNavLinks">
             <button class="cyber-nav-btn is-active" type="button" data-go-tab="home" title="Trang chủ Cyber Hub">
-              <span>🏠</span> Hub
+              <span>🏠</span> Trang chủ
             </button>
             <span class="cyber-nav-divider"></span>
             ${canScoreFiveS ? `
