@@ -4600,7 +4600,14 @@
 
   function scopeCardHtml(activeScope, action, titlePrefix) {
     const normalizedActiveScope = activeScope ? normalizeCatalogType(activeScope) : "";
-    return ACCOUNT_SCOPE_OPTIONS.map((option) => {
+    const options = normalizedActiveScope
+      ? [
+          ...ACCOUNT_SCOPE_OPTIONS.filter((option) => normalizeCatalogType(option.value) === normalizedActiveScope),
+          ...ACCOUNT_SCOPE_OPTIONS.filter((option) => normalizeCatalogType(option.value) !== normalizedActiveScope),
+        ]
+      : ACCOUNT_SCOPE_OPTIONS;
+
+    return options.map((option) => {
       const scope = normalizeCatalogType(option.value);
       const period = getPeriod(getActivePeriodId(scope));
       const isActive = scope === normalizedActiveScope;

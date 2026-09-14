@@ -8141,6 +8141,264 @@ html, body {
   }
 }
 
+/* codex-catalog-logical-layout */
+#tab-catalog .scope-detail-card {
+  padding: 18px;
+  background: linear-gradient(180deg, #ffffff 0%, #f8fbff 100%);
+}
 
+#tab-catalog .catalog-grid {
+  display: grid;
+  grid-template-columns: minmax(280px, 0.82fr) minmax(300px, 0.95fr) minmax(440px, 1.45fr);
+  grid-template-areas:
+    "period people assessor"
+    "period area area"
+    "email area area"
+    "safety safety safety"
+    "items items items";
+  gap: 16px;
+  align-items: start;
+}
 
+#tab-catalog .catalog-period-panel {
+  grid-area: period;
+  grid-row: auto;
+}
+
+#tab-catalog .catalog-people-panel {
+  grid-area: people;
+}
+
+#tab-catalog .catalog-assessor-panel {
+  grid-area: assessor;
+}
+
+#tab-catalog .department-head-email-panel {
+  grid-area: email;
+}
+
+#tab-catalog .catalog-area-panel {
+  grid-area: area;
+}
+
+#tab-catalog #safety-department-groups-panel {
+  grid-area: safety;
+}
+
+#tab-catalog .catalog-items-panel {
+  grid-area: items;
+  grid-column: auto;
+}
+
+#tab-catalog .panel {
+  border-color: #d9e2ec !important;
+  border-radius: 8px !important;
+  background: #ffffff !important;
+  box-shadow: 0 12px 26px rgba(15, 23, 42, 0.07) !important;
+  color: #0f172a !important;
+}
+
+#tab-catalog .catalog-area-panel {
+  border-color: rgba(2, 132, 199, 0.32) !important;
+  box-shadow: 0 14px 32px rgba(2, 132, 199, 0.1) !important;
+}
+
+#tab-catalog .catalog-section-heading {
+  min-height: auto;
+  align-items: start;
+  margin: -2px -2px 14px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid #e2e8f0;
+}
+
+#tab-catalog .catalog-section-heading > div {
+  min-width: 0;
+  display: grid;
+  gap: 5px;
+}
+
+#tab-catalog .catalog-section-heading h2 {
+  color: #0f172a !important;
+  font-size: 0.98rem;
+  font-weight: 850;
+  line-height: 1.24;
+}
+
+#tab-catalog .section-step {
+  width: max-content;
+  max-width: 100%;
+  padding: 3px 7px;
+  border: 1px solid #bae6fd;
+  border-radius: 6px;
+  background: #e0f2fe;
+  color: #0369a1;
+  font-size: 0.68rem;
+  font-weight: 850;
+  line-height: 1.1;
+  text-transform: uppercase;
+}
+
+#tab-catalog .stacked-form,
+#tab-catalog .form-grid {
+  gap: 11px;
+}
+
+#tab-catalog label,
+#tab-catalog .form-field {
+  gap: 5px;
+  color: #475569 !important;
+}
+
+#tab-catalog label span,
+#tab-catalog .form-field > span {
+  color: #475569 !important;
+}
+
+#tab-catalog input,
+#tab-catalog select,
+#tab-catalog textarea {
+  min-height: 40px;
+}
+
+#tab-catalog textarea {
+  min-height: 92px;
+}
+
+#area-form {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: end;
+}
+
+#area-form label,
+#area-form .check-line {
+  min-width: 0;
+}
+
+#area-form label:nth-of-type(3),
+#area-form label:nth-of-type(4),
+#area-form label:nth-of-type(5),
+#area-form .primary-button {
+  grid-column: 1 / -1;
+}
+
+#area-form .check-line {
+  min-height: 40px;
+  align-self: end;
+  padding: 8px 10px;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  background: #f8fafc;
+}
+
+#tab-catalog .period-section-list,
+#tab-catalog #scorer-list,
+#tab-catalog #catalog-assessor-list,
+#tab-catalog #department-head-email-list,
+#tab-catalog #area-list {
+  padding-right: 6px;
+  overflow-y: auto;
+  scrollbar-width: thin;
+}
+
+#tab-catalog .period-section-list {
+  max-height: 224px;
+}
+
+#tab-catalog #scorer-list,
+#tab-catalog #catalog-assessor-list {
+  max-height: 252px;
+}
+
+#tab-catalog #department-head-email-list {
+  max-height: 320px;
+}
+
+#tab-catalog #area-list {
+  max-height: 560px;
+}
+
+#tab-catalog .compact-item,
+#tab-catalog .item-card {
+  border-color: #dbe4ee !important;
+  background: #f8fafc !important;
+}
+
+#tab-catalog .compact-actions {
+  align-self: start;
+}
+
+#tab-catalog .tiny-button {
+  min-height: 30px;
+  border-color: #cbd5e1;
+  color: #334155;
+}
+
+#tab-catalog .primary-button {
+  min-height: 40px;
+}
+
+#tab-catalog .catalog-items-panel .item-list {
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+}
+
+#tab-catalog .catalog-items-panel .item-card {
+  align-items: start;
+}
+
+@media (max-width: 1120px) {
+  #tab-catalog .catalog-grid {
+    grid-template-columns: minmax(280px, 0.82fr) minmax(380px, 1.18fr);
+    grid-template-areas:
+      "period people"
+      "assessor people"
+      "area area"
+      "email email"
+      "safety safety"
+      "items items";
+  }
+
+  #tab-catalog #area-list {
+    max-height: 500px;
+  }
+}
+
+@media (max-width: 900px) {
+  #tab-catalog .scope-detail-card {
+    padding: 12px;
+  }
+
+  #tab-catalog .catalog-grid {
+    grid-template-columns: 1fr !important;
+    grid-template-areas:
+      "period"
+      "people"
+      "assessor"
+      "area"
+      "email"
+      "safety"
+      "items";
+    gap: 12px !important;
+  }
+
+  #area-form {
+    grid-template-columns: 1fr;
+  }
+
+  #area-form label:nth-of-type(3),
+  #area-form label:nth-of-type(4),
+  #area-form label:nth-of-type(5),
+  #area-form .primary-button {
+    grid-column: auto;
+  }
+
+  #tab-catalog .period-section-list,
+  #tab-catalog #scorer-list,
+  #tab-catalog #catalog-assessor-list,
+  #tab-catalog #department-head-email-list,
+  #tab-catalog #area-list {
+    max-height: none;
+    overflow: visible;
+    padding-right: 0;
+  }
+}
 
