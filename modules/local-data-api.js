@@ -288,12 +288,19 @@
   }
 
   function findDemoAccount(root, username, password) {
+    const cleanUser = String(username || "").trim();
+    const rawPass = String(password || "");
+    const trimmedPass = rawPass.trim();
     const accounts = Array.isArray(root?.accounts)
       ? root.accounts
       : root?.accounts && typeof root.accounts === "object"
         ? Object.values(root.accounts)
         : [];
-    return accounts.find((account) => account?.username === username && account?.password === password) || null;
+    return accounts.find((account) => {
+      if (account?.username !== cleanUser) return false;
+      if (account?.password && (account.password === rawPass || account.password === trimmedPass)) return true;
+      return false;
+    }) || null;
   }
 
   async function login(username, password) {

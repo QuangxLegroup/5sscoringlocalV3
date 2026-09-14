@@ -34,12 +34,13 @@
 
         <label>
           <span>Tài khoản</span>
-          <input id="login-username" type="text" autocomplete="username" required>
+          <input id="login-username" type="text" autocomplete="username" required spellcheck="false" autocorrect="off" autocapitalize="off" placeholder="Tên đăng nhập">
         </label>
 
         <label>
           <span>Mật khẩu</span>
-          <input id="login-password" type="password" autocomplete="current-password" required>
+          <input id="login-password" type="password" autocomplete="current-password" required spellcheck="false" autocorrect="off" autocapitalize="off" placeholder="Nhập mật khẩu">
+          <div class="caps-lock-warning" id="login-caps-warning" hidden>⚠️ Đang bật Caps Lock</div>
         </label>
 
         <button class="primary-button" type="submit">Vào hệ thống</button>
@@ -142,7 +143,7 @@
             <h1 id="app-title">Đánh giá 5S/An toàn</h1>
           </div>
 
-          <nav class="header-quick-nav" aria-label="Điều hướng nhanh">
+          <nav class="header-quick-nav" id="headerQuickNav" aria-label="Điều hướng nhanh">
             <button class="tab-button assessor-only" type="button" data-tab="assessor" title="Phiếu chấm điểm 5S">
               <span class="tab-icon">📝</span>
               <span>Phiếu chấm</span>
@@ -170,15 +171,14 @@
           </nav>
 
           <div class="header-right-tools">
-            <div class="user-box" id="user-box">
-              <button class="account-menu-button" id="account-menu-button" type="button" aria-haspopup="true" aria-expanded="false">
-                <span class="account-avatar" id="account-avatar">A</span>
-                <span class="account-summary">
-                  <strong id="current-user-name"></strong>
-                  <span id="current-user-role"></span>
-                </span>
+            <div class="user-box cyber-user-box" id="user-box">
+              <button class="account-menu-button cyber-user-pill" id="account-menu-button" type="button" aria-haspopup="true" aria-expanded="false" title="Menu tài khoản">
+                <span class="account-avatar cyber-user-avatar" id="account-avatar">Đ</span>
+                <span class="cyber-user-name" id="current-user-name"></span>
+                <span id="current-user-role" hidden></span>
+                <span class="cyber-user-arrow">▾</span>
               </button>
-              <div class="account-menu" id="account-menu" hidden>
+              <div class="account-menu cyber-account-dropdown" id="account-menu" hidden>
                 <div class="account-menu-profile">
                   <span class="account-avatar large" id="account-menu-avatar">A</span>
                   <div>
@@ -255,7 +255,7 @@
                 <span>Bảng điểm</span>
                 <select id="summary-score-source"></select>
               </label>
-              <div class="permission-note manager-only" id="assigned-zone-summary"></div>
+
               <button class="primary-button admin-only" id="export-excel-button" type="button">Xuất Excel</button>
               <button class="secondary-button admin-only" type="button" data-action="import-page-json" data-page="five-s">Import</button>
               <button class="secondary-button admin-only" type="button" data-action="export-page-json" data-page="five-s">Export</button>

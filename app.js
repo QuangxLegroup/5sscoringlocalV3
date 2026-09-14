@@ -352,7 +352,6 @@
     assessorSheet: document.getElementById("assessor-sheet"),
     summaryPeriodSelect: document.getElementById("summary-period-select"),
     summaryScoreSource: document.getElementById("summary-score-source"),
-    assignedZoneSummary: document.getElementById("assigned-zone-summary"),
     summaryTable: document.getElementById("summary-table"),
     summaryTitle: document.getElementById("summary-title"),
     exportExcelButton: document.getElementById("export-excel-button"),
@@ -600,7 +599,7 @@
           id: "admin",
           username: ADMIN_USERNAME,
           role: ROLE_ADMIN,
-          name: "Dương Bích Ngọc",
+          name: "Đường Bích Ngọc",
           createdAt: now,
         },
       ],
@@ -986,14 +985,17 @@
       })
       .filter((manager) => manager.id && manager.name);
 
-    if (!normalized.accounts.some((account) => account.username === ADMIN_USERNAME && account.role === "admin")) {
+    const existingAdmin = normalized.accounts.find((account) => account.username === ADMIN_USERNAME || account.role === "admin");
+    if (!existingAdmin) {
       normalized.accounts.unshift({
         id: "admin",
         username: ADMIN_USERNAME,
         role: "admin",
-        name: "Dương Bích Ngọc",
+        name: "Đường Bích Ngọc",
         createdAt: new Date().toISOString(),
       });
+    } else if (existingAdmin.name === "Dương Bích Ngọc" || !existingAdmin.name) {
+      existingAdmin.name = "Đường Bích Ngọc";
     }
 
     const periodExists = (periodId) => normalized.periods.some((period) => period.id === periodId);
@@ -3682,20 +3684,7 @@
   }
   function getUserInitials(account = currentUser) {
     const displayName = getAccountDisplayName(account) || account?.username || "A";
-    const parts = displayName
-      .split(/\s+/)
-      .map((part) => part.trim())
-      .filter(Boolean);
-
-    if (!parts.length) {
-      return "A";
-    }
-
-    if (parts.length === 1) {
-      return parts[0].slice(0, 1).toLocaleUpperCase("vi");
-    }
-
-    return `${parts[0].slice(0, 1)}${parts[parts.length - 1].slice(0, 1)}`.toLocaleUpperCase("vi");
+    return displayName.trim().slice(0, 1).toLocaleUpperCase("vi");
   }
 
   function normalizeRoutePath(pathname = window.location.pathname) {
@@ -3805,6 +3794,10 @@
 
     if (!account) {
       throw new Error("Không tìm thấy tài khoản trong dữ liệu trả về.");
+    }
+
+    if (isAdminAccount(account) && (account.name === "Dương Bích Ngọc" || !account.name)) {
+      account.name = "Đường Bích Ngọc";
     }
 
     currentUser = account;
@@ -4147,6 +4140,11 @@
       const isActive = button.dataset.tab === activeTab && matchesReport;
       button.classList.toggle("is-active", isActive);
       button.classList.toggle("active", isActive);
+      if (isActive && button.closest(".header-quick-nav")) {
+        try {
+          button.scrollIntoView({ behavior: "smooth", block: "nearest", inline: "center" });
+        } catch (_) {}
+      }
     });
     document.querySelectorAll(".tab-panel").forEach((panel) => {
       panel.classList.toggle("is-active", panel.id === "tab-" + activeTab);
@@ -4998,7 +4996,7 @@
           <div class="account-actions">
             ${
               isAdmin
-                ? '<span class="item-meta">Tài khoản cố định</span>'
+                ? `<button class="tiny-button" type="button" data-action="edit-account" data-id="${escapeHtml(account.id)}">Sửa</button>`
                 : `${addAccessButtons}
                    <button class="tiny-button" type="button" data-action="edit-account" data-id="${escapeHtml(account.id)}">Sửa</button>
                    ${removeAccessButtons}`
@@ -5009,18 +5007,34 @@
       .join("") || `<article class="account-card"><strong>Chưa có tài khoản ${escapeHtml(getAccountScopeLabel(activeAccountScope))}</strong><span>Tạo tài khoản assessor hoặc người phụ trách zone cho luồng này.</span></article>`;
   }
 
+  let isLoggingIn = false;
+
   async function handleLogin(event) {
     event.preventDefault();
-    const username = elements.loginUsername.value.trim();
-    const password = elements.loginPassword.value;
+    if (isLoggingIn) {
+      return;
+    }
 
-    if (!username || !password) {
+    const username = elements.loginUsername.value.trim();
+    const rawPassword = elements.loginPassword.value;
+    const cleanPassword = rawPassword.trim();
+
+    if (!username || !cleanPassword) {
       showToast("Vui lòng nhập tài khoản và mật khẩu.", true);
       return;
     }
 
+    isLoggingIn = true;
+    const submitBtn = elements.loginForm?.querySelector('button[type="submit"]');
+    const originalBtnText = submitBtn ? submitBtn.textContent : "";
+    if (submitBtn) {
+      submitBtn.disabled = true;
+      submitBtn.textContent = "Đang kiểm tra...";
+    }
+
     try {
-      const payload = await dataStore.login(username, password);
+      // Try with cleanPassword first, fallback handled by server
+      const payload = await dataStore.login(username, cleanPassword);
       const account = applyAuthenticatedPayload(payload);
       startSessionHeartbeat();
 
@@ -5034,6 +5048,10 @@
       saveSession(account);
       showAppScreen();
       elements.loginForm.reset();
+
+      const capsWarning = document.getElementById("login-caps-warning");
+      if (capsWarning) capsWarning.hidden = true;
+
       startDataWatch();
       renderAll({ replaceRoute: true });
     } catch (error) {
@@ -5044,6 +5062,12 @@
         showToast(error?.message || "Không đăng nhập được.", true);
       }
       return;
+    } finally {
+      isLoggingIn = false;
+      if (submitBtn) {
+        submitBtn.disabled = false;
+        submitBtn.textContent = originalBtnText;
+      }
     }
   }
 
@@ -7456,8 +7480,63 @@
 
     const scope = activeAccountScope;
     const periodId = getActivePeriodId(scope);
-    const account = state.accounts.find((item) => item.id === id && item.role !== "admin" && hasAccountAccessType(item, scope));
+    const account = state.accounts.find((item) => item.id === id);
     if (!account) {
+      return;
+    }
+
+    if (isAdminAccount(account)) {
+      openFormModal({
+        title: "Sửa tên Admin",
+        html: `
+          <div style="margin-bottom: 14px; padding: 10px 12px; background: rgba(0, 240, 255, 0.05); border: 1px solid rgba(0, 240, 255, 0.2); border-radius: 6px; font-size: 13px;">
+            <div style="margin-bottom: 4px;"><strong>Tài khoản đăng nhập:</strong> <span class="cyber-badge">${escapeHtml(account.username || "admin")}</span></div>
+            <div style="color: #94a3b8; font-size: 12px;">(Tài khoản và mật khẩu Admin được cố định để bảo mật hệ thống, chỉ cho phép chỉnh sửa tên hiển thị)</div>
+          </div>
+          <label>
+            <span>Tên hiển thị người quản trị</span>
+            <input name="name" type="text" value="${escapeHtml(account.name || "")}" required placeholder="Họ và tên admin">
+          </label>
+        `,
+        async onSubmit(formData) {
+          if (!requireAdminAction()) {
+            return false;
+          }
+          const name = String(formData.get("name") || "").trim();
+
+          if (!name) {
+            showToast("Vui lòng nhập tên hiển thị người quản trị.", true);
+            return false;
+          }
+
+          const beforeLabel = describeAccountForScope(account, scope);
+          account.name = name;
+
+          if (currentUser && (currentUser.id === account.id || currentUser.role === "admin")) {
+            currentUser.name = name;
+            saveSession(currentUser);
+          }
+
+          await Promise.all([
+            dbRef(`accounts/${account.id}`).set(account),
+            logAdminChange({
+              subjectLabel: "Tài khoản Admin hệ thống",
+              beforeLabel,
+              afterLabel: describeAccountForScope(account, scope),
+              changeLabel: `Sửa tên hiển thị tài khoản Admin thành ${account.name}`,
+              scope,
+            }),
+          ]);
+
+          showToast("Đã cập nhật tên Admin thành công.");
+          renderAll();
+          return true;
+        },
+      });
+      return;
+    }
+
+    if (!hasAccountAccessType(account, scope)) {
       return;
     }
 
@@ -11829,6 +11908,42 @@
 
   function bindEvents() {
     elements.loginForm.addEventListener("submit", handleLogin);
+
+    // CapsLock indicator for login password
+    const capsWarning = document.getElementById("login-caps-warning");
+    if (capsWarning && elements.loginPassword) {
+      const checkCaps = (e) => {
+        if (e.getModifierState) {
+          capsWarning.hidden = !e.getModifierState("CapsLock");
+        }
+      };
+      elements.loginPassword.addEventListener("keydown", checkCaps);
+      elements.loginPassword.addEventListener("keyup", checkCaps);
+      elements.loginPassword.addEventListener("blur", () => {
+        capsWarning.hidden = true;
+      });
+    }
+
+    // Setup Drag-to-scroll and wheel scroll for header quick nav
+    const headerQuickNav = document.getElementById("headerQuickNav") || document.querySelector(".header-quick-nav");
+    if (headerQuickNav && window.setupNavDragScroll) {
+      window.setupNavDragScroll(headerQuickNav);
+    }
+
+    // Track actual header height for CSS variable (used by tab-panel min-height)
+    const appHeader = document.querySelector(".app-header");
+    if (appHeader) {
+      const updateHeaderHeight = () => {
+        document.documentElement.style.setProperty(
+          "--app-header-height",
+          appHeader.getBoundingClientRect().height + "px"
+        );
+      };
+      updateHeaderHeight();
+      const headerResizeObserver = new ResizeObserver(updateHeaderHeight);
+      headerResizeObserver.observe(appHeader);
+    }
+
     elements.logoutButton.addEventListener("click", handleLogout);
     elements.undoButton?.addEventListener("click", () => executeUndo());
     elements.redoButton?.addEventListener("click", () => executeRedo());
@@ -11901,53 +12016,119 @@
       }
     });
 
-    let dragScrollState = null;
-    const endDragScroll = () => {
-      if (!dragScrollState) {
-        return;
+    // Universal 2D Drag-to-Scroll Engine
+    // - Detects any scrollable container (tables, charts, modals)
+    // - Scrolls in both X and Y directions freely (2D pan)
+    // - Click 1 time = select/action; Click-hold and drag = pan scroll
+    // - setPointerCapture only called AFTER drag threshold → clicks always work normally
+
+    const DRAG_THRESHOLD = 4; // px distance before treating as a drag
+    const SCROLLABLE_SELECTORS = [
+      "[data-drag-scroll]",
+      ".table-wrap",
+      ".wide-table-wrap",
+      ".dashboard-table-wrap",
+      ".history-table-wrap",
+      ".admin-card-chart-scroll",
+      ".excel-chart-scroll",
+      ".excel-wide-wrap",
+      ".factory-summary-wrap",
+      ".progress-summary-wrap",
+      ".department-zone-summary-wrap",
+      ".modal-body",
+      ".safety-record-entry-wrap",
+      ".safety-assessment-month-chart",
+    ].join(",");
+    // Note: .cyber-nav-links and .header-quick-nav are handled by setupNavDragScroll separately
+
+    function findScrollableContainer(target) {
+      let el = target;
+      while (el && el !== document.body) {
+        if (el.matches?.(SCROLLABLE_SELECTORS)) {
+          const canScrollX = el.scrollWidth > el.clientWidth + 1;
+          const canScrollY = el.scrollHeight > el.clientHeight + 1;
+          if (canScrollX || canScrollY) return el;
+        }
+        el = el.parentElement;
       }
-      dragScrollState.scroller.classList.remove("is-drag-scrolling");
-      dragScrollState = null;
+      return null;
+    }
+
+    let universalDragState = null;
+    let suppressClickUntil = 0;
+
+    const endUniversalDrag = () => {
+      if (!universalDragState) return;
+
+      const { scroller, moved } = universalDragState;
+      scroller.classList.remove("is-drag-scrolling");
+      document.body.classList.remove("is-drag-scrolling-active");
+      scroller.style.scrollBehavior = "";
+
+      universalDragState = null;
+
+      if (moved) {
+        suppressClickUntil = Date.now() + 150;
+      }
     };
 
     document.addEventListener("pointerdown", (event) => {
-      if (event.button !== 0 || isDragScrollIgnoredTarget(event.target)) {
-        return;
-      }
+      if (event.button !== 0 || isDragScrollIgnoredTarget(event.target)) return;
 
-      const scroller = event.target.closest?.("[data-drag-scroll]");
-      if (!scroller || scroller.scrollWidth <= scroller.clientWidth) {
-        return;
-      }
+      const scroller = findScrollableContainer(event.target);
+      if (!scroller) return;
 
-      dragScrollState = {
+      // Record initial position but do NOT setPointerCapture yet
+      // Capture is only set once the drag threshold is confirmed in pointermove
+      // This ensures simple clicks are never intercepted
+      universalDragState = {
         scroller,
         pointerId: event.pointerId,
         startX: event.clientX,
+        startY: event.clientY,
         scrollLeft: scroller.scrollLeft,
+        scrollTop: scroller.scrollTop,
         moved: false,
+        captured: false,
       };
-      scroller.setPointerCapture?.(event.pointerId);
     });
 
     document.addEventListener("pointermove", (event) => {
-      if (!dragScrollState) {
-        return;
+      if (!universalDragState) return;
+
+      const dx = event.clientX - universalDragState.startX;
+      const dy = event.clientY - universalDragState.startY;
+
+      if (!universalDragState.moved && Math.hypot(dx, dy) < DRAG_THRESHOLD) return;
+
+      // Threshold crossed — this is a real drag. Now capture pointer and start panning.
+      if (!universalDragState.captured) {
+        universalDragState.captured = true;
+        try { universalDragState.scroller.setPointerCapture(universalDragState.pointerId); } catch (_) {}
+        universalDragState.scroller.style.scrollBehavior = "auto";
       }
 
-      const deltaX = event.clientX - dragScrollState.startX;
-      if (!dragScrollState.moved && Math.abs(deltaX) < 4) {
-        return;
-      }
+      universalDragState.moved = true;
+      universalDragState.scroller.classList.add("is-drag-scrolling");
+      document.body.classList.add("is-drag-scrolling-active");
 
-      dragScrollState.moved = true;
-      dragScrollState.scroller.classList.add("is-drag-scrolling");
-      dragScrollState.scroller.scrollLeft = dragScrollState.scrollLeft - deltaX;
+      universalDragState.scroller.scrollLeft = universalDragState.scrollLeft - dx;
+      universalDragState.scroller.scrollTop = universalDragState.scrollTop - dy;
+
       event.preventDefault();
     }, { passive: false });
 
-    document.addEventListener("pointerup", endDragScroll);
-    document.addEventListener("pointercancel", endDragScroll);
+    document.addEventListener("pointerup", endUniversalDrag);
+    document.addEventListener("pointercancel", endUniversalDrag);
+
+    // Global click suppressor: prevents accidental clicks after drag ends
+    document.addEventListener("click", (event) => {
+      if (Date.now() < suppressClickUntil) {
+        event.stopPropagation();
+        event.preventDefault();
+      }
+    }, { capture: true });
+
 
     document.addEventListener("keydown", (event) => {
       const tabTarget = event.target.closest?.("[data-go-tab][role='button']");

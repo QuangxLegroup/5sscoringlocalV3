@@ -1,6 +1,95 @@
 (() => {
   "use strict";
 
+  function setupNavDragScroll(scroller) {
+    if (!scroller || scroller.__navDragInitialized) return;
+    scroller.__navDragInitialized = true;
+
+    let isDown = false;
+    let startX = 0;
+    let startY = 0;
+    let startScrollLeft = 0;
+    let startScrollTop = 0;
+    let isDragging = false;
+    let suppressClickUntil = 0;
+
+    // Wheel scroll: translate vertical wheel scroll to horizontal scroll
+    scroller.addEventListener("wheel", (e) => {
+      if (e.deltaY !== 0) {
+        e.preventDefault();
+        scroller.scrollLeft += e.deltaY * 0.9;
+      }
+    }, { passive: false });
+
+    // Drag-to-scroll with mouse or touch (2D)
+    // Do NOT setPointerCapture on pointerdown — only after drag threshold is crossed
+    scroller.addEventListener("pointerdown", (e) => {
+      if (e.pointerType === "mouse" && e.button !== 0) return;
+
+      isDown = true;
+      isDragging = false;
+      startX = e.clientX;
+      startY = e.clientY;
+      startScrollLeft = scroller.scrollLeft;
+      startScrollTop = scroller.scrollTop;
+      scroller.style.scrollBehavior = "auto";
+    });
+
+    scroller.addEventListener("pointermove", (e) => {
+      if (!isDown) return;
+      const dx = e.clientX - startX;
+      const dy = e.clientY - startY;
+
+      if (!isDragging && Math.hypot(dx, dy) > 4) {
+        isDragging = true;
+        scroller.classList.add("is-dragging");
+        // Only capture pointer once we confirm it's a drag
+        try { scroller.setPointerCapture(e.pointerId); } catch (_) {}
+      }
+
+      if (isDragging) {
+        e.preventDefault();
+        scroller.scrollLeft = startScrollLeft - dx;
+        scroller.scrollTop = startScrollTop - dy;
+      }
+    }, { passive: false });
+
+
+    const onPointerEnd = (e) => {
+      if (!isDown) return;
+      isDown = false;
+      scroller.style.scrollBehavior = "smooth";
+
+      try {
+        scroller.releasePointerCapture(e.pointerId);
+      } catch (_) {}
+
+      if (isDragging) {
+        scroller.classList.remove("is-dragging");
+        suppressClickUntil = Date.now() + 120;
+
+        const cancelClick = (ev) => {
+          if (Date.now() < suppressClickUntil) {
+            ev.stopPropagation();
+            ev.preventDefault();
+          }
+        };
+        scroller.addEventListener("click", cancelClick, { capture: true, once: true });
+        setTimeout(() => {
+          scroller.removeEventListener("click", cancelClick, { capture: true });
+          isDragging = false;
+        }, 150);
+      }
+    };
+
+    scroller.addEventListener("pointerup", onPointerEnd);
+    scroller.addEventListener("pointercancel", onPointerEnd);
+  }
+
+  window.setupNavDragScroll = setupNavDragScroll;
+
+
+
   const STEPS_DATA = [
     {
       id: "sort",
@@ -232,8 +321,8 @@
             </div>
           </div>
 
-          <!-- All Sidebar Items as Direct Cyber HUD Buttons -->
-          <div class="cyber-nav-links">
+          <!-- All Sidebar Items as Direct Cyber HUD Buttons with Drag-to-Scroll -->
+          <div class="cyber-nav-links" id="cyberNavLinks">
             <button class="cyber-nav-btn is-active" type="button" data-go-tab="home" title="Trang chủ Cyber Hub">
               <span>🏠</span> Hub
             </button>
@@ -545,15 +634,10 @@
       guideBtn.addEventListener("click", () => openGuideModal(undefined, canScoreFiveS));
     }
 
-    // Horizontal wheel scroll for Cyber Nav Links
-    const navLinks = elements.adminHomeCards.querySelector(".cyber-nav-links");
+    // Setup Drag-to-scroll and wheel scroll for Cyber Nav Links
+    const navLinks = elements.adminHomeCards.querySelector("#cyberNavLinks") || elements.adminHomeCards.querySelector(".cyber-nav-links");
     if (navLinks) {
-      navLinks.addEventListener("wheel", (e) => {
-        if (e.deltaY !== 0) {
-          e.preventDefault();
-          navLinks.scrollLeft += e.deltaY;
-        }
-      }, { passive: false });
+      setupNavDragScroll(navLinks);
     }
 
     // Bind Cyber User Dropdown

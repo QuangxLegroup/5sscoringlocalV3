@@ -3,7 +3,7 @@
     "account-admin-001": {
       "id": "account-admin-001",
       "role": "admin",
-      "name": "Dương Bích Ngọc",
+      "name": "Đường Bích Ngọc",
       "username": "duongbichngoc",
       "passwordHash": "pbkdf2-sha256$210000$BcS7xRCRXdaI6MiRNgDQjQ$VGXt0JNQKWKjisKHsagu0aX7w-ROcfkWlljUlaVtZUY"
     },

@@ -10,7 +10,7 @@ const FIVE_S_PERIOD_TYPE = "5s";
 const SAFETY_PERIOD_TYPE = "safety";
 const LEGACY_PERIOD_TYPE = "both";
 const TOKEN_COOKIE_NAME = "legroup_session";
-const SESSION_TTL_MS = 2 * 60 * 1000;
+const SESSION_TTL_MS = 24 * 60 * 60 * 1000;
 const PASSWORD_HASH_VERSION = "pbkdf2-sha256";
 const PASSWORD_ITERATIONS = 210000;
 const PASSWORD_KEY_BYTES = 32;
@@ -336,10 +336,21 @@ class AuthService {
   }
 
   verifyAccountPassword(account, password) {
+    const rawCandidate = String(password || "");
+    const trimmedCandidate = rawCandidate.trim();
     if (account?.passwordHash) {
-      return verifyPasswordHash(password, account.passwordHash);
+      if (verifyPasswordHash(rawCandidate, account.passwordHash)) {
+        return true;
+      }
+      if (trimmedCandidate && trimmedCandidate !== rawCandidate && verifyPasswordHash(trimmedCandidate, account.passwordHash)) {
+        return true;
+      }
+      return false;
     }
-    return typeof account?.password === "string" && safeEqualText(account.password, password);
+    return typeof account?.password === "string" && (
+      safeEqualText(account.password, rawCandidate) ||
+      (trimmedCandidate ? safeEqualText(account.password, trimmedCandidate) : false)
+    );
   }
 
   createToken(account, sessionId, expiresAt) {
