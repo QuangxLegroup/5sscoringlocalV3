@@ -12048,13 +12048,38 @@
     ].join(",");
     // Note: .cyber-nav-links and .header-quick-nav are handled by setupNavDragScroll separately
 
+    const canScrollX = (el) => Boolean(el && el.scrollWidth > el.clientWidth + 1);
+    const canScrollY = (el) => Boolean(el && el.scrollHeight > el.clientHeight + 1);
+    const getScrollLeft = (el) => (el ? el.scrollLeft : 0);
+    const getScrollTop = (el) => (el === document.scrollingElement ? window.scrollY : el?.scrollTop || 0);
+    const setScrollLeft = (el, value) => {
+      if (el) el.scrollLeft = value;
+    };
+    const setScrollTop = (el, value) => {
+      if (!el) return;
+      if (el === document.scrollingElement) {
+        window.scrollTo(window.scrollX, value);
+      } else {
+        el.scrollTop = value;
+      }
+    };
+
+    function findVerticalScroller(fromElement) {
+      let el = fromElement;
+      while (el && el !== document.body) {
+        if (canScrollY(el)) return el;
+        el = el.parentElement;
+      }
+
+      const root = document.scrollingElement || document.documentElement;
+      return canScrollY(root) ? root : null;
+    }
+
     function findScrollableContainer(target) {
       let el = target;
       while (el && el !== document.body) {
         if (el.matches?.(SCROLLABLE_SELECTORS)) {
-          const canScrollX = el.scrollWidth > el.clientWidth + 1;
-          const canScrollY = el.scrollHeight > el.clientHeight + 1;
-          if (canScrollX || canScrollY) return el;
+          if (canScrollX(el) || canScrollY(el)) return el;
         }
         el = el.parentElement;
       }
@@ -12067,8 +12092,11 @@
     const endUniversalDrag = () => {
       if (!universalDragState) return;
 
-      const { scroller, moved } = universalDragState;
+      const { scroller, yScroller, moved } = universalDragState;
       scroller.classList.remove("is-drag-scrolling");
+      if (yScroller && yScroller !== scroller && yScroller !== document.scrollingElement) {
+        yScroller.classList.remove("is-drag-scrolling");
+      }
       document.body.classList.remove("is-drag-scrolling-active");
       scroller.style.scrollBehavior = "";
 
@@ -12084,17 +12112,23 @@
 
       const scroller = findScrollableContainer(event.target);
       if (!scroller) return;
+      const xScroller = canScrollX(scroller) ? scroller : null;
+      const yScroller = canScrollY(scroller) ? scroller : findVerticalScroller(scroller);
+
+      if (!xScroller && !yScroller) return;
 
       // Record initial position but do NOT setPointerCapture yet
       // Capture is only set once the drag threshold is confirmed in pointermove
       // This ensures simple clicks are never intercepted
       universalDragState = {
         scroller,
+        xScroller,
+        yScroller,
         pointerId: event.pointerId,
         startX: event.clientX,
         startY: event.clientY,
-        scrollLeft: scroller.scrollLeft,
-        scrollTop: scroller.scrollTop,
+        scrollLeft: getScrollLeft(xScroller),
+        scrollTop: getScrollTop(yScroller),
         moved: false,
         captured: false,
       };
@@ -12117,10 +12151,13 @@
 
       universalDragState.moved = true;
       universalDragState.scroller.classList.add("is-drag-scrolling");
+      if (universalDragState.yScroller && universalDragState.yScroller !== universalDragState.scroller && universalDragState.yScroller !== document.scrollingElement) {
+        universalDragState.yScroller.classList.add("is-drag-scrolling");
+      }
       document.body.classList.add("is-drag-scrolling-active");
 
-      universalDragState.scroller.scrollLeft = universalDragState.scrollLeft - dx;
-      universalDragState.scroller.scrollTop = universalDragState.scrollTop - dy;
+      setScrollLeft(universalDragState.xScroller, universalDragState.scrollLeft - dx);
+      setScrollTop(universalDragState.yScroller, universalDragState.scrollTop - dy);
 
       event.preventDefault();
     }, { passive: false });

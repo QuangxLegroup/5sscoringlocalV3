@@ -8402,3 +8402,39 @@ html, body {
   }
 }
 
+/* codex-universal-2d-pan-scroll */
+[data-drag-scroll],
+.table-wrap,
+.wide-table-wrap,
+.dashboard-table-wrap,
+.history-table-wrap,
+.admin-card-chart-scroll,
+.excel-chart-scroll,
+.excel-wide-wrap,
+.factory-summary-wrap,
+.progress-summary-wrap,
+.department-zone-summary-wrap,
+.safety-record-entry-wrap {
+  overflow: auto !important;
+  overscroll-behavior: contain;
+  cursor: grab;
+  touch-action: none;
+}
+
+[data-drag-scroll].is-drag-scrolling,
+.table-wrap.is-drag-scrolling,
+.wide-table-wrap.is-drag-scrolling,
+.dashboard-table-wrap.is-drag-scrolling,
+.history-table-wrap.is-drag-scrolling,
+.admin-card-chart-scroll.is-drag-scrolling,
+.excel-chart-scroll.is-drag-scrolling,
+.excel-wide-wrap.is-drag-scrolling,
+.factory-summary-wrap.is-drag-scrolling,
+.progress-summary-wrap.is-drag-scrolling,
+.department-zone-summary-wrap.is-drag-scrolling,
+.safety-record-entry-wrap.is-drag-scrolling,
+.modal-body.is-drag-scrolling {
+  cursor: grabbing !important;
+  user-select: none !important;
+  scroll-behavior: auto !important;
+}
