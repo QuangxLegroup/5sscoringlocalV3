@@ -15,18 +15,9 @@
   }
 
   function render(context) {
-    const { SAFETY_PERIOD_TYPE, elements, escapeHtml, getActivePeriodId, getIssueLocation, getIssueRecords, getPeriod, normalizeIssueStatus, isAdminAccount, currentUser } = context;
+    const { SAFETY_PERIOD_TYPE, elements, escapeHtml, getActivePeriodId, getIssueLocation, getIssueRecords, getPeriod, normalizeIssueStatus } = context;
     const activePeriodId = getActivePeriodId(SAFETY_PERIOD_TYPE);
     const period = getPeriod(elements.issueStatsPeriodSelect?.value || activePeriodId);
-    const periodId = period?.id || "";
-    const isAdmin = Boolean(isAdminAccount?.(currentUser));
-
-    if (!isAdmin && (!periodId || periodId !== activePeriodId)) {
-      elements.issueStatsGrid.innerHTML = '<article class="stat-card" style="grid-column: 1 / -1; text-align: center;"><span>Thông báo</span><strong>Kỳ thống kê này hiện không mở.</strong></article>';
-      if (elements.issueZoneStats) elements.issueZoneStats.innerHTML = '<article class="compact-item"><strong>Kỳ này hiện không mở.</strong></article>';
-      if (elements.issueTypeStats) elements.issueTypeStats.innerHTML = '<article class="compact-item"><strong>Kỳ này hiện không mở.</strong></article>';
-      return;
-    }
 
     const rows = getIssueRecords(period?.id || "");
     const statusCounts = rows.reduce((counts, row) => {

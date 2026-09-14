@@ -225,6 +225,7 @@
       getAllowedAreaIds,
       getAreasForPeriod,
       getPeriod,
+      getScoreSourceForAccount,
       getScoreSourceLabel,
       isAdminAccount,
       periodLabel,
@@ -236,48 +237,38 @@
     const period = getPeriod(elements.summaryPeriodSelect?.value || getActivePeriodId(FIVE_S_PERIOD_TYPE));
     const periodId = period?.id || "";
     const isAdmin = isAdminAccount(currentUser);
-    const scoreSource = elements.summaryScoreSource?.value || SCORE_SOURCE_ASSESSOR;
+    const userScoreSource = typeof getScoreSourceForAccount === "function"
+      ? getScoreSourceForAccount(currentUser)
+      : SCORE_SOURCE_ASSESSOR;
+    const scoreSource = isAdmin
+      ? elements.summaryScoreSource?.value || SCORE_SOURCE_ASSESSOR
+      : userScoreSource;
     const allowedAreaIds = getAllowedAreaIds(currentUser, periodId);
     const assignedAreas = getAreasForPeriod(periodId).filter((area) => allowedAreaIds.has(area.id));
 
     if (elements.summaryScoreSource) {
-      const currentSource = elements.summaryScoreSource.value || scoreSource;
+      const currentSource = isAdmin ? elements.summaryScoreSource.value || scoreSource : scoreSource;
       elements.summaryScoreSource.innerHTML = SCORE_SOURCE_OPTIONS
         .map((option) => `<option value="${escapeHtml(option.value)}" ${option.value === currentSource ? "selected" : ""}>${escapeHtml(option.label)}</option>`)
         .join("");
       elements.summaryScoreSource.value = SCORE_SOURCE_OPTIONS.some((option) => option.value === currentSource) ? currentSource : SCORE_SOURCE_ASSESSOR;
     }
 
-    if (!isAdmin) {
-      if (!periodId || periodId !== getActivePeriodId(FIVE_S_PERIOD_TYPE)) {
-        elements.summaryTitle.textContent = "Tiêu chuẩn 5S";
-        if (elements.assignedZoneSummary) {
-          elements.assignedZoneSummary.textContent = "Kỳ đánh giá này hiện không mở.";
-        }
-        elements.summaryTable.innerHTML = '<tbody><tr><td class="empty-cell" style="padding: 40px; text-align: center;">Kỳ đánh giá này hiện không mở. Bạn chỉ có thể xem kỳ đang mở.</td></tr></tbody>';
-        return;
-      }
-      elements.summaryTitle.textContent = `Tiêu chuẩn 5S - ${periodLabel(period)}`;
-      if (elements.assignedZoneSummary) {
-        elements.assignedZoneSummary.textContent = assignedAreas.length
-          ? `Zone được phân quyền: ${assignedAreas.map((area) => area.code).join(", ")}`
-          : "Tài khoản này chưa được phân quyền zone.";
-      }
-      renderStandardReferenceTable(elements.summaryTable);
-      return;
-    }
-
-    elements.summaryTitle.textContent = `Điểm Chi Tiết Theo Từng Hạng Mục - ${getScoreSourceLabel(elements.summaryScoreSource?.value || scoreSource)} - ${periodLabel(period)}`;
+    elements.summaryTitle.textContent = `Điểm Chi Tiết Theo Từng Hạng Mục - ${getScoreSourceLabel(scoreSource)} - ${periodLabel(period)}`;
     if (elements.assignedZoneSummary) {
-      elements.assignedZoneSummary.textContent = "";
+      elements.assignedZoneSummary.textContent = isAdmin
+        ? ""
+        : assignedAreas.length
+          ? `Zone được phép chấm: ${assignedAreas.map((area) => area.code).join(", ")}`
+          : "Tài khoản này chưa được phân quyền chấm zone 5S.";
     }
 
     buildMatrixTable(elements.summaryTable, {
       periodId,
-      scoreSource: elements.summaryScoreSource?.value || scoreSource,
+      scoreSource,
       editable: true,
       editableAreaIds: allowedAreaIds,
-      adminMode: true,
+      adminMode: isAdmin,
     });
     renderSummaryCharts(context, period);
   }

@@ -609,6 +609,7 @@
       safetyIdentificationOverrides: {},
       scores: buildSampleScores(periodId, areas, managers, now),
       safetyRecords: [],
+      deletedSafetyRecords: [],
       history: [],
     };
 
@@ -946,6 +947,7 @@
       safetyIdentificationOverrides: normalizeTextOverrideMap(raw.safetyIdentificationOverrides),
       scores: snapshotToArray(raw.scores),
       safetyRecords: snapshotToArray(raw.safetyRecords),
+      deletedSafetyRecords: snapshotToArray(raw.deletedSafetyRecords),
       history: snapshotToArray(raw.history).filter((entry) => !isHistoryEntryExpired(entry)),
     };
 
@@ -1259,9 +1261,14 @@
       completionLevelConfirm: score.completionLevelConfirm || "",
       completionStop6Confirm: score.completionStop6Confirm || "",
     }));
-    normalized.safetyRecords = normalized.safetyRecords.map(normalizeSafetyRecord).filter(hasSafetyRecordContent);
+    const deletedSafetyRecordIds = new Set(normalized.deletedSafetyRecords.map((record) => record.id).filter(Boolean));
+    normalized.safetyRecords = normalized.safetyRecords
+      .map(normalizeSafetyRecord)
+      .filter((record) => hasSafetyRecordContent(record) && !deletedSafetyRecordIds.has(record.id));
     if (!normalized.safetyRecords.length) {
-      normalized.safetyRecords = normalized.scores.map(legacyScoreToSafetyRecord).filter(Boolean);
+      normalized.safetyRecords = normalized.scores
+        .map(legacyScoreToSafetyRecord)
+        .filter((record) => record && !deletedSafetyRecordIds.has(record.id));
     }
 
     return normalized;
@@ -1350,6 +1357,7 @@
       safetyIdentificationOverrides: s.safetyIdentificationOverrides || {},
       scores: toObj((s.scores || []).map(compactForStorage)),
       safetyRecords: toObj((s.safetyRecords || []).map(compactForStorage)),
+      deletedSafetyRecords: toObj((s.deletedSafetyRecords || []).map(compactForStorage)),
       history: toObj((s.history || []).filter((entry) => !isHistoryEntryExpired(entry))),
     };
   }
@@ -1464,6 +1472,59 @@
 
   async function deleteSafetyRecordFromDb(recordId) {
     await dbRef(`safetyRecords/${recordId}`).remove();
+  }
+
+  function getDeletedSafetyRecordMarker(record) {
+    const id = String(record?.id || "");
+    return {
+      id,
+      sourceScoreId: id.startsWith("safety-") ? id.slice("safety-".length) : "",
+      periodId: record?.periodId || "",
+      areaId: record?.areaId || "",
+      deletedAt: new Date().toISOString(),
+      deletedBy: currentUser?.username || "",
+    };
+  }
+
+  async function markSafetyRecordDeleted(record) {
+    const marker = getDeletedSafetyRecordMarker(record);
+    if (!marker.id) {
+      return;
+    }
+    await dbRef(`deletedSafetyRecords/${marker.id}`).set(marker);
+  }
+
+  async function tryMarkSafetyRecordDeleted(record) {
+    try {
+      await markSafetyRecordDeleted(record);
+      return true;
+    } catch (error) {
+      console.warn("Không đánh dấu được báo cáo AT đã xóa:", error);
+      return false;
+    }
+  }
+
+  async function unmarkSafetyRecordDeleted(recordId) {
+    if (!recordId) {
+      return;
+    }
+    await dbRef(`deletedSafetyRecords/${recordId}`).remove();
+  }
+
+  async function tryUnmarkSafetyRecordDeleted(recordId) {
+    try {
+      await unmarkSafetyRecordDeleted(recordId);
+    } catch (error) {
+      console.warn("Không gỡ được đánh dấu xóa báo cáo AT:", error);
+    }
+  }
+
+  async function tryLogAdminChange(change) {
+    try {
+      await logAdminChange(change);
+    } catch (error) {
+      console.warn("Không ghi được lịch sử thay đổi:", error);
+    }
   }
 
   function isMeaningfulHistoryChange(entry) {
@@ -2617,6 +2678,39 @@
 
   function canUseSafety(account) {
     return isAdminAccount(account) || hasAccountAccessType(account, SAFETY_PERIOD_TYPE);
+  }
+
+  function sameNormalizedText(left, right) {
+    return String(left || "").trim().toLowerCase() === String(right || "").trim().toLowerCase();
+  }
+
+  function isSafetyRecordOwnedByAccount(record, account = currentUser) {
+    if (!record || !account) {
+      return false;
+    }
+    const username = String(account.username || "").trim();
+    const recordUsername = String(record.accountUsername || "").trim();
+    if (username && recordUsername) {
+      return sameNormalizedText(recordUsername, username);
+    }
+    if (recordUsername) {
+      return false;
+    }
+    const displayName = getAccountDisplayName(account, SAFETY_PERIOD_TYPE, record.periodId || getActivePeriodId(SAFETY_PERIOD_TYPE));
+    return Boolean(displayName) && (
+      sameNormalizedText(record.scorerName, displayName) ||
+      sameNormalizedText(record.issueFoundBy, displayName)
+    );
+  }
+
+  function canManageSafetyRecord(record, account = currentUser) {
+    if (!record || !account || isPeriodArchived(record.periodId)) {
+      return false;
+    }
+    if (isAdminAccount(account)) {
+      return true;
+    }
+    return canUseSafety(account) && isSafetyRecordOwnedByAccount(record, account);
   }
 
   function requireAdminAction(message = "Chỉ admin được thực hiện thao tác này.") {
@@ -4044,47 +4138,58 @@
     const isAdmin = isAdminAccount(currentUser);
     const hasFiveSAccess = !isAdmin && Boolean(hasAccountAccessType(currentUser, FIVE_S_PERIOD_TYPE));
     const hasSafetyAccess = !isAdmin && Boolean(hasAccountAccessType(currentUser, SAFETY_PERIOD_TYPE));
+    const isReadOnlyPageAccess = (element) => element.matches(".tab-button, .tab-panel, .nav-group, .account-menu-divider") ||
+      Boolean(element.closest(".sidebar-nav, .header-quick-nav"));
 
     elements.appShell.classList.toggle("admin-mode", isAdmin);
 
-    // 1. Quản trị hệ thống & Thống kê AT (.admin-only): Chỉ Admin được thấy
+    // 1. Admin-only: non-admin vẫn thấy điều hướng/trang, nhưng không thấy nút thao tác ghi.
     document.querySelectorAll(".admin-only").forEach((element) => {
       if (element.classList.contains("safety-report-hidden")) {
         element.hidden = true;
         return;
       }
-      element.hidden = !isAdmin;
+      element.hidden = !isAdmin && !isReadOnlyPageAccess(element);
     });
 
-    // 2. Tổng hợp điểm 5S (.five-s-access-only): CHỈ ADMIN ĐƯỢC THẤY (tất cả các role khác đều không có)
+    // 2. 5S: điều hướng được mở để xem, thao tác nghiệp vụ vẫn theo quyền.
     document.querySelectorAll(".five-s-access-only").forEach((element) => {
-      element.hidden = !isAdmin;
+      element.hidden = !isAdmin && !isReadOnlyPageAccess(element);
     });
 
-    // 3. Phiếu chấm 5S (.assessor-only): Chỉ người có quyền chấm 5S được thấy, ADMIN KHÔNG CẦN THẤY
+    // 3. Phiếu chấm 5S: mở điều hướng xem, giữ quyền chấm theo role.
     document.querySelectorAll(".assessor-only").forEach((element) => {
-      element.hidden = isAdmin || !hasFiveSAccess;
+      element.hidden = isAdmin || (!isReadOnlyPageAccess(element) && !hasFiveSAccess);
     });
 
-    // 4. An toàn lao động (.safety-access-only): Admin thấy, người có quyền AT thấy; người chỉ có quyền 5S KHÔNG THẤY
+    // 4. An toàn lao động: mở điều hướng xem, giữ quyền đánh giá theo role.
     document.querySelectorAll(".safety-access-only").forEach((element) => {
       if (element.classList.contains("safety-report-hidden")) {
         element.hidden = true;
         return;
       }
-      element.hidden = !isAdmin && !hasSafetyAccess;
+      element.hidden = !isReadOnlyPageAccess(element) && !isAdmin && !hasSafetyAccess;
     });
 
-    // 5. Ẩn/hiện cả nhóm menu Vận hành 5S nếu user không có quyền xem bất kỳ mục nào trong nhóm
+    // 5. Non-admin cũng được xem các nhóm trang.
     const navGroup5S = document.querySelector(".nav-group-5s");
     if (navGroup5S) {
-      navGroup5S.hidden = !isAdmin && !hasFiveSAccess;
+      navGroup5S.hidden = false;
     }
 
-    // 6. Ẩn/hiện cả nhóm menu An toàn lao động nếu user không có quyền xem bất kỳ mục nào trong nhóm
+    // 6. Nhóm an toàn luôn hiển thị; thao tác ghi được chặn riêng.
     const navGroupSafety = document.querySelector(".nav-group-safety");
     if (navGroupSafety) {
-      navGroupSafety.hidden = !isAdmin && !hasSafetyAccess;
+      navGroupSafety.hidden = false;
+    }
+
+    if (!isAdmin) {
+      document.querySelectorAll("#tab-catalog [data-action]:not([data-action='set-catalog-scope']), #tab-accounts [data-action]:not([data-action='set-account-scope'])").forEach((element) => {
+        element.hidden = true;
+      });
+      document.querySelectorAll("#tab-catalog input, #tab-catalog select, #tab-catalog textarea, #tab-accounts input, #tab-accounts select, #tab-accounts textarea").forEach((element) => {
+        element.disabled = true;
+      });
     }
   }
 
@@ -4093,27 +4198,10 @@
       return false;
     }
 
-    if (tab === "home") {
-      return true;
+    if (tab === "assessor" && isAdminAccount(currentUser)) {
+      return false;
     }
-
-    if (isAdminAccount(currentUser)) {
-      return ["home", "summary", "safety", "issue-stats", "catalog", "accounts"].includes(tab);
-    }
-
-    const allowedTabs = ["home"];
-    const has5S = hasAccountAccessType(currentUser, FIVE_S_PERIOD_TYPE);
-    const hasSafety = hasAccountAccessType(currentUser, SAFETY_PERIOD_TYPE);
-
-    if (has5S) {
-      allowedTabs.push("assessor");
-    }
-
-    if (hasSafety) {
-      allowedTabs.push("safety");
-    }
-
-    return allowedTabs.includes(tab);
+    return ["home", "assessor", "summary", "safety", "issue-stats", "catalog", "accounts"].includes(tab);
   }
 
   function getFallbackTab() {
@@ -4222,6 +4310,7 @@
       areaAverage,
       buildMatrixTable,
       canUseSafety,
+      canManageSafetyRecord,
       elements,
       escapeHtml,
       formatDateDisplay,
@@ -4257,6 +4346,7 @@
       getFiveSChartTarget,
       getFiveSChartTargets,
       getScoreSourceLabel,
+      getScoreSourceForAccount,
       goToSafetyReport,
       updateSafetyZoneTarget,
       isAdminAccount,
@@ -4345,8 +4435,7 @@
     if (elements.safetyAreaFilter) {
       const safetyPeriodId = getActivePeriodId(SAFETY_PERIOD_TYPE);
       const current = elements.safetyAreaFilter.value;
-      const safetyAllowedIds = getAllowedAreaIds(currentUser, safetyPeriodId);
-      const periodAreas = getAreasForPeriod(safetyPeriodId).filter((area) => isReportableSafetyArea(area) && safetyAllowedIds.has(area.id));
+      const periodAreas = getAreasForPeriod(safetyPeriodId).filter(isReportableSafetyArea);
       elements.safetyAreaFilter.innerHTML = "<option value=\"\">Tất cả zone</option>" + periodAreas
         .map((area) => "<option value=\"" + escapeHtml(area.id) + "\">Zone " + escapeHtml(area.code) + " · " + escapeHtml(getSafetyDepartmentForArea(area, safetyPeriodId)) + "</option>")
         .join("");
@@ -4570,7 +4659,131 @@
     const required = getRequiredCellsForArea(selectedArea);
     elements.assessorTitle.textContent = `Phiếu chấm 5S - Zone ${selectedArea.code} - ${periodLabel(period)}`;
     elements.assessorProgress.textContent = `Đã chấm ${completed}/${required} ô. Điểm TB zone: ${formatNumber(areaAverage(periodId, selectedArea, scoreSource), 2)}`;
-    elements.assessorSheet.innerHTML = DEFAULT_ITEMS.map((item) => renderAssessorItem(periodId, selectedArea, item, scoreSource)).join("");
+    elements.assessorSheet.innerHTML = '<div class="assessor-4m-wrap" data-drag-scroll><table class="matrix-table standard-reference-table assessor-4m-table"></table></div>';
+    renderAssessorFourMTable(elements.assessorSheet.querySelector(".assessor-4m-table"), {
+      periodId,
+      area: selectedArea,
+      scoreSource,
+      editable: canEditFiveSScoreSource(currentUser, scoreSource) && !isPeriodArchived(periodId),
+    });
+  }
+
+  function renderAssessorFourMTable(table, { periodId, area, scoreSource = SCORE_SOURCE_ASSESSOR, editable = false }) {
+    if (!table || !area) {
+      return;
+    }
+
+    const period = getPeriod(periodId);
+    const normalizedSource = normalizeScoreSource(scoreSource);
+    const canEditTable = Boolean(editable) && getAllowedAreaIds(currentUser, periodId).has(area.id);
+    table.innerHTML = "";
+    table.dataset.periodId = periodId;
+    table.dataset.areaId = area.id;
+
+    const colgroup = document.createElement("colgroup");
+    ["76px", "148px", "68px", "58px", "154px", "154px", "170px", "154px", "154px"].forEach((width) => {
+      const col = document.createElement("col");
+      col.style.width = width;
+      colgroup.appendChild(col);
+    });
+    table.appendChild(colgroup);
+
+    const titleRow = document.createElement("tr");
+    titleRow.appendChild(setColSpan(createCell("th", "BẢNG ĐÁNH GIÁ HOẠT ĐỘNG SHITSUKE + 4S NƠI LÀM VIỆC", "standard-reference-title assessor-4m-title"), 9));
+    table.appendChild(titleRow);
+
+    const metaRow = document.createElement("tr");
+    metaRow.appendChild(setColSpan(createCell("td", "Zone: " + area.code + "\n" + getAreaResponsibleNameForPeriod(periodId, area), "standard-reference-meta-cell assessor-4m-meta"), 2));
+    metaRow.appendChild(setColSpan(createCell("td", "Kỳ: " + periodLabel(period) + "\nNguồn: " + getScoreSourceLabel(normalizedSource), "standard-reference-meta-cell assessor-4m-meta"), 2));
+    metaRow.appendChild(setColSpan(createCell("td", "Đánh giá viên:\n" + getAccountDisplayName(currentUser, FIVE_S_PERIOD_TYPE, periodId), "standard-reference-meta-cell assessor-4m-meta"), 3));
+    metaRow.appendChild(setColSpan(createCell("td", "Điểm TB:\n" + formatNumber(areaAverage(periodId, area, normalizedSource), 2), "standard-reference-meta-cell assessor-4m-meta assessor-4m-average"), 2));
+    table.appendChild(metaRow);
+
+    const headerRow = document.createElement("tr");
+    ["Hạng mục", "Vị trí kiểm tra", "Khoản mục", "Điểm", ...SCORE_LEVEL_LABELS].forEach((label, index) => {
+      headerRow.appendChild(createCell("th", label, `standard-reference-column-head standard-reference-head-${index + 1}`));
+    });
+    table.appendChild(headerRow);
+
+    STANDARD_REFERENCE_SECTIONS.forEach((section) => {
+      const sectionSpan = section.items.reduce((total, entry) => total + (getItem(entry.id)?.criteria.length || 0), 0);
+      let isFirstSectionRow = true;
+
+      section.items.forEach((entry) => {
+        const item = getItem(entry.id);
+        if (!item) {
+          return;
+        }
+
+        item.criteria.forEach((criterion, criterionIndex) => {
+          const row = document.createElement("tr");
+          const record = getScoreRecord(periodId, area.id, item.id, criterion.id, normalizedSource);
+          const selectedScore = isScoreCrossed(record) ? SCORE_CROSSED : Number.isFinite(record?.score) ? String(record.score) : "";
+          const isNa = isNotApplicable(item.id, criterion.id, area);
+          const canEditCell = canEditTable && !isNa;
+
+          if (isFirstSectionRow) {
+            row.appendChild(setRowSpan(createCell("td", section.label, "standard-reference-section-cell"), sectionSpan));
+            isFirstSectionRow = false;
+          }
+          if (criterionIndex === 0) {
+            row.appendChild(setRowSpan(createCell("td", entry.location || item.name, "standard-reference-location-cell"), item.criteria.length));
+          }
+
+          row.appendChild(createCell("td", entry.hideCriterion ? "" : criterion.label, "standard-reference-criterion-cell"));
+          row.appendChild(createAssessorScoreInputCell({ periodId, area, item, criterion, scoreSource: normalizedSource, selectedScore, canEdit: canEditCell }));
+
+          const levels = SCORE_GUIDE[item.id]?.[criterion.id] || [];
+          for (let levelIndex = 0; levelIndex < 5; levelIndex += 1) {
+            const scoreValue = String(levelIndex + 1);
+            const className = `standard-reference-level-cell standard-reference-level-${levelIndex + 1}${selectedScore === scoreValue ? " is-selected-score" : ""}`;
+            row.appendChild(createCell("td", levels[levelIndex] || "", className));
+          }
+          table.appendChild(row);
+        });
+      });
+    });
+
+    const averageRow = document.createElement("tr");
+    averageRow.appendChild(createCell("td", "", "standard-reference-blank"));
+    averageRow.appendChild(setColSpan(createCell("td", "Điểm trung bình Zone " + area.code + ": " + formatNumber(areaAverage(periodId, area, normalizedSource), 2), "standard-reference-average-label"), 8));
+    table.appendChild(averageRow);
+  }
+
+  function createAssessorScoreInputCell({ periodId, area, item, criterion, scoreSource, selectedScore, canEdit }) {
+    const cell = createCell("td", "", "standard-reference-score-input-cell");
+    if (!canEdit) {
+      cell.textContent = selectedScore === SCORE_CROSSED ? "X" : selectedScore || "-";
+      return cell;
+    }
+
+    const select = document.createElement("select");
+    select.className = "assessor-score-select";
+    select.dataset.assessorScoreSelect = "true";
+    select.dataset.periodId = periodId;
+    select.dataset.areaId = area.id;
+    select.dataset.itemId = item.id;
+    select.dataset.criterionId = criterion.id;
+    select.dataset.scoreSource = normalizeScoreSource(scoreSource);
+    [
+      { value: "", label: "-" },
+      { value: "1", label: "1" },
+      { value: "2", label: "2" },
+      { value: "3", label: "3" },
+      { value: "4", label: "4" },
+      { value: "5", label: "5" },
+      { value: SCORE_CROSSED, label: "X" },
+    ].forEach((option) => {
+      const itemOption = document.createElement("option");
+      itemOption.value = option.value;
+      itemOption.textContent = option.label;
+      itemOption.selected = option.value === selectedScore;
+      select.appendChild(itemOption);
+    });
+    cell.classList.toggle("score-low", selectedScore === "1" || selectedScore === "2");
+    cell.classList.toggle("score-na", selectedScore === SCORE_CROSSED);
+    cell.appendChild(select);
+    return cell;
   }
 
   function renderAssessorItem(periodId, area, item, scoreSource = SCORE_SOURCE_ASSESSOR) {
@@ -4671,10 +4884,6 @@
   }
 
   function setCatalogScope(scope) {
-    if (!requireAdminAction()) {
-      return;
-    }
-
     const nextScope = normalizeCatalogType(scope);
     expandedCatalogScope = expandedCatalogScope === nextScope ? "" : nextScope;
     activeCatalogScope = nextScope;
@@ -4682,10 +4891,6 @@
   }
 
   function setAccountScope(scope) {
-    if (!requireAdminAction()) {
-      return;
-    }
-
     const nextScope = normalizeCatalogType(scope);
     expandedAccountScope = expandedAccountScope === nextScope ? "" : nextScope;
     activeAccountScope = nextScope;
@@ -5238,6 +5443,47 @@
     }
   }
 
+  async function handleAssessorScoreSelectChange(select) {
+    const periodId = select.dataset.periodId || "";
+    const area = getAreaForPeriod(periodId, select.dataset.areaId || "");
+    const item = getItem(select.dataset.itemId || "");
+    const criterion = getCriterion(item, select.dataset.criterionId || "");
+    const scoreSource = normalizeScoreSource(select.dataset.scoreSource || "");
+    const rawScore = select.value;
+    const isCrossed = rawScore === SCORE_CROSSED;
+    const nextScore = rawScore === "" || isCrossed ? null : Number(rawScore);
+
+    if (!area || !item || !criterion) {
+      showToast("Không tìm thấy ô chấm điểm.", true);
+      renderActiveTab();
+      return;
+    }
+    if (nextScore !== null && (!Number.isInteger(nextScore) || nextScore < 1 || nextScore > 5)) {
+      showToast("Điểm phải từ 1 đến 5.", true);
+      renderActiveTab();
+      return;
+    }
+
+    select.disabled = true;
+    try {
+      await setScore({
+        periodId,
+        area,
+        item,
+        criterion,
+        score: nextScore,
+        status: isCrossed ? SCORE_CROSSED : "",
+        scoreSource,
+      });
+      showToast("Đã lưu điểm.");
+      renderAll();
+    } catch (error) {
+      console.error(error);
+      showToast(error?.message || "Lỗi khi lưu điểm.", true);
+      renderActiveTab();
+    }
+  }
+
   async function deleteScore({ periodId, area, item, criterion, record }) {
     if (!record) return;
     if (!requireAdminAction("Chỉ admin được xóa điểm.")) {
@@ -5598,12 +5844,14 @@
           }
         } else {
           const beforeCopy = cloneValue(before);
+          state.deletedSafetyRecords = (state.deletedSafetyRecords || []).filter((item) => item.id !== beforeCopy.id);
           if (existingIndex >= 0) {
             state.safetyRecords[existingIndex] = beforeCopy;
           } else {
             state.safetyRecords.push(beforeCopy);
           }
           await saveSafetyRecord(beforeCopy);
+          await tryUnmarkSafetyRecordDeleted(beforeCopy.id);
         }
         redoStack.push(action);
         showToast(`Hoàn tác: ${action.description || "Báo cáo AT"}`);
@@ -5687,18 +5935,27 @@
         const targetId = after?.id || recordId;
         const existingIndex = state.safetyRecords.findIndex((r) => r.id === targetId);
         if (!after) {
+          const deletedSource = before || { id: targetId, periodId };
+          const deletedMarker = getDeletedSafetyRecordMarker(deletedSource);
           if (existingIndex >= 0) {
             state.safetyRecords.splice(existingIndex, 1);
-            await deleteSafetyRecordFromDb(targetId);
           }
+          state.deletedSafetyRecords = [
+            ...(state.deletedSafetyRecords || []).filter((item) => item.id !== deletedMarker.id),
+            deletedMarker,
+          ];
+          await markSafetyRecordDeleted(deletedSource);
+          await deleteSafetyRecordFromDb(targetId);
         } else {
           const afterCopy = cloneValue(after);
+          state.deletedSafetyRecords = (state.deletedSafetyRecords || []).filter((item) => item.id !== afterCopy.id);
           if (existingIndex >= 0) {
             state.safetyRecords[existingIndex] = afterCopy;
           } else {
             state.safetyRecords.push(afterCopy);
           }
           await saveSafetyRecord(afterCopy);
+          await tryUnmarkSafetyRecordDeleted(afterCopy.id);
         }
         undoStack.push(action);
         showToast(`Làm lại: ${action.description || "Báo cáo AT"}`);
@@ -5758,7 +6015,7 @@
         }
       } catch (error) {
         console.error(error);
-        showToast("Lỗi khi lưu dữ liệu.", true);
+        showToast(error?.message || "Lỗi khi lưu dữ liệu.", true);
       }
     });
 
@@ -8103,11 +8360,68 @@
     if (!record) {
       return;
     }
-    if (!isAdminAccount(currentUser) && record.periodId !== getActivePeriodId(SAFETY_PERIOD_TYPE)) {
-      showToast("Kỳ đánh giá này hiện không mở. Bạn không có quyền sửa đánh giá.", true);
+    if (!canManageSafetyRecord(record)) {
+      showToast("Bạn chỉ được sửa nhiệm vụ đánh giá an toàn của mình.", true);
       return;
     }
     openSafetyRecordForm(record);
+  }
+
+  function deleteSafetyRecord(recordId) {
+    const record = state.safetyRecords.find((item) => item.id === recordId);
+    if (!record) {
+      showToast("Không tìm thấy báo cáo đánh giá an toàn.", true);
+      return;
+    }
+    if (!canManageSafetyRecord(record)) {
+      showToast("Bạn chỉ được xóa nhiệm vụ đánh giá an toàn của mình.", true);
+      return;
+    }
+
+    const period = getPeriod(record.periodId);
+    const area = getAreaForPeriod(record.periodId, record.areaId);
+    openConfirmModal({
+      title: "Xóa báo cáo đánh giá an toàn",
+      message: "Bạn có chắc muốn xóa báo cáo này không?",
+      confirmText: "Xóa",
+      danger: true,
+      renderAfter: false,
+      async onConfirm() {
+        const recordCopy = cloneValue(record);
+        const deletedMarker = getDeletedSafetyRecordMarker(record);
+        state.safetyRecords = state.safetyRecords.filter((item) => item.id !== record.id);
+        state.deletedSafetyRecords = [
+          ...(state.deletedSafetyRecords || []).filter((item) => item.id !== deletedMarker.id),
+          deletedMarker,
+        ];
+        await tryMarkSafetyRecordDeleted(record);
+        await Promise.all([
+          deleteSafetyRecordFromDb(record.id),
+          tryLogAdminChange({
+            subjectLabel: "Đánh giá an toàn",
+            areaCode: area?.code || "",
+            beforeLabel: (record.issueLocation || "") + " · " + (record.note || ""),
+            afterLabel: "Đã xóa",
+            changeLabel: "Xóa báo cáo AT" + (area?.code ? " Zone " + area.code : ""),
+            scope: SAFETY_PERIOD_TYPE,
+            periodId: record.periodId,
+          }),
+        ]);
+        pushUndoAction({
+          type: "safetyRecord",
+          description: `Xóa báo cáo AT${area?.code ? " Zone " + area.code : ""}: ${record.note || ""}`,
+          recordId: record.id,
+          periodId: record.periodId,
+          areaCode: area?.code || "",
+          before: recordCopy,
+          after: null,
+          deletedMarker,
+          isNew: false,
+        });
+        showToast("Đã xóa báo cáo an toàn.");
+        renderAll();
+      },
+    });
   }
 
   function openSafetyRecordForm(record = null) {
@@ -8119,6 +8433,10 @@
     }
     if (!canUseSafety(currentUser)) {
       showToast("Bạn không có quyền cập nhật đánh giá an toàn.", true);
+      return;
+    }
+    if (record && !canManageSafetyRecord(record)) {
+      showToast("Bạn chỉ được sửa nhiệm vụ đánh giá an toàn của mình.", true);
       return;
     }
 
@@ -8141,6 +8459,9 @@
     openFormModal({
       title: isNew ? "Thêm báo cáo đánh giá an toàn" : "Sửa báo cáo đánh giá an toàn",
       submitText: "Lưu báo cáo",
+      extraActions: !isNew && canManageSafetyRecord(record)
+        ? "<button class=\"danger-button\" type=\"button\" data-action=\"delete-safety-record\" data-id=\"" + escapeHtml(record.id) + "\">Xóa</button>"
+        : "",
       modalClass: "safety-record-modal",
       html: "<div class=\"modal-context\">" +
           "<span><strong>Kỳ:</strong> " + escapeHtml(periodLabel(period)) + "</span>" +
@@ -8251,9 +8572,11 @@
         } else {
           state.safetyRecords.push(payload);
         }
+        state.deletedSafetyRecords = (state.deletedSafetyRecords || []).filter((item) => item.id !== payload.id);
+        await saveSafetyRecord(payload);
         await Promise.all([
-          saveSafetyRecord(payload),
-          logAdminChange({
+          tryUnmarkSafetyRecordDeleted(payload.id),
+          tryLogAdminChange({
             subjectLabel: "Đánh giá an toàn",
             areaCode: selected.code,
             beforeLabel,
@@ -8339,10 +8662,6 @@
   }
 
   async function exportActiveSafetyReportExcel() {
-    if (!requireAdminAction("Chỉ admin được xuất file đánh giá an toàn.")) {
-      return;
-    }
-
     const reportId = activeSafetyReport || "assessment";
     if (reportId === "identification") {
       exportRiskIdentificationExcel();
@@ -8363,10 +8682,6 @@
   }
 
   function confirmExportActiveSafetyReportExcel() {
-    if (!requireAdminAction("Chỉ admin được xuất file đánh giá an toàn.")) {
-      return;
-    }
-
     openConfirmModal({
       title: "Xác nhận xuất Excel",
       message: `Xuất file Excel ${getActiveSafetyExcelExportLabel()} của trang đang mở?`,
@@ -8391,10 +8706,6 @@
   }
 
   function exportRiskIdentificationExcel() {
-    if (!requireAdminAction("Chỉ admin được xuất file tổng hợp nhận diện nguy cơ.")) {
-      return;
-    }
-
     const safetyPeriod = getPeriod(getActivePeriodId(SAFETY_PERIOD_TYPE));
     const filters = getSafetyExcelFilters(safetyPeriod);
     const reportPeriod = getSafetyPeriodForMonth(filters.year, filters.month) || safetyPeriod;
@@ -8410,10 +8721,6 @@
   }
 
   async function exportFactoryRiskExcel() {
-    if (!requireAdminAction("Chỉ admin được xuất file tổng hợp nguy cơ.")) {
-      return;
-    }
-
     const safetyPeriod = getPeriod(getActivePeriodId(SAFETY_PERIOD_TYPE));
     const year = Number(elements.safetyYearFilter?.value) || Number(safetyPeriod?.year) || new Date().getFullYear();
     const reportPeriodId = safetyPeriod?.id || getActivePeriodId(SAFETY_PERIOD_TYPE);
@@ -11857,7 +12164,7 @@
       "remove-account-access",
       "delete-account",
     ]);
-    const safetyActions = new Set(["add-safety-record", "edit-safety-record"]);
+    const safetyActions = new Set(["add-safety-record", "edit-safety-record", "delete-safety-record"]);
     if (adminActions.has(action) && !requireAdminAction()) {
       return;
     }
@@ -11891,6 +12198,7 @@
         renderActiveTab();
       },
       "add-safety-record": () => addSafetyRecord(),
+      "delete-safety-record": () => deleteSafetyRecord(id),
       "delete-period": () => deletePeriod(id),
       "edit-scorer": () => editScorer(id),
       "delete-scorer": () => deleteScorer(id),
@@ -11923,6 +12231,9 @@
     handlers[action]?.();
   }
   function isDragScrollIgnoredTarget(target) {
+    if (target?.closest?.(".assessor-4m-wrap") && target?.matches?.(".assessor-score-select")) {
+      return false;
+    }
     return Boolean(target?.closest?.("button,input,select,textarea,a,label,[contenteditable='true'],[contenteditable='plaintext-only']"));
   }
 
@@ -12277,6 +12588,12 @@
     });
 
     document.addEventListener("change", (event) => {
+      const assessorScoreSelect = event.target?.closest?.("[data-assessor-score-select]");
+      if (assessorScoreSelect) {
+        handleAssessorScoreSelectChange(assessorScoreSelect);
+        return;
+      }
+
       const targetInput = event.target?.closest?.("[data-safety-target-input]");
       if (!targetInput) {
         return;

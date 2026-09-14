@@ -265,6 +265,52 @@
         ? hasAccountAccessType(currentUser, FIVE_S_PERIOD_TYPE)
         : (typeof isFiveSAssessor === "function" ? isFiveSAssessor(currentUser) : false)
     );
+    const isAdmin = isAdminAccount(currentUser);
+    const hasFiveSAccess = isAdmin || Boolean(
+      typeof hasAccountAccessType === "function"
+        ? hasAccountAccessType(currentUser, FIVE_S_PERIOD_TYPE)
+        : canScoreFiveS
+    );
+    const hasSafetyAccess = isAdmin || Boolean(
+      typeof hasAccountAccessType === "function"
+        ? hasAccountAccessType(currentUser, SAFETY_PERIOD_TYPE)
+        : false
+    );
+
+    const navButton = ({ icon, label, title, tab, report }) => {
+      const routeAttr = report
+        ? `data-go-safety-report="${escapeHtml(report)}"`
+        : `data-go-tab="${escapeHtml(tab)}"`;
+      return `<button class="cyber-nav-btn${tab === "home" ? " is-active" : ""}" type="button" ${routeAttr} title="${escapeHtml(title)}">
+        <span>${escapeHtml(icon)}</span> ${escapeHtml(label)}
+      </button>`;
+    };
+    const navSections = [
+      [
+        navButton({ icon: "🏠", label: "Trang chủ", title: "Trang chủ Cyber Hub", tab: "home" }),
+      ],
+      [
+        ...(canScoreFiveS ? [navButton({ icon: "📝", label: "Phiếu chấm", title: "Phiếu chấm điểm 5S", tab: "assessor" })] : []),
+        ...(hasFiveSAccess ? [navButton({ icon: "📊", label: "Bảng Điểm 5S", title: "Tổng hợp điểm 5S", tab: "summary" })] : []),
+      ],
+      [
+        ...(hasSafetyAccess ? [
+          navButton({ icon: "🛡️", label: "Đánh giá AT", title: "Đánh giá an toàn", report: "assessment" }),
+          navButton({ icon: "⚠️", label: "Nhận diện", title: "Tổng hợp nhận diện nguy cơ mất an toàn", report: "identification" }),
+          navButton({ icon: "🏭", label: "Nguy cơ NM", title: "Tổng hợp nguy cơ mất an toàn nhà máy", report: "factory" }),
+          navButton({ icon: "📈", label: "Thống kê AT", title: "Thống kê an toàn", tab: "issue-stats" }),
+        ] : []),
+      ],
+      [
+        ...(isAdmin ? [
+          navButton({ icon: "🗂️", label: "Danh mục", title: "Danh mục", tab: "catalog" }),
+          navButton({ icon: "👥", label: "Tài khoản", title: "Cấp tài khoản", tab: "accounts" }),
+        ] : []),
+      ],
+    ].filter((section) => section.length);
+    const cyberNavHtml = navSections
+      .map((section) => section.join(""))
+      .join('<span class="cyber-nav-divider"></span>');
 
     elements.adminHomeCards.classList.add("has-cyber-home");
 
@@ -323,31 +369,7 @@
 
           <!-- All Sidebar Items as Direct Cyber HUD Buttons with Drag-to-Scroll -->
           <div class="cyber-nav-links" id="cyberNavLinks">
-            <button class="cyber-nav-btn is-active" type="button" data-go-tab="home" title="Trang chủ Cyber Hub">
-              <span>🏠</span> Trang chủ
-            </button>
-            <span class="cyber-nav-divider"></span>
-            ${canScoreFiveS ? `
-              <button class="cyber-nav-btn assessor-only" type="button" data-go-tab="assessor" title="Phiếu chấm điểm 5S">
-                <span>📝</span> Phiếu chấm
-              </button>
-            ` : ""}
-            <button class="cyber-nav-btn five-s-access-only" type="button" data-go-tab="summary" title="Tổng hợp điểm 5S">
-              <span>📊</span> Bảng Điểm 5S
-            </button>
-            <span class="cyber-nav-divider"></span>
-            <button class="cyber-nav-btn safety-access-only" type="button" data-go-safety-report="assessment" title="Đánh giá an toàn">
-              <span>🛡️</span> Đánh giá AT
-            </button>
-            <button class="cyber-nav-btn admin-only" type="button" data-go-safety-report="identification" title="Tổng hợp nhận diện nguy cơ mất an toàn">
-              <span>⚠️</span> Nhận diện nguy cơ
-            </button>
-            <button class="cyber-nav-btn admin-only" type="button" data-go-safety-report="factory" title="Tổng hợp nguy cơ mất an toàn nhà máy">
-              <span>🏭</span> Nguy cơ NM
-            </button>
-            <button class="cyber-nav-btn admin-only" type="button" data-go-tab="issue-stats" title="Thống kê an toàn">
-              <span>📈</span> Thống kê AT
-            </button>
+            ${cyberNavHtml}
           </div>
 
           <!-- Right Side: User Profile -->

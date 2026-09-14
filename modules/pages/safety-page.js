@@ -125,7 +125,7 @@
   }
 
   function canViewSafetySummaryReports(context) {
-    return Boolean(context.isAdminAccount?.(context.currentUser));
+    return Boolean(context.currentUser);
   }
 
   function getAllowedSafetyReports(context) {
@@ -202,7 +202,11 @@
     setButtonVisible(elements.addSafetyRecordButton, isAssessment, context);
     setButtonVisible(elements.editSafetyMetaButton, isAssessment && isAdmin, context);
     setButtonVisible(elements.sendSafetyMailButton, isAssessment && isAdmin, context);
-    setButtonVisible(elements.exportSafetyExcelButton, Boolean(reportId) && isAdmin, context);
+    const canShowExport = Boolean(reportId) && (isAdmin || isIdentification || isFactory);
+    if (elements.exportSafetyExcelButton) {
+      elements.exportSafetyExcelButton.classList.toggle("admin-only", !(isIdentification || isFactory));
+    }
+    setButtonVisible(elements.exportSafetyExcelButton, canShowExport, context);
     const safetyToolbar = elements.safetyPeriodSelect?.closest?.(".safety-toolbar");
     if (safetyToolbar) {
       safetyToolbar.querySelectorAll('[data-action="import-page-json"], [data-action="export-page-json"]').forEach((btn) => {
@@ -222,12 +226,13 @@
   function syncSafetyFilters(context, period) {
     const { elements, escapeHtml, getSafetyFilterMonths, getSafetyFilterYears, isAdminAccount, currentUser } = context;
     const isAdmin = Boolean(isAdminAccount?.(currentUser));
+    const usesAdminViewScope = context.activeSafetyReport === "assessment" || context.activeSafetyReport === "identification" || context.activeSafetyReport === "factory";
     const areaId = context.activeSafetyReport === "assessment" ? elements.safetyAreaFilter?.value || "" : "";
     const openYear = Number(period?.year) || new Date().getFullYear();
     const openMonth = Number(period?.month) || new Date().getMonth() + 1;
 
     let years = typeof getSafetyFilterYears === "function" ? getSafetyFilterYears({ areaId }) : [];
-    if (!isAdmin) {
+    if (!isAdmin && !usesAdminViewScope) {
       years = [openYear];
     }
 
@@ -239,7 +244,7 @@
       ? getSafetyFilterMonths(selectedYear, { areaId })
       : [];
     let selectedMonth = Number(elements.safetyMonthFilter?.value) || openMonth;
-    if (!isAdmin) {
+    if (!isAdmin && !usesAdminViewScope) {
       selectedMonth = openMonth;
     } else if (!months.includes(selectedMonth)) {
       selectedMonth = months.includes(openMonth) ? openMonth : months[0] || openMonth;
@@ -255,7 +260,7 @@
     }
 
     if (elements.safetyMonthFilter) {
-      const visibleMonths = !isAdmin ? [openMonth] : months;
+      const visibleMonths = !isAdmin && !usesAdminViewScope ? [openMonth] : months;
       elements.safetyMonthFilter.innerHTML = visibleMonths.length
         ? visibleMonths
           .map((month) => `<option value="${month}" ${month === selectedMonth ? "selected" : ""}>Tháng ${month}</option>`)
@@ -275,18 +280,30 @@
     return getAllowedAreaIds(currentUser, periodId);
   }
 
+  function getAllReportableAreas(context, periodId, areaFilter = "") {
+    return context.getAreasForPeriod(periodId).filter((area) => isReportableSafetyArea(area) && (!areaFilter || area.id === areaFilter));
+  }
+
   function getVisibleAreas(context, periodId, areaFilter = "") {
-    const { getAreasForPeriod } = context;
     const areaIds = getVisibleAreaIds(context, periodId);
-    return getAreasForPeriod(periodId).filter((area) => isReportableSafetyArea(area) && areaIds.has(area.id) && (!areaFilter || area.id === areaFilter));
+    return getAllReportableAreas(context, periodId, areaFilter).filter((area) => areaIds.has(area.id));
+  }
+
+  function getAllDepartmentGroups(context, periodId, areaFilter = "") {
+    return context.getSafetyDepartmentGroups(periodId)
+      .map((group) => ({
+        ...group,
+        areas: group.areas.filter((area) => isReportableSafetyArea(area) && (!areaFilter || area.id === areaFilter)),
+      }))
+      .filter((group) => group.areas.length);
   }
 
   function getVisibleDepartmentGroups(context, periodId, areaFilter = "") {
     const visibleAreaIds = getVisibleAreaIds(context, periodId);
-    return context.getSafetyDepartmentGroups(periodId)
+    return getAllDepartmentGroups(context, periodId, areaFilter)
       .map((group) => ({
         ...group,
-        areas: group.areas.filter((area) => isReportableSafetyArea(area) && visibleAreaIds.has(area.id) && (!areaFilter || area.id === areaFilter)),
+        areas: group.areas.filter((area) => visibleAreaIds.has(area.id)),
       }))
       .filter((group) => group.areas.length);
   }
@@ -923,7 +940,7 @@
       SAFETY_FOUND_COLUMNS,
       SAFETY_LEVEL_COLUMNS,
       SAFETY_STOP6_COLUMNS,
-      canUseSafety,
+      canManageSafetyRecord,
       escapeHtml,
       getCompletionDateDisplay,
       getIssueCount,
@@ -941,8 +958,9 @@
       isSafetyStop6Selected,
     } = context;
 
-    const isRecordPeriodOpen = row.score.periodId === context.getActivePeriodId(context.SAFETY_PERIOD_TYPE);
-    const canEdit = canUseSafety(context.currentUser) && (Boolean(context.isAdminAccount?.(context.currentUser)) || isRecordPeriodOpen) && !isPeriodArchived(row.score.periodId);
+    const canEdit = typeof canManageSafetyRecord === "function"
+      ? canManageSafetyRecord(row.score, context.currentUser)
+      : Boolean(context.isAdminAccount?.(context.currentUser)) && !isPeriodArchived(row.score.periodId);
     const statusLabel = getIssueStatusLabel ? getIssueStatusLabel(row.score.issueStatus) : (isIssueOpen(row.score) ? "Chưa xử lý" : "Đã xử lý");
     const completionDate = getCompletionDateDisplay(row.score);
     const actions = canEdit
@@ -1226,8 +1244,9 @@
     const activePeriodId = activePeriod?.id || "";
     const isCurrentPeriodOpen = Boolean(activePeriodId) && activePeriodId === getActivePeriodId(SAFETY_PERIOD_TYPE);
     const isAdmin = Boolean(context.isAdminAccount?.(context.currentUser));
+    const shouldUseAdminScope = activeReport === "assessment" || activeReport === "identification" || activeReport === "factory";
 
-    if (!isAdmin && (!activePeriodId || !isCurrentPeriodOpen)) {
+    if (!isAdmin && !shouldUseAdminScope && (!activePeriodId || !isCurrentPeriodOpen)) {
       if (elements.safetyDashboard) {
         elements.safetyDashboard.innerHTML = '<section class="dashboard-card wide"><div class="admin-card-chart-empty" style="padding: 40px; text-align: center; color: var(--text-muted, #64748b);">Kỳ đánh giá an toàn này hiện không mở. Bạn chỉ có thể xem và đánh giá kỳ đang mở.</div></section>';
       }
@@ -1246,15 +1265,19 @@
     const areaFilter = activeReport === "assessment" ? elements.safetyAreaFilter?.value || "" : "";
     const reportPeriod = getMonthPeriod(context, filters.year, filters.month, activePeriod);
     const reportPeriodId = reportPeriod?.id || activePeriodId;
-    const visibleAreas = getVisibleAreas(context, reportPeriodId, areaFilter);
-    const groups = getVisibleDepartmentGroups(context, reportPeriodId, areaFilter);
+    const visibleAreas = shouldUseAdminScope
+      ? getAllReportableAreas(context, reportPeriodId, areaFilter)
+      : getVisibleAreas(context, reportPeriodId, areaFilter);
+    const groups = shouldUseAdminScope
+      ? getAllDepartmentGroups(context, reportPeriodId, areaFilter)
+      : getVisibleDepartmentGroups(context, reportPeriodId, areaFilter);
     const selectedDepartment = "";
     syncDepartmentFilter(context, groups, filters.year);
     const visibleAreaIds = new Set(visibleAreas.map((area) => area.id));
     const rawYearRows = getSafetyRowsForYear(filters.year, { areaId: areaFilter }).filter((row) => visibleAreaIds.has(row.area.id));
     const rawMonthRows = filterRowsByMonth(rawYearRows, filters.month, context);
-    const yearRows = isAdmin ? rawYearRows : rawYearRows.filter((row) => row.score.periodId === activePeriodId);
-    const monthRows = isAdmin ? rawMonthRows : rawMonthRows.filter((row) => row.score.periodId === activePeriodId);
+    const yearRows = isAdmin || shouldUseAdminScope ? rawYearRows : rawYearRows.filter((row) => row.score.periodId === activePeriodId);
+    const monthRows = isAdmin || shouldUseAdminScope ? rawMonthRows : rawMonthRows.filter((row) => row.score.periodId === activePeriodId);
     const canAdd = canUseSafety(context.currentUser) && !isPeriodArchived(activePeriodId) && (isAdmin || isCurrentPeriodOpen);
 
     if (elements.addSafetyRecordButton) {

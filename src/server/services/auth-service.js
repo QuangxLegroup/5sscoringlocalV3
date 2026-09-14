@@ -216,6 +216,10 @@ function isAdminAccount(account) {
   return normalizeAccountRole(account?.role) === ROLE_ADMIN;
 }
 
+function sameNormalizedText(left, right) {
+  return String(left || "").trim().toLowerCase() === String(right || "").trim().toLowerCase();
+}
+
 function accountHasAnyAccess(account) {
   return isAdminAccount(account) || hasAccountAccessType(account, FIVE_S_PERIOD_TYPE) || hasAccountAccessType(account, SAFETY_PERIOD_TYPE);
 }
@@ -577,6 +581,40 @@ class AuthService {
     return new Set([...explicitIds, ...byPerson]);
   }
 
+  getAccountDisplayNameCandidates(root, account, periodId, type = FIVE_S_PERIOD_TYPE) {
+    const normalizedType = normalizeCatalogType(type);
+    const period = collectionValues(root?.periods).find((item) => item.id === periodId);
+    const snapshot = period?.settingsSnapshot || {};
+    const role = getAccountRoleForType(account, normalizedType);
+    const personId = getAccountPersonId(account, normalizedType);
+    const rootCollection = normalizedType === SAFETY_PERIOD_TYPE
+      ? role === ROLE_ZONE_OWNER ? root?.safetyManagers : root?.safetyAssessors
+      : role === ROLE_ZONE_OWNER ? root?.managers : root?.assessors;
+    const snapshotCollection = normalizedType === SAFETY_PERIOD_TYPE
+      ? role === ROLE_ZONE_OWNER ? snapshot.safetyManagers || snapshot.managers : snapshot.safetyAssessors || snapshot.assessors
+      : role === ROLE_ZONE_OWNER ? snapshot.managers : snapshot.assessors;
+    const people = [...collectionValues(snapshotCollection), ...collectionValues(rootCollection)];
+    const person = people.find((item) => item?.id && item.id === personId);
+    return [
+      account?.username,
+      account?.name,
+      person?.name,
+    ].map((value) => String(value || "").trim()).filter(Boolean);
+  }
+
+  isRecordOwnedByAccount(root, record, account, type = SAFETY_PERIOD_TYPE) {
+    const accountUsername = String(account?.username || "").trim();
+    const recordUsername = String(record?.accountUsername || "").trim();
+    if (accountUsername && recordUsername) {
+      return sameNormalizedText(recordUsername, accountUsername);
+    }
+    if (recordUsername) {
+      return false;
+    }
+    const names = this.getAccountDisplayNameCandidates(root, account, record?.periodId || "", type);
+    return names.some((name) => sameNormalizedText(record?.scorerName, name) || sameNormalizedText(record?.issueFoundBy, name));
+  }
+
   assertScoreWriteAllowed(root, account, command) {
     const existingRecord = valueAtPath(root, command.path);
     const operation = String(command.operation || "");
@@ -619,8 +657,20 @@ class AuthService {
       : operation === "update"
         ? { ...(isPlainObject(existingRecord) ? existingRecord : {}), ...(isPlainObject(command.value) ? command.value : {}) }
         : command.value;
+    if (operation === "remove" && !existingRecord) {
+      return;
+    }
     if (!isPlainObject(record)) {
       throw createHttpError("Dữ liệu đánh giá an toàn không hợp lệ.", 400);
+    }
+
+    if (isPlainObject(existingRecord) && !this.isRecordOwnedByAccount(root, existingRecord, account, SAFETY_PERIOD_TYPE)) {
+      throw createHttpError("Bạn chỉ được sửa hoặc xóa đánh giá an toàn của mình.", 403);
+    }
+    const accountUsername = String(account.username || "").trim();
+    const nextOwner = String(record.accountUsername || "").trim();
+    if (operation !== "remove" && (!nextOwner || nextOwner !== accountUsername)) {
+      throw createHttpError("Bạn không có quyền ghi đánh giá an toàn cho tài khoản khác.", 403);
     }
 
     const recordsToCheck = [record];
@@ -655,6 +705,61 @@ class AuthService {
     }
   }
 
+  findCollectionRecordById(collection, id) {
+    const cleanId = String(id || "");
+    if (!cleanId) {
+      return null;
+    }
+    return collectionValues(collection).find((item) => item?.id === cleanId) || null;
+  }
+
+  assertDeletedSafetyRecordWriteAllowed(root, account, command) {
+    const operation = String(command.operation || "");
+    const [, recordIdFromPath] = pathParts(command.path);
+    if (operation === "remove") {
+      const marker = valueAtPath(root, command.path);
+      if (!isPlainObject(marker)) {
+        return;
+      }
+      if (marker.deletedBy && !sameNormalizedText(marker.deletedBy, account?.username)) {
+        throw createHttpError("Bạn không có quyền khôi phục đánh dấu xóa này.", 403);
+      }
+      const allowedAreaIds = this.getAllowedAreaIds(root, account, marker.periodId, SAFETY_PERIOD_TYPE);
+      if (!marker.periodId || !marker.areaId || !allowedAreaIds.has(marker.areaId)) {
+        throw createHttpError("Bạn không có quyền khôi phục đánh dấu xóa này.", 403);
+      }
+      return;
+    }
+    if (!["set", "update"].includes(operation)) {
+      throw createHttpError("Thao tác xóa đánh giá an toàn không hợp lệ.", 400);
+    }
+
+    const marker = operation === "update"
+      ? { ...(isPlainObject(valueAtPath(root, command.path)) ? valueAtPath(root, command.path) : {}), ...(isPlainObject(command.value) ? command.value : {}) }
+      : command.value;
+    if (!isPlainObject(marker)) {
+      throw createHttpError("Dữ liệu đánh dấu xóa không hợp lệ.", 400);
+    }
+
+    const recordId = String(marker.id || recordIdFromPath || "");
+    const sourceScoreId = String(marker.sourceScoreId || (recordId.startsWith("safety-") ? recordId.slice("safety-".length) : ""));
+    const existingRecord = this.findCollectionRecordById(root?.safetyRecords, recordId);
+    const legacyRecord = sourceScoreId ? this.findCollectionRecordById(root?.scores, sourceScoreId) : null;
+    const record = existingRecord || legacyRecord || marker;
+    if (!record?.periodId || !record?.areaId || !hasAccountAccessType(account, SAFETY_PERIOD_TYPE)) {
+      throw createHttpError("Bạn không có quyền xóa đánh giá an toàn.", 403);
+    }
+
+    if ((existingRecord || legacyRecord) && !this.isRecordOwnedByAccount(root, record, account, SAFETY_PERIOD_TYPE)) {
+      throw createHttpError("Bạn chỉ được xóa đánh giá an toàn của mình.", 403);
+    }
+
+    const allowedAreaIds = this.getAllowedAreaIds(root, account, record.periodId, SAFETY_PERIOD_TYPE);
+    if (!allowedAreaIds.has(record.areaId)) {
+      throw createHttpError("Bạn không có quyền xóa đánh giá an toàn cho zone này.", 403);
+    }
+  }
+
   assertDataWriteAllowed(command, authContext, root) {
     const account = authContext?.rawAccount || authContext?.account;
     if (!account) {
@@ -671,6 +776,10 @@ class AuthService {
     }
     if (rootKey === "safetyRecords") {
       this.assertSafetyRecordWriteAllowed(root, account, command);
+      return;
+    }
+    if (rootKey === "deletedSafetyRecords") {
+      this.assertDeletedSafetyRecordWriteAllowed(root, account, command);
       return;
     }
     if (rootKey === "history") {

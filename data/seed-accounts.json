@@ -12,25 +12,25 @@
       "role": "assessor5s",
       "name": "MrQuang",
       "accessTypes": [
-        "safety",
-        "5s"
+        "5s",
+        "safety"
       ],
       "rolesByType": {
-        "safety": "assessorSafety",
-        "5s": "assessor5s"
+        "5s": "assessor5s",
+        "safety": "assessorSafety"
       },
       "username": "mrquang",
       "createdAt": "2026-09-11T06:01:39.205Z",
-      "assessorId": "",
+      "assessorId": "assessor-mtkepzm9-leo6og",
       "areaIds": [
         "area-1"
       ],
-      "safetyAssessorId": "assessor-mtkepzm9-leo6og",
-      "safetyAreaIds": [
+      "fiveSAssessorId": "assessor-mtkepzm9-leo6og",
+      "fiveSAreaIds": [
         "area-1"
       ],
-      "fiveSAssessorId": "",
-      "fiveSAreaIds": [
+      "safetyAssessorId": "",
+      "safetyAreaIds": [
         "area-1"
       ],
       "passwordHash": "pbkdf2-sha256$210000$opCkitbseJ7Xtk8ABzcgRw$NXFRjqUV0wgRVe0XsD8p1jKhcdnssKmL0WHB-HtSN5w"
