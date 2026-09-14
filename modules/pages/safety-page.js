@@ -20,6 +20,55 @@
   const STOP6_COLORS = ["#4f81bd", "#c0504d", "#9bbb59", "#8064a2", "#4bacc6", "#f79646", "#1f4e79"];
   const HIDDEN_SAFETY_ZONE_CODES = new Set(["27"]);
   const COUNTERMEASURE_STATUS_VALUES = new Set(["closed", "in_progress"]);
+  const SAFETY_REPORT_HIDDEN_CLASS = "safety-report-hidden";
+  const SAFETY_DETAIL_PAGE_SIZE = 30;
+  const safetyPagination = {
+    assessment: { key: "", page: 1 },
+    factory: { key: "", page: 1 },
+  };
+
+  function clampPage(value, totalPages) {
+    const page = Number(value);
+    if (!Number.isFinite(page)) return 1;
+    return Math.min(Math.max(1, Math.trunc(page)), Math.max(1, totalPages));
+  }
+
+  function getPaginationState(type, key, totalRows) {
+    const state = safetyPagination[type] || safetyPagination.assessment;
+    const totalPages = Math.max(1, Math.ceil(totalRows / SAFETY_DETAIL_PAGE_SIZE));
+    if (state.key !== key) {
+      state.key = key;
+      state.page = 1;
+    }
+    state.page = clampPage(state.page, totalPages);
+    const startIndex = (state.page - 1) * SAFETY_DETAIL_PAGE_SIZE;
+    return {
+      page: state.page,
+      totalPages,
+      startIndex,
+      endIndex: Math.min(startIndex + SAFETY_DETAIL_PAGE_SIZE, totalRows),
+    };
+  }
+
+  function setSafetyPage(type, page) {
+    const state = safetyPagination[type] || null;
+    if (!state) return;
+    state.page = Math.max(1, Math.trunc(Number(page) || 1));
+  }
+
+  function renderSafetyPager(type, pagination, totalRows, context) {
+    if (totalRows <= SAFETY_DETAIL_PAGE_SIZE) {
+      return "";
+    }
+    const { escapeHtml } = context;
+    const start = pagination.startIndex + 1;
+    const end = pagination.endIndex;
+    return '<div class="safety-table-pager" data-safety-pager="' + escapeHtml(type) + '">' +
+      '<button class="tiny-button" type="button" data-action="set-safety-detail-page" data-page-type="' + escapeHtml(type) + '" data-page="' + escapeHtml(String(pagination.page - 1)) + '" ' + (pagination.page <= 1 ? "disabled" : "") + '>Trước</button>' +
+      '<span>Hiển thị ' + escapeHtml(start) + '-' + escapeHtml(end) + ' / ' + escapeHtml(totalRows) + ' vấn đề · Trang ' + escapeHtml(pagination.page) + '/' + escapeHtml(pagination.totalPages) + '</span>' +
+      '<button class="tiny-button" type="button" data-action="set-safety-detail-page" data-page-type="' + escapeHtml(type) + '" data-page="' + escapeHtml(String(pagination.page + 1)) + '" ' + (pagination.page >= pagination.totalPages ? "disabled" : "") + '>Sau</button>' +
+    '</div>';
+  }
 
   function issueWeight(row, context) {
     const value = Number(context.getIssueCount(row));
@@ -129,6 +178,7 @@
 
     const adminAllowed = !button.classList.contains("admin-only") || context.isAdminAccount(context.currentUser);
     const safetyAllowed = !button.classList.contains("safety-access-only") || context.canUseSafety(context.currentUser);
+    button.classList.toggle(SAFETY_REPORT_HIDDEN_CLASS, !visible);
     button.hidden = !visible || !adminAllowed || !safetyAllowed;
   }
 
@@ -145,8 +195,8 @@
     setFieldVisible(elements.safetyPeriodSelect, isAssessment);
     setFieldVisible(elements.safetyYearFilter, Boolean(reportId));
     setFieldVisible(elements.safetyMonthFilter, isAssessment || isIdentification);
-    setFieldVisible(elements.safetyAreaFilter, isAssessment || isIdentification);
-    setFieldVisible(elements.safetyDepartmentFilter, isFactory);
+    setFieldVisible(elements.safetyAreaFilter, isAssessment);
+    setFieldVisible(elements.safetyDepartmentFilter, false);
 
     const isAdmin = Boolean(context.isAdminAccount?.(context.currentUser));
     setButtonVisible(elements.addSafetyRecordButton, isAssessment, context);
@@ -156,6 +206,7 @@
     const safetyToolbar = elements.safetyPeriodSelect?.closest?.(".safety-toolbar");
     if (safetyToolbar) {
       safetyToolbar.querySelectorAll('[data-action="import-page-json"], [data-action="export-page-json"]').forEach((btn) => {
+        btn.classList.toggle(SAFETY_REPORT_HIDDEN_CLASS, !isAssessment);
         btn.hidden = !isAssessment || !isAdmin;
       });
     }
@@ -171,7 +222,7 @@
   function syncSafetyFilters(context, period) {
     const { elements, escapeHtml, getSafetyFilterMonths, getSafetyFilterYears, isAdminAccount, currentUser } = context;
     const isAdmin = Boolean(isAdminAccount?.(currentUser));
-    const areaId = context.activeSafetyReport === "factory" ? "" : elements.safetyAreaFilter?.value || "";
+    const areaId = context.activeSafetyReport === "assessment" ? elements.safetyAreaFilter?.value || "" : "";
     const openYear = Number(period?.year) || new Date().getFullYear();
     const openMonth = Number(period?.month) || new Date().getMonth() + 1;
 
@@ -923,7 +974,7 @@
     </tr>`;
   }
 
-  function renderSafetyTableHtml(rows, reportPeriod, context, emptyMessage) {
+  function renderSafetyTableHtml(rows, reportPeriod, context, emptyMessage, startIndex = 0) {
     const {
       DEFAULT_SAFETY_REPORT,
       SAFETY_FOUND_COLUMNS,
@@ -966,7 +1017,7 @@
           ${SAFETY_FOUND_COLUMNS.map((column) => `<th><span>${escapeHtml(column.label)}</span></th>`).join("")}
         </tr>
       </thead>
-      <tbody>${rows.length ? rows.map((row, index) => renderSafetyRow(row, index + 1, context)).join("") : `<tr><td colspan="28" class="empty-cell">${escapeHtml(emptyMessage)}</td></tr>`}</tbody>`;
+      <tbody>${rows.length ? rows.map((row, index) => renderSafetyRow(row, startIndex + index + 1, context)).join("") : `<tr><td colspan="28" class="empty-cell">${escapeHtml(emptyMessage)}</td></tr>`}</tbody>`;
   }
 
 
@@ -988,15 +1039,21 @@
       : "Chưa có bảng đánh giá an toàn trong năm " + filters.year + ".";
 
     const copyPrefix = "factory-" + filters.year + "-";
+    const detailPageKey = [filters.year, selectedDepartment || "all", reportPeriod?.id || ""].join("|");
+    const detailPagination = getPaginationState("factory", detailPageKey, detailRows.length);
+    const pagedDetailRows = detailRows.slice(detailPagination.startIndex, detailPagination.endIndex);
+    const detailPager = renderSafetyPager("factory", detailPagination, detailRows.length, context);
     const departmentSummaryHtml = '<div class="dashboard-table-wrap department-zone-summary-wrap" data-drag-scroll>' +
       '<table class="department-zone-summary-table">' +
         '<thead><tr><th>Zone</th><th>Bộ phận</th><th>Mục tiêu tháng</th><th>Số nhận diện năm</th><th>Chưa xử lý</th><th>Đã xử lý</th><th>Đang xử lý</th><th>Quá hạn</th><th>Đối sách triển khai</th></tr></thead>' +
         '<tbody>' + (detailTotals.length ? detailTotals.map((stat) => '<tr><th>Zone ' + escapeHtml(stat.code) + '</th><td>' + escapeHtml(stat.department) + '</td><td>' + escapeHtml(stat.target || "") + '</td><td>' + numberCell(stat.total) + '</td><td>' + numberCell(stat.statusCounts.open) + '</td><td>' + numberCell(stat.statusCounts.closed) + '</td><td>' + numberCell(stat.statusCounts.in_progress) + '</td><td>' + numberCell(stat.statusCounts.overdue) + '</td><td>' + numberCell(stat.countermeasure) + '</td></tr>').join("") : '<tr><td colspan="9" class="empty-cell">Chưa có bộ phận để tổng hợp.</td></tr>') + '</tbody>' +
       '</table>' +
     '</div>';
-    const departmentDetailHtml = '<div class="table-wrap wide-table-wrap annual-department-table-wrap" data-drag-scroll>' +
-      '<table class="safety-table annual-detail-safety-table">' + renderSafetyTableHtml(detailRows, reportPeriod, context, emptyDetailMessage) + '</table>' +
-    '</div>';
+    const departmentDetailHtml = detailPager +
+      '<div class="table-wrap wide-table-wrap annual-department-table-wrap" data-drag-scroll>' +
+        '<table class="safety-table annual-detail-safety-table">' + renderSafetyTableHtml(pagedDetailRows, reportPeriod, context, emptyDetailMessage, detailPagination.startIndex) + '</table>' +
+      '</div>' +
+      detailPager;
 
     return '<section class="dashboard-card wide excel-report-card factory-risk-card">' +
       '<div class="section-heading excel-title-heading"><h2>TỔNG HỢP NGUY CƠ MẤT AN TOÀN NHÀ MÁY</h2><span>Năm ' + escapeHtml(filters.year) + '</span></div>' +
@@ -1104,9 +1161,15 @@
   function renderSafetyAssessmentCard(filters, monthRows, yearRows, visibleAreas, reportPeriod, context) {
     const { escapeHtml } = context;
     const zoneText = visibleAreas.length === 1 ? "Zone " + visibleAreas[0].code + " · " : "";
-    const caption = zoneText + "Tháng " + filters.month + "/" + filters.year + " · " + monthRows.length + " dòng";
+    const pageKey = [filters.year, filters.month, visibleAreas.map((area) => area.id).join(","), reportPeriod?.id || ""].join("|");
+    const pagination = getPaginationState("assessment", pageKey, monthRows.length);
+    const pagedRows = monthRows.slice(pagination.startIndex, pagination.endIndex);
+    const pager = renderSafetyPager("assessment", pagination, monthRows.length, context);
+    const caption = zoneText + "Tháng " + filters.month + "/" + filters.year + " · " + monthRows.length + " vấn đề";
     const emptyMessage = "Chưa có báo cáo đánh giá an toàn trong tháng " + filters.month + "/" + filters.year + ".";
-    const tableHtml = '<div class="table-wrap wide-table-wrap" data-drag-scroll><table class="safety-table">' + renderSafetyTableHtml(monthRows, reportPeriod, context, emptyMessage) + '</table></div>';
+    const tableHtml = pager +
+      '<div class="table-wrap wide-table-wrap" data-drag-scroll><table class="safety-table">' + renderSafetyTableHtml(pagedRows, reportPeriod, context, emptyMessage, pagination.startIndex) + '</table></div>' +
+      pager;
     return '<section class="dashboard-card wide safety-report-card safety-assessment-card">' +
       '<div class="section-heading excel-title-heading"><h2>ĐÁNH GIÁ AN TOÀN</h2><span>' + escapeHtml(caption) + '</span></div>' +
       copyableReportBlock("safety-assessment-" + (reportPeriod?.id || filters.year + "-" + filters.month), tableHtml, "Copy", context) +
@@ -1180,12 +1243,13 @@
     }
 
     const filters = syncSafetyFilters(context, activePeriod);
-    const areaFilter = activeReport === "factory" ? "" : elements.safetyAreaFilter?.value || "";
+    const areaFilter = activeReport === "assessment" ? elements.safetyAreaFilter?.value || "" : "";
     const reportPeriod = getMonthPeriod(context, filters.year, filters.month, activePeriod);
     const reportPeriodId = reportPeriod?.id || activePeriodId;
     const visibleAreas = getVisibleAreas(context, reportPeriodId, areaFilter);
     const groups = getVisibleDepartmentGroups(context, reportPeriodId, areaFilter);
-    const selectedDepartment = syncDepartmentFilter(context, groups, filters.year);
+    const selectedDepartment = "";
+    syncDepartmentFilter(context, groups, filters.year);
     const visibleAreaIds = new Set(visibleAreas.map((area) => area.id));
     const rawYearRows = getSafetyRowsForYear(filters.year, { areaId: areaFilter }).filter((row) => visibleAreaIds.has(row.area.id));
     const rawMonthRows = filterRowsByMonth(rawYearRows, filters.month, context);
@@ -1204,6 +1268,12 @@
 
     renderSafetyDashboard(activeReport, filters, monthRows, yearRows, visibleAreas, groups, selectedDepartment, reportPeriod, context);
   }
+
+  window.SafetyPage = {
+    setDetailPage(type, page) {
+      setSafetyPage(type, page);
+    },
+  };
 
   window.PageRegistry.register({
     id: "safety",

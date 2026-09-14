@@ -2489,6 +2489,27 @@ table {
   font-weight: 750;
 }
 
+.safety-table-pager {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px 12px;
+  margin: 8px 0;
+  color: var(--muted);
+  font-size: 0.86rem;
+  font-weight: 750;
+}
+
+.safety-table-pager span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.safety-report-hidden {
+  display: none !important;
+}
+
 .compact-list,
 .item-list,
 .account-list {

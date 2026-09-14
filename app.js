@@ -4049,6 +4049,10 @@
 
     // 1. Quản trị hệ thống & Thống kê AT (.admin-only): Chỉ Admin được thấy
     document.querySelectorAll(".admin-only").forEach((element) => {
+      if (element.classList.contains("safety-report-hidden")) {
+        element.hidden = true;
+        return;
+      }
       element.hidden = !isAdmin;
     });
 
@@ -4064,6 +4068,10 @@
 
     // 4. An toàn lao động (.safety-access-only): Admin thấy, người có quyền AT thấy; người chỉ có quyền 5S KHÔNG THẤY
     document.querySelectorAll(".safety-access-only").forEach((element) => {
+      if (element.classList.contains("safety-report-hidden")) {
+        element.hidden = true;
+        return;
+      }
       element.hidden = !isAdmin && !hasSafetyAccess;
     });
 
@@ -8234,6 +8242,7 @@
           return true;
         }
 
+        const existingIndex = state.safetyRecords.findIndex((item) => item.id === payload.id);
         const existingRecordCopy = existingIndex >= 0 ? cloneValue(state.safetyRecords[existingIndex]) : (record ? cloneValue(record) : null);
         const payloadCopy = cloneValue(payload);
 
@@ -11875,6 +11884,10 @@
         if (elements.safetyDepartmentFilter) {
           elements.safetyDepartmentFilter.value = id || "";
         }
+        renderActiveTab();
+      },
+      "set-safety-detail-page": () => {
+        window.SafetyPage?.setDetailPage(sourceElement?.dataset.pageType || "assessment", sourceElement?.dataset.page || "1");
         renderActiveTab();
       },
       "add-safety-record": () => addSafetyRecord(),
