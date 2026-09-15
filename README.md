@@ -56,7 +56,7 @@ Mac dinh port `587` dung STARTTLS. Neu dung SMTP SSL port `465`, dat them `$env:
 
 ## Ghi chu
 
-- Hang muc 5S co dinh theo file mau, khong cho sua trong app.
+- Hang muc 5S co dinh theo cau hinh he thong, khong cho sua trong app.
 - Moi ky danh gia co `settingsSnapshot` rieng cho danh muc nguoi, zone va thiet lap AT. Khi sua truong phong, nguoi phu trach zone hoac assessor thi chi snapshot cua ky dang mo thay doi; cac ky khac khong bi doi theo.
 - Thang diem la 1 den 5, them lua chon `Gach cheo` cho o khong cham; khi chon se cap nhat hien thi o ngay trong giao dien.
 - File xuat ra la `.xlsx`, gom bang diem chi tiet va bang danh gia an toan o dang bang tinh giong giao dien web, co style mau, merge cell, o `Gach cheo`, khong chen cot cong thuc phu gay loi `####`.

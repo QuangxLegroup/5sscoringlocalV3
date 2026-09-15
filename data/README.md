@@ -14,5 +14,3 @@ Thu muc `organized/` duoc tao lai tu dong moi lan co thay doi du lieu, dung de x
 - `organized/he-thong/`: thong tin he thong.
 
 Khong sua tay cac file trong `organized/` khi app dang chay vi app se tu tao lai tu file du lieu chinh.
-
-Thu muc `samples/` chua cac file JSON mau theo tung trang, khong chua tai khoan hay mat khau.

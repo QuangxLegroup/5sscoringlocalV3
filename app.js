@@ -119,9 +119,11 @@
   const PERIOD_CATALOG_TEMPLATE_RESET_PEOPLE = "reset-people";
   const SCORE_SOURCE_ASSESSOR = "assessor";
   const SCORE_SOURCE_SELF = "self";
+  const SCORE_SOURCE_AVERAGE = "average";
   const SCORE_SOURCE_OPTIONS = [
     { value: SCORE_SOURCE_ASSESSOR, label: "Assessor chấm" },
     { value: SCORE_SOURCE_SELF, label: "Quản lý zone tự đánh giá" },
+    { value: SCORE_SOURCE_AVERAGE, label: "Điểm trung bình" },
   ];
   const SAFETY_DEPARTMENT_GROUPS = [
     { name: "Cơ khí", zoneCodes: ["1", "4", "5", "6", "7", "26"] },
@@ -245,85 +247,6 @@
     { code: "20", departmentHead: "", summaryGroup: "", scorerName: "Mr Ánh", highlight: false },
     { code: "27", departmentHead: "", summaryGroup: "", scorerName: "Mr Đạt", highlight: false },
   ];
-
-  const SAMPLE_VALUES = {
-    a1: {
-      "phan-loai": [3, 4, 4, null, 3, 3, 3, 3, 3, 3, 4, 3, 4, 3, 4, 4, 3, 3, 3, 3, 3, 3, null, 3, 3, 3, 3, null, null],
-      "sap-xep": [3, 4, 3, null, 3, 3, 3, 3, 3, 3, 4, 3, 4, 3, 4, 3, 3, 3, 3, 3, 3, 3, null, 3, 3, 3, 3, null, null],
-      "lau-don": [3, 3, 3, null, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 4, null, 3, 3, 3, 3, null, null],
-    },
-    a2: {
-      "phan-loai": [4, 4, 4, null, 4, 3, 3, 4, 4, 3, null, 4, 4, 4, 4, 4, 4, 3, 3, 4, null, 4, 4, 4, 3, 4, 4, null, null],
-      "sap-xep": [4, 3, 4, null, 3, 3, 4, 3, 3, 4, null, 4, 4, 3, 4, 4, 4, 3, 4, 3, null, 3, 4, 4, 3, 4, 4, null, null],
-      "lau-don": [4, 3, 3, null, 3, 4, 3, 3, 3, 3, null, 3, 3, 3, 3, 3, 3, 3, 4, 3, null, 3, 3, 3, 4, 3, 3, null, null],
-    },
-    a3: {
-      "phan-loai": [3, null, null, null, null, null, 3, 3, null, 3, null, null, null, null, 3, 4, null, null, null, 3, null, null, null, 3, null, null, null, null, null],
-      "sap-xep": [3, null, null, null, null, null, 3, 3, null, 3, null, null, null, null, 3, 3, null, null, null, 3, null, null, null, 3, null, null, null, null, null],
-      "lau-don": [4, null, null, null, null, null, 3, 3, null, 3, null, null, null, null, 3, 3, null, null, null, 3, null, null, null, 3, null, null, null, null, null],
-    },
-    b1: {
-      "phan-loai": [3, null, 3, null, 4, 3, 3, 3, 4, 3, 3, 3, 3, 3, 4, 3, 3, 3, 3, 4, null, 3, 3, 3, 3, 3, 3, null, null],
-      "sap-xep": [3, null, 3, null, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, null, 3, 4, 3, 3, 3, 3, null, null],
-      "lau-don": [3, null, 3, null, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, null, 3, 3, 3, 3, 3, 3, null, null],
-    },
-    b2: {
-      "phan-loai": [3, 3, 3, null, 3, 3, 4, 4, 4, 4, 3, 3, 3, 3, 3, 3, 3, 3, 3, 4, 3, null, 3, 4, 3, 3, 3, null, null],
-      "sap-xep": [3, 3, 3, null, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, null, 3, 3, 3, 3, 3, null, null],
-      "lau-don": [3, 3, 3, null, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, null, 3, 3, 3, 3, 3, null, null],
-    },
-    b3: {
-      "phan-loai": [3, 3, 3, null, 3, 3, 4, 4, 4, 4, 3, 3, 4, 3, 3, 3, 3, 3, 3, 4, 3, 3, 4, 3, 3, 3, 4, null, null],
-      "sap-xep": [3, 3, 3, null, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 4, 3, 3, null, null],
-      "lau-don": [3, 3, 3, null, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 4, 3, 3, null, null],
-    },
-    c1: {
-      "phan-loai": [4, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, null, null],
-      "sap-xep": [3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 2, 3, 2, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, null, null],
-      "lau-don": [4, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, null, null],
-    },
-    c2: {
-      "phan-loai": [3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 2, 3, 3, 3, 3, 3, 3, null, 3, 3, 4, 3, 3, 3, null, null],
-      "sap-xep": [3, 3, 3, 4, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, null, 3, 3, 3, 3, 3, 3, null, null],
-      "lau-don": [3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, null, 3, 3, 3, 3, 3, 3, null, null],
-    },
-    c3: {
-      "phan-loai": [3, 3, 3, null, 4, 3, 4, 4, 3, 4, 3, 3, 3, 3, 3, 3, 3, 3, null, 4, null, null, 3, 3, 3, 3, 3, null, null],
-      "sap-xep": [3, 3, 3, null, 3, 4, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, null, 3, null, null, 3, 3, 3, 3, 3, null, null],
-      "lau-don": [3, 3, 3, null, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, null, 3, null, null, 4, 3, 3, 3, 3, null, null],
-    },
-    c4: {
-      "phan-loai": [3, 3, 3, null, 3, 3, 4, 4, 3, 4, 3, 3, 3, 3, 3, 3, 3, 3, null, 3, null, null, 3, null, 3, 3, 3, null, null],
-      "sap-xep": [3, 3, 3, null, 3, 3, 3, 3, 3, 3, 3, 2, 3, 3, 3, 3, 3, 3, null, 3, null, null, 4, null, 3, 3, 3, null, null],
-      "lau-don": [3, 3, 3, null, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, null, 3, null, null, 3, null, 3, 3, 3, null, null],
-    },
-    c5: {
-      "phan-loai": [3, 3, 3, 4, 3, 3, 3, 3, 4, 3, 3, 4, 4, 4, 4, 4, 3, 4, 3, 3, 3, 3, 3, 4, 3, 3, 3, null, null],
-      "sap-xep": [3, 3, 3, 4, 3, 3, 3, 3, 3, 3, 3, 3, 4, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, null, null],
-      "lau-don": [4, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 4, 3, 3, null, null],
-    },
-    d1: {
-      "phan-loai": [null, null, 4, null, null, 4, 3, null, null, 3, null, null, null, 3, null, null, null, null, 3, 4, 3, null, null, 3, null, 4, null, null, null],
-      "sap-xep": [null, null, 4, null, null, 3, 3, null, null, 3, null, null, null, 3, null, null, null, null, 3, 3, 3, null, null, 3, null, 4, null, null, null],
-      "lau-don": [null, null, 3, null, null, 4, 3, null, null, 3, null, null, null, 4, null, null, null, null, 3, 3, 3, null, null, 3, null, 3, null, null, null],
-    },
-    d2: {
-      "phan-loai": [4, 4, 3, null, 4, 4, 4, 4, 3, 4, 3, 3, 4, 4, 4, 4, 4, 3, 3, 4, 3, 3, 4, 4, 3, 4, null, null, null],
-      "sap-xep": [4, 3, 3, null, 3, 3, 3, 3, 3, 3, 3, 3, 4, 3, 4, 3, 4, 3, 3, 3, 3, 3, 3, 3, 3, 4, null, null, null],
-      "lau-don": [4, 3, 3, null, 3, 4, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 4, 3, 3, 3, 3, 3, 3, 3, 3, null, null, null],
-    },
-    d3: {
-      "phan-loai": [3, 3, 4, null, 3, 3, 3, 4, 3, 3, 3, 3, 4, 3, 4, 4, 4, 3, 3, 4, null, 3, 3, 4, 3, 3, 3, null, null],
-      "sap-xep": [3, 3, 4, null, 3, 4, 3, 3, 3, 3, 3, 4, 4, 4, 3, 4, 4, 3, 3, 3, null, 3, 3, 3, 3, 3, 3, null, null],
-      "lau-don": [4, 3, 3, null, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, null, 3, 3, 3, 3, 3, 3, null, null],
-    },
-    e1: {
-      diem: [3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, null, null],
-    },
-    e2: {
-      diem: [4, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, null, null],
-    },
-  };
 
   const elements = {
     loginScreen: document.getElementById("login-screen"),
@@ -573,20 +496,14 @@
     const safetyDepartmentGroups = normalizeSafetyDepartmentGroups(SAFETY_DEPARTMENT_GROUPS, safetyAreas);
     const safetyDepartmentHeadContacts = createDepartmentHeadContactsFromAreas(safetyAreas, now);
 
-    const periodId = "period-5s-2025-12";
-    const safetyPeriodId = "period-safety-2025-12";
-
     const defaultState = {
       version: DATA_VERSION,
       benchmark: BENCHMARK,
       fiveSChartTargets: { ...DEFAULT_FIVE_S_CHART_TARGETS },
-      activePeriodId: periodId,
-      activeFiveSPeriodId: periodId,
-      activeSafetyPeriodId: safetyPeriodId,
-      periods: [
-        { id: periodId, month: 12, year: 2025, type: FIVE_S_PERIOD_TYPE, label: "Tháng 12/2025", createdAt: now, archived: false },
-        { id: safetyPeriodId, month: 12, year: 2025, type: SAFETY_PERIOD_TYPE, label: "01/12/2025", createdAt: "2025-12-01T00:00:00.000Z", archived: false },
-      ],
+      activePeriodId: "",
+      activeFiveSPeriodId: "",
+      activeSafetyPeriodId: "",
+      periods: [],
       managers,
       departmentHeadContacts,
       areas,
@@ -607,52 +524,13 @@
       safetyAssessors: [],
       safetyReport: { ...DEFAULT_SAFETY_REPORT },
       safetyIdentificationOverrides: {},
-      scores: buildSampleScores(periodId, areas, managers, now),
+      scores: [],
       safetyRecords: [],
       deletedSafetyRecords: [],
       history: [],
     };
 
-    defaultState.periods[0].settingsSnapshot = makeSettingsSnapshot(defaultState, FIVE_S_PERIOD_TYPE);
-    defaultState.periods[1].settingsSnapshot = makeSettingsSnapshot(defaultState, SAFETY_PERIOD_TYPE);
     return defaultState;
-  }
-
-  function buildSampleScores(periodId, areas, managers, timestamp) {
-    const managerById = new Map(managers.map((manager) => [manager.id, manager]));
-    const scores = [];
-
-    DEFAULT_ITEMS.forEach((item) => {
-      item.criteria.forEach((criterion) => {
-        const values = SAMPLE_VALUES[item.id]?.[criterion.id] || [];
-        values.forEach((value, index) => {
-          if (!Number.isFinite(value)) {
-            return;
-          }
-
-          const area = areas[index];
-          if (!area || isNotApplicable(item.id, criterion.id, area)) {
-            return;
-          }
-
-          scores.push({
-            id: makeId("score"),
-            periodId,
-            areaId: area.id,
-            itemId: item.id,
-            criterionId: criterion.id,
-            scoreSource: SCORE_SOURCE_ASSESSOR,
-            score: value,
-            note: "",
-            scorerName: area.assessorName || "",
-            accountUsername: "file-mau",
-            updatedAt: timestamp,
-          });
-        });
-      });
-    });
-
-    return scores;
   }
 
   // Convert raw persisted data (nested objects) → normalised state with arrays
@@ -667,7 +545,9 @@
   }
 
   function getScoreSourceLabel(source) {
-    return SCORE_SOURCE_OPTIONS.find((option) => option.value === normalizeScoreSource(source))?.label || SCORE_SOURCE_OPTIONS[0].label;
+    return SCORE_SOURCE_OPTIONS.find((option) => option.value === source)?.label
+      || SCORE_SOURCE_OPTIONS.find((option) => option.value === normalizeScoreSource(source))?.label
+      || SCORE_SOURCE_OPTIONS[0].label;
   }
 
   function normalizeCatalogType(type) {
@@ -1003,24 +883,7 @@
     const periodExists = (periodId) => normalized.periods.some((period) => period.id === periodId);
     const periodFromList = (periodId) => normalized.periods.find((period) => period.id === periodId) || null;
     const firstFiveSPeriod = normalized.periods.find((period) => [FIVE_S_PERIOD_TYPE, LEGACY_PERIOD_TYPE].includes(normalizePeriodType(period.type)));
-    let firstSafetyPeriod = normalized.periods.find((period) => [SAFETY_PERIOD_TYPE, LEGACY_PERIOD_TYPE].includes(normalizePeriodType(period.type)));
-    if (!firstSafetyPeriod) {
-      const fiveS = firstFiveSPeriod || { month: 1, year: 2024 };
-      const m = Number(fiveS.month) || 1;
-      const y = Number(fiveS.year) || 2024;
-      const safetyId = `period-safety-${y}-${String(m).padStart(2, "0")}`;
-      firstSafetyPeriod = {
-        id: safetyId,
-        month: m,
-        year: y,
-        type: SAFETY_PERIOD_TYPE,
-        label: `Đánh giá AT 01/${String(m).padStart(2, "0")}/${y}`,
-        createdAt: fiveS.createdAt || new Date().toISOString(),
-        archived: false,
-        settingsSnapshot: fiveS.settingsSnapshot ? clone(fiveS.settingsSnapshot) : null,
-      };
-      normalized.periods.push(firstSafetyPeriod);
-    }
+    const firstSafetyPeriod = normalized.periods.find((period) => [SAFETY_PERIOD_TYPE, LEGACY_PERIOD_TYPE].includes(normalizePeriodType(period.type)));
 
     if (!normalized.activePeriodId || !periodExists(normalized.activePeriodId)) {
       normalized.activePeriodId = firstFiveSPeriod?.id || normalized.periods[0]?.id || "";
@@ -1029,7 +892,7 @@
       normalized.activeFiveSPeriodId = [FIVE_S_PERIOD_TYPE, LEGACY_PERIOD_TYPE].includes(normalizePeriodType(periodFromList(normalized.activePeriodId)?.type)) ? normalized.activePeriodId : firstFiveSPeriod?.id || normalized.activePeriodId || "";
     }
     if (!normalized.activeSafetyPeriodId || !periodExists(normalized.activeSafetyPeriodId)) {
-      normalized.activeSafetyPeriodId = [SAFETY_PERIOD_TYPE, LEGACY_PERIOD_TYPE].includes(normalizePeriodType(periodFromList(normalized.activePeriodId)?.type)) ? normalized.activePeriodId : firstSafetyPeriod?.id || normalized.activePeriodId || "";
+      normalized.activeSafetyPeriodId = [SAFETY_PERIOD_TYPE, LEGACY_PERIOD_TYPE].includes(normalizePeriodType(periodFromList(normalized.activePeriodId)?.type)) ? normalized.activePeriodId : firstSafetyPeriod?.id || "";
     }
     normalized.activePeriodId = normalized.activeFiveSPeriodId || normalized.activePeriodId;
 
@@ -2587,8 +2450,15 @@
     return getAssessors(getCatalogTypeForPeriod(periodId));
   }
 
-  function getPeriod(periodId = getActivePeriodId(FIVE_S_PERIOD_TYPE)) {
-    return state.periods.find((period) => period.id === periodId) || state.periods[0] || null;
+  function getPeriod(periodId) {
+    if (arguments.length === 0) {
+      const activePeriodId = getActivePeriodId(FIVE_S_PERIOD_TYPE);
+      return state.periods.find((period) => period.id === activePeriodId) || state.periods[0] || null;
+    }
+    if (!periodId) {
+      return null;
+    }
+    return state.periods.find((period) => period.id === periodId) || null;
   }
 
   function getArea(areaId, type = FIVE_S_PERIOD_TYPE) {
@@ -3196,6 +3066,10 @@
     return `${day}/${month}/${year}`;
   }
 
+  function currentDateDisplay() {
+    return formatDateDisplay(todayIsoDate());
+  }
+
   function formatDateTimeDisplay(value) {
     const date = value ? new Date(value) : null;
     if (!date || Number.isNaN(date.getTime())) {
@@ -3653,7 +3527,7 @@
         });
 
         if (criterionIndex === 0) {
-          const averageCell = setRowSpan(createCell("td", formatNumber(itemAverage(periodId, item, areas, scoreSource), 1), "item-average"), item.criteria.length);
+          const averageCell = setRowSpan(createCell("td", formatNumber(itemAverage(periodId, item, areas, scoreSource), 2), "item-average"), item.criteria.length);
           if (includeFormulas) {
             averageCell.setAttribute("x:fmla", `=IFERROR(AVERAGE(D${itemStartRow}:${lastAreaColumn}${itemEndRow}),"")`);
           }
@@ -4306,6 +4180,7 @@
       SAFETY_STOP6_COLUMNS,
       SCORE_SOURCE_ASSESSOR,
       SCORE_SOURCE_SELF,
+      SCORE_SOURCE_AVERAGE,
       SCORE_SOURCE_OPTIONS,
       areaAverage,
       buildMatrixTable,
@@ -4401,17 +4276,27 @@
     const visibleSafetyPeriods = isAdmin
       ? safetyPeriods
       : safetyPeriods.filter((period) => period.id === safetyActive);
+    const currentSafetyPeriods = safetyPeriods.filter((period) => period.id === safetyActive);
 
     [elements.assessorPeriodSelect, elements.summaryPeriodSelect].forEach((select) => {
       if (!select) return;
       select.innerHTML = makeOptions(visibleFiveSPeriods);
       select.value = visibleFiveSPeriods.some((period) => period.id === fiveSActive) ? fiveSActive : visibleFiveSPeriods[0]?.id || "";
     });
-    [elements.safetyPeriodSelect, elements.issueStatsPeriodSelect].forEach((select) => {
-      if (!select) return;
-      select.innerHTML = makeOptions(visibleSafetyPeriods);
-      select.value = visibleSafetyPeriods.some((period) => period.id === safetyActive) ? safetyActive : visibleSafetyPeriods[0]?.id || "";
-    });
+    if (elements.safetyPeriodSelect) {
+      elements.safetyPeriodSelect.innerHTML = currentSafetyPeriods.length
+        ? makeOptions(currentSafetyPeriods)
+        : "<option value=\"\">" + escapeHtml(currentDateDisplay()) + "</option>";
+      elements.safetyPeriodSelect.value = currentSafetyPeriods[0]?.id || "";
+      elements.safetyPeriodSelect.disabled = true;
+      elements.safetyPeriodSelect.title = currentSafetyPeriods[0]
+        ? "Kỳ đánh giá an toàn đang mở hiện tại"
+        : "Chưa có kỳ đánh giá an toàn đang mở";
+    }
+    if (elements.issueStatsPeriodSelect) {
+      elements.issueStatsPeriodSelect.innerHTML = makeOptions(visibleSafetyPeriods);
+      elements.issueStatsPeriodSelect.value = visibleSafetyPeriods.some((period) => period.id === safetyActive) ? safetyActive : visibleSafetyPeriods[0]?.id || "";
+    }
 
     const today = todayIsoDate();
     const todayParts = today.split("-");
@@ -4834,11 +4719,12 @@
       const isActive = scope === normalizedActiveScope;
       const activeClass = isActive ? " is-active" : "";
       const title = titlePrefix + " " + option.label;
+      const periodText = period ? periodLabel(period) : currentDateDisplay();
       return `<article class="admin-home-card dashboard-home-card simple-home-card scope-card ${scope === SAFETY_PERIOD_TYPE ? "safety-card" : "score-card"}${activeClass}">
         <button class="scope-card-toggle" type="button" data-action="${escapeHtml(action)}" data-id="${escapeHtml(scope)}" aria-label="${escapeHtml(title)}" aria-expanded="${isActive ? "true" : "false"}">
           <span class="admin-home-card-icon">${escapeHtml(option.label)}</span>
           <span class="scope-card-copy"><span class="scope-card-kicker">${escapeHtml(titlePrefix)}</span><strong>${escapeHtml(option.label)}</strong></span>
-          <span class="scope-card-period">${escapeHtml(periodLabel(period))}</span>
+          <span class="scope-card-period">${escapeHtml(periodText)}</span>
         </button>
         <div class="scope-card-detail-slot" data-scope-detail-slot="${escapeHtml(scope)}"></div>
       </article>`;
@@ -5090,7 +4976,7 @@
         <strong>${escapeHtml(item.code)} ${escapeHtml(item.name)}</strong>
         <ul>${item.criteria.map((criterion) => `<li>${escapeHtml(criterion.label)}</li>`).join("")}</ul>
       </div>
-      <span class="item-meta">Cố định theo file mẫu</span>
+      <span class="item-meta">Cố định theo cấu hình hệ thống</span>
     </article>`).join("");
   }
 
@@ -8163,11 +8049,6 @@
     }
 
     const periodType = normalizePeriodType(period.type) === SAFETY_PERIOD_TYPE ? SAFETY_PERIOD_TYPE : FIVE_S_PERIOD_TYPE;
-    const sameTypePeriods = getPeriodsByType(periodType);
-    if (sameTypePeriods.length <= 1) {
-      showToast(periodType === SAFETY_PERIOD_TYPE ? "Cần giữ lại ít nhất một kỳ đánh giá an toàn." : "Cần giữ lại ít nhất một kỳ chấm 5S.", true);
-      return;
-    }
 
     openConfirmModal({
       title: "Xóa kỳ đánh giá",
@@ -8181,8 +8062,11 @@
         state.scores = state.scores.filter((score) => score.periodId !== id);
         invalidateScoreRecordIndex();
         state.safetyRecords = state.safetyRecords.filter((record) => record.periodId !== id);
-        if (getActivePeriodId(periodType) === id) {
-          setActivePeriodId(periodType, getPeriodsByType(periodType).find((item) => item.id !== id)?.id || "");
+        if (
+          (periodType === SAFETY_PERIOD_TYPE && state.activeSafetyPeriodId === id)
+          || (periodType === FIVE_S_PERIOD_TYPE && (state.activeFiveSPeriodId === id || state.activePeriodId === id))
+        ) {
+          setActivePeriodId(periodType, getPeriodsByType(periodType)[0]?.id || "");
         }
         const writes = [
           dbRef("periods/" + id).remove(),
@@ -9671,6 +9555,7 @@
     const usedNames = new Set();
     const assessorSheetName = uniqueWorksheetName(`Assessor chấm${monthSuffix}`, usedNames);
     const selfSheetName = uniqueWorksheetName(`Tự đánh giá${monthSuffix}`, usedNames);
+    const averageSheetName = uniqueWorksheetName(`Điểm trung bình${monthSuffix}`, usedNames);
     const assessorModel = buildWorksheetModel(periodId, {
       scoreSource: SCORE_SOURCE_ASSESSOR,
       title: `Điểm Chi Tiết Theo Từng Hạng Mục (${periodLabel(period)})`,
@@ -9687,11 +9572,15 @@
       headerTopRow: 20,
       tabColor: "FFFFC000",
     });
+    const averageModel = buildAverageScoreWorksheetModel(periodId, {
+      tabColor: "FF92D050",
+    });
     attachFiveSChartsToWorksheetModel(assessorModel, periodId, assessorSheetName, SCORE_SOURCE_ASSESSOR);
     attachFiveSChartsToWorksheetModel(selfModel, periodId, selfSheetName, SCORE_SOURCE_SELF);
     return buildWorkbookFromSheets([
       { name: assessorSheetName, xml: buildWorksheetXml(assessorModel), charts: assessorModel.charts || [] },
       { name: selfSheetName, xml: buildWorksheetXml(selfModel), charts: selfModel.charts || [] },
+      { name: averageSheetName, xml: buildWorksheetXml(averageModel), charts: averageModel.charts || [] },
     ]);
   }
 
@@ -10347,7 +10236,7 @@
           addCell(rowNumber, column, isScoreCrossed(record) ? "" : value, style);
         });
 
-        addCell(rowNumber, averageColumn, itemAverage(periodId, item, areas, scoreSource), 17);
+        addCell(rowNumber, averageColumn, itemAverage(periodId, item, areas, scoreSource), 29);
         if (index === 0 && item.criteria.length > 1) {
           merge(rowNumber, averageColumn, itemEnd, averageColumn);
         }
@@ -10404,6 +10293,100 @@
       scoreSource,
     };
   }
+
+  function buildAverageScoreWorksheetModel(periodId, options = {}) {
+    const period = getPeriod(periodId);
+    const areas = getAreasForPeriod(periodId);
+    const maxColumn = areas.length + 1;
+    const rows = new Map();
+    const rowHeights = new Map();
+    const merges = [];
+    const columnsXml = [
+      '<col min="1" max="1" width="15" customWidth="1"/>',
+      areas.length ? `<col min="2" max="${maxColumn}" width="6.6" customWidth="1"/>` : "",
+    ].join("");
+
+    function addCell(row, column, value, style, options = {}) {
+      if (!rows.has(row)) {
+        rows.set(row, []);
+      }
+      rows.get(row).push({ row, column, value, style, ...options });
+    }
+
+    function merge(rowStart, columnStart, rowEnd, columnEnd) {
+      if (columnEnd > columnStart || rowEnd > rowStart) {
+        merges.push(`${cellRef(rowStart, columnStart)}:${cellRef(rowEnd, columnEnd)}`);
+      }
+    }
+
+    const areaRows = areas.map((area) => {
+      const selfAverage = areaAverage(periodId, area, SCORE_SOURCE_SELF);
+      const assessorAverage = areaAverage(periodId, area, SCORE_SOURCE_ASSESSOR);
+      return {
+        area,
+        selfAverage,
+        assessorAverage,
+        average: average([selfAverage, assessorAverage]),
+      };
+    });
+    const rowByAreaId = new Map(areaRows.map((row) => [row.area.id, row]));
+    const titleRow = 1;
+    const zoneRow = 2;
+    const picRow = 3;
+    const selfRow = 4;
+    const assessorRow = 5;
+    const averageRow = 6;
+    const groupAverageRow = 7;
+    const groupLabelRow = 8;
+
+    rowHeights.set(titleRow, 28);
+    rowHeights.set(zoneRow, 24);
+    rowHeights.set(picRow, 38);
+    [selfRow, assessorRow, averageRow, groupAverageRow, groupLabelRow].forEach((row) => rowHeights.set(row, 24));
+
+    addCell(titleRow, 1, "Điểm số trung bình tính KPI các bộ phận", 1);
+    merge(titleRow, 1, titleRow, maxColumn);
+    addCell(zoneRow, 1, "Zone", 2);
+    addCell(picRow, 1, "PIC", 2);
+    addCell(selfRow, 1, "Điểm tự Đ.giá lần 1", 13);
+    addCell(assessorRow, 1, "Điểm Đ.G theo lịch", 13);
+    addCell(averageRow, 1, "Điểm trung bình", 13);
+    addCell(groupAverageRow, 1, "", 13);
+    addCell(groupLabelRow, 1, "", 13);
+
+    areas.forEach((area, index) => {
+      const column = index + 2;
+      const values = rowByAreaId.get(area.id) || {};
+      addCell(zoneRow, column, area.code || "", area.highlight ? 5 : 4);
+      addCell(picRow, column, getAreaResponsibleNameForPeriod(periodId, area), 10);
+      addCell(selfRow, column, values.selfAverage, Number.isFinite(values.selfAverage) ? 19 : 14);
+      addCell(assessorRow, column, values.assessorAverage, Number.isFinite(values.assessorAverage) ? 19 : 14);
+      addCell(averageRow, column, values.average, Number.isFinite(values.average) ? 19 : 14);
+    });
+
+    buildGroupedSpans(areas, "summaryGroup", true).forEach((group) => {
+      const start = 2 + group.startIndex;
+      const end = start + group.areas.length - 1;
+      const value = average(group.areas.map((area) => rowByAreaId.get(area.id)?.average));
+      addCell(groupAverageRow, start, value, Number.isFinite(value) ? 21 : 14);
+      addCell(groupLabelRow, start, group.label || "", 22);
+      merge(groupAverageRow, start, groupAverageRow, end);
+      merge(groupLabelRow, start, groupLabelRow, end);
+    });
+
+    return {
+      rows,
+      rowHeights,
+      merges,
+      period,
+      maxColumn,
+      maxRow: groupLabelRow,
+      lastTableColumn: maxColumn,
+      columnsXml,
+      tabColor: options.tabColor || "",
+    };
+  }
+
   function buildWorksheetXml(model) {
     const sortedRows = [...model.rows.entries()].sort((a, b) => a[0] - b[0]);
     const rowXml = sortedRows
@@ -10908,7 +10891,7 @@
     </border>
   </borders>
   <cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>
-  <cellXfs count="29">
+  <cellXfs count="30">
     ${xf(0, 0, 0, 0)}
     ${xf(0, 15, 0, 0, "center", "center", true)}
     ${xf(0, 8, 0, 1, "center", "center", true)}
@@ -10938,6 +10921,7 @@
     ${xf(0, 10, 0, 1, "center", "center", true, 90)}
     ${xf(0, 2, 6, 1, "center", "center", false)}
     ${xf(166, 13, 0, 1, "center", "center", false)}
+    ${xf(165, 4, 0, 1, "center", "center", false)}
   </cellXfs>
   <cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles>
   <dxfs count="0"/>
@@ -12318,7 +12302,6 @@
     };
     bindPeriodSelect(elements.assessorPeriodSelect, FIVE_S_PERIOD_TYPE);
     bindPeriodSelect(elements.summaryPeriodSelect, FIVE_S_PERIOD_TYPE);
-    bindPeriodSelect(elements.safetyPeriodSelect, SAFETY_PERIOD_TYPE);
     bindPeriodSelect(elements.issueStatsPeriodSelect, SAFETY_PERIOD_TYPE);
 
     elements.assessorAreaSelect?.addEventListener("change", renderAssessorTab);

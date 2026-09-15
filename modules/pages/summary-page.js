@@ -106,8 +106,8 @@
     </svg>`;
   }
 
-  function chartBlock({ title, periodText, sourceLabel, rows, target, targetKey, canEditTarget, escapeHtml, valueDigits, grouped, rotateLabels }) {
-    const chartId = `copy-five-s-chart-${targetKey}`;
+  function chartBlock({ title, periodText, sourceLabel, rows, target, targetKey, chartKey, canEditTarget, escapeHtml, valueDigits, grouped, rotateLabels }) {
+    const chartId = `copy-five-s-chart-${chartKey || targetKey}`;
     return `<section class="admin-card-chart-block copyable-report-block is-copy-chart" id="${chartId}" data-copy-format="image">
       <div class="admin-card-chart-head">
         <div>
@@ -129,12 +129,10 @@
     </section>`;
   }
 
-  function getFiveSChartRows(context, period) {
+  function getFiveSChartRows(context, period, scoreSource) {
     const {
       BENCHMARK,
       DEFAULT_ITEMS,
-      SCORE_SOURCE_ASSESSOR,
-      SCORE_SOURCE_SELF,
       areaAverage,
       getAreasForPeriod,
       itemAverage,
@@ -145,11 +143,11 @@
       label: area.code || "-",
       group: area.summaryGroup || area.departmentHead || "Khác",
       head: area.departmentHead || "",
-      value: areaAverage(periodId, area, SCORE_SOURCE_SELF) ?? areaAverage(periodId, area, SCORE_SOURCE_ASSESSOR),
+      value: areaAverage(periodId, area, scoreSource),
     })).filter((row) => Number.isFinite(row.value));
     const itemRows = DEFAULT_ITEMS.map((item) => ({
       label: `${item.code.replace(/[()]/g, "")} ${item.name}`,
-      value: itemAverage(periodId, item, areas, SCORE_SOURCE_ASSESSOR),
+      value: itemAverage(periodId, item, areas, scoreSource),
     })).filter((row) => Number.isFinite(row.value));
     return {
       itemRows,
@@ -159,44 +157,191 @@
     };
   }
 
+  function averageValues(values) {
+    const numbers = values.filter((value) => Number.isFinite(value));
+    if (!numbers.length) {
+      return null;
+    }
+    return numbers.reduce((sum, value) => sum + value, 0) / numbers.length;
+  }
+
+  function buildConsecutiveGroups(areas) {
+    return areas.reduce((groups, area, index) => {
+      const label = area.summaryGroup || area.departmentHead || "";
+      const current = groups[groups.length - 1];
+      if (current && current.label === label) {
+        current.areas.push(area);
+      } else {
+        groups.push({ label, startIndex: index, areas: [area] });
+      }
+      return groups;
+    }, []);
+  }
+
+  function renderAverageScoreTable(context, period) {
+    const {
+      SCORE_SOURCE_ASSESSOR,
+      SCORE_SOURCE_SELF,
+      areaAverage,
+      escapeHtml,
+      formatNumber,
+      getAreaResponsibleNameForPeriod,
+      getAreasForPeriod,
+    } = context;
+    const periodId = period?.id || "";
+    const areas = getAreasForPeriod(periodId);
+    const areaRows = areas.map((area) => {
+      const selfAverage = areaAverage(periodId, area, SCORE_SOURCE_SELF);
+      const assessorAverage = areaAverage(periodId, area, SCORE_SOURCE_ASSESSOR);
+      return {
+        area,
+        selfAverage,
+        assessorAverage,
+        average: averageValues([selfAverage, assessorAverage]),
+      };
+    });
+    const rowByAreaId = new Map(areaRows.map((row) => [row.area.id, row]));
+    const valueCell = (value) => Number.isFinite(value)
+      ? `<td>${escapeHtml(formatNumber(value, 2))}</td>`
+      : '<td class="summary-average-empty"></td>';
+    const zoneCells = areas.map((area) => `<th class="${area.highlight ? "is-highlight" : ""}">${escapeHtml(area.code || "")}</th>`).join("");
+    const picCells = areas.map((area) => `<td>${escapeHtml(getAreaResponsibleNameForPeriod(periodId, area) || "")}</td>`).join("");
+    const selfCells = areaRows.map((row) => valueCell(row.selfAverage)).join("");
+    const assessorCells = areaRows.map((row) => valueCell(row.assessorAverage)).join("");
+    const averageCells = areaRows.map((row) => valueCell(row.average)).join("");
+    const groups = buildConsecutiveGroups(areas);
+    const groupAverageCells = groups.map((group) => {
+      const value = averageValues(group.areas.map((area) => rowByAreaId.get(area.id)?.average));
+      const colspan = group.areas.length > 1 ? ` colspan="${group.areas.length}"` : "";
+      return Number.isFinite(value)
+        ? `<td${colspan}>${escapeHtml(formatNumber(value, 2))}</td>`
+        : `<td${colspan} class="summary-average-empty"></td>`;
+    }).join("");
+    const groupLabelCells = groups.map((group) => {
+      const colspan = group.areas.length > 1 ? ` colspan="${group.areas.length}"` : "";
+      return `<td${colspan}>${escapeHtml(group.label || "")}</td>`;
+    }).join("");
+
+    return `
+      <thead>
+        <tr><th class="summary-average-title" colspan="${areas.length + 1}">Điểm số trung bình tính KPI các bộ phận</th></tr>
+        <tr><th>Zone</th>${zoneCells}</tr>
+        <tr><th>PIC</th>${picCells}</tr>
+      </thead>
+      <tbody>
+        <tr><th>Điểm tự Đ.giá lần 1</th>${selfCells}</tr>
+        <tr><th>Điểm Đ.G theo lịch</th>${assessorCells}</tr>
+        <tr><th>Điểm trung bình</th>${averageCells}</tr>
+        <tr class="summary-average-group-score-row"><th></th>${groupAverageCells}</tr>
+        <tr class="summary-average-group-label-row"><th></th>${groupLabelCells}</tr>
+      </tbody>
+    `;
+  }
+
+  function syncSummaryAverageCopyButton(context, isAverageMode) {
+    const heading = context.elements.summaryTitle?.closest?.(".section-heading");
+    if (!heading) {
+      return;
+    }
+    let button = heading.querySelector(".summary-average-copy-button");
+    if (!isAverageMode) {
+      button?.remove();
+      return;
+    }
+    if (!button) {
+      button = document.createElement("button");
+      button.className = "tiny-button summary-average-copy-button";
+      button.type = "button";
+      button.dataset.action = "copy-report-target";
+      button.dataset.copyTarget = "summary-average-copy-target";
+      button.textContent = "Copy";
+      heading.appendChild(button);
+    }
+  }
+
+  function renderAverageSummaryTable(context, period) {
+    const { elements } = context;
+    const wrapper = elements.summaryTable?.closest?.(".summary-matrix-wrap");
+    if (wrapper) {
+      wrapper.id = "summary-average-copy-target";
+      wrapper.dataset.copyFormat = "html";
+    }
+    elements.summaryTable.className = "summary-average-table";
+    elements.summaryTable.innerHTML = renderAverageScoreTable(context, period);
+    syncSummaryAverageCopyButton(context, true);
+  }
+
   function renderFiveSCharts(context, period) {
-    const { currentUser, escapeHtml, isAdminAccount, periodLabel } = context;
+    const {
+      SCORE_SOURCE_ASSESSOR,
+      SCORE_SOURCE_SELF,
+      currentUser,
+      escapeHtml,
+      getScoreSourceLabel,
+      isAdminAccount,
+      periodLabel,
+    } = context;
     const periodText = periodLabel(period);
-    const rows = getFiveSChartRows(context, period);
     const canEditTarget = Boolean(isAdminAccount?.(currentUser));
+    const chartGroups = [
+      {
+        source: SCORE_SOURCE_ASSESSOR,
+        title: "Điểm Assessor chấm",
+        zoneTitle: "Tổng hợp điểm các zone - Assessor chấm",
+        itemTitle: "Điểm 5S các hạng mục - Assessor chấm",
+      },
+      {
+        source: SCORE_SOURCE_SELF,
+        title: "Điểm quản lý zone tự đánh giá",
+        zoneTitle: "Tổng hợp điểm các zone tự đánh giá",
+        itemTitle: "Điểm 5S các hạng mục - Quản lý zone tự đánh giá",
+      },
+    ];
     return `<section class="five-s-summary-chart-panel" id="summary-chart-dashboard">
       <div class="section-heading">
         <h2>Biểu đồ 5S</h2>
         <span>${escapeHtml(periodText)}</span>
       </div>
-      <div class="admin-card-chart-grid five-s-summary-chart-grid">
-        ${chartBlock({
-          title: "Tổng hợp điểm các zone tự đánh giá",
-          periodText,
-          sourceLabel: "Điểm tự đánh giá",
-          rows: rows.zoneRows,
-          target: rows.zoneTarget,
-          targetKey: "zone",
-          canEditTarget,
-          escapeHtml,
-          valueDigits: 2,
-          grouped: true,
-          rotateLabels: false,
-        })}
-        ${chartBlock({
-          title: "Điểm 5S các hạng mục",
-          periodText,
-          sourceLabel: "Điểm thực tế",
-          rows: rows.itemRows,
-          target: rows.itemTarget,
-          targetKey: "item",
-          canEditTarget,
-          escapeHtml,
-          valueDigits: 1,
-          grouped: false,
-          rotateLabels: true,
-        })}
-      </div>
+      ${chartGroups.map((group) => {
+        const rows = getFiveSChartRows(context, period, group.source);
+        const sourceLabel = getScoreSourceLabel(group.source);
+        return `<section class="five-s-chart-source-group">
+          <div class="five-s-chart-source-heading">
+            <h3>${escapeHtml(group.title)}</h3>
+            <span>${escapeHtml(periodText)}</span>
+          </div>
+          <div class="admin-card-chart-grid five-s-summary-chart-grid">
+            ${chartBlock({
+              title: group.zoneTitle,
+              periodText,
+              sourceLabel,
+              rows: rows.zoneRows,
+              target: rows.zoneTarget,
+              targetKey: "zone",
+              chartKey: `zone-${group.source}`,
+              canEditTarget,
+              escapeHtml,
+              valueDigits: 2,
+              grouped: true,
+              rotateLabels: false,
+            })}
+            ${chartBlock({
+              title: group.itemTitle,
+              periodText,
+              sourceLabel,
+              rows: rows.itemRows,
+              target: rows.itemTarget,
+              targetKey: "item",
+              chartKey: `item-${group.source}`,
+              canEditTarget,
+              escapeHtml,
+              valueDigits: 2,
+              grouped: false,
+              rotateLabels: true,
+            })}
+          </div>
+        </section>`;
+      }).join("")}
     </section>`;
   }
 
@@ -216,6 +361,7 @@
   function render(context) {
     const {
       SCORE_SOURCE_ASSESSOR,
+      SCORE_SOURCE_AVERAGE,
       SCORE_SOURCE_OPTIONS,
       buildMatrixTable,
       currentUser,
@@ -243,6 +389,7 @@
     const scoreSource = isAdmin
       ? elements.summaryScoreSource?.value || SCORE_SOURCE_ASSESSOR
       : userScoreSource;
+    const isAverageMode = isAdmin && scoreSource === SCORE_SOURCE_AVERAGE;
     const allowedAreaIds = getAllowedAreaIds(currentUser, periodId);
     const assignedAreas = getAreasForPeriod(periodId).filter((area) => allowedAreaIds.has(area.id));
 
@@ -254,7 +401,9 @@
       elements.summaryScoreSource.value = SCORE_SOURCE_OPTIONS.some((option) => option.value === currentSource) ? currentSource : SCORE_SOURCE_ASSESSOR;
     }
 
-    elements.summaryTitle.textContent = `Điểm Chi Tiết Theo Từng Hạng Mục - ${getScoreSourceLabel(scoreSource)} - ${periodLabel(period)}`;
+    elements.summaryTitle.textContent = isAverageMode
+      ? `Điểm số trung bình tính KPI các bộ phận - ${periodLabel(period)}`
+      : `Điểm Chi Tiết Theo Từng Hạng Mục - ${getScoreSourceLabel(scoreSource)} - ${periodLabel(period)}`;
     if (elements.assignedZoneSummary) {
       elements.assignedZoneSummary.textContent = isAdmin
         ? ""
@@ -263,13 +412,23 @@
           : "Tài khoản này chưa được phân quyền chấm zone 5S.";
     }
 
-    buildMatrixTable(elements.summaryTable, {
-      periodId,
-      scoreSource,
-      editable: true,
-      editableAreaIds: allowedAreaIds,
-      adminMode: isAdmin,
-    });
+    if (isAverageMode) {
+      renderAverageSummaryTable(context, period);
+    } else {
+      const wrapper = elements.summaryTable?.closest?.(".summary-matrix-wrap");
+      if (wrapper) {
+        wrapper.id = "";
+        delete wrapper.dataset.copyFormat;
+      }
+      syncSummaryAverageCopyButton(context, false);
+      buildMatrixTable(elements.summaryTable, {
+        periodId,
+        scoreSource,
+        editable: true,
+        editableAreaIds: allowedAreaIds,
+        adminMode: isAdmin,
+      });
+    }
     renderSummaryCharts(context, period);
   }
 

@@ -582,20 +582,20 @@
               </svg>
 
               <!-- Floating Telemetry HUD Widgets -->
-              <div class="cyber-hud-card cyber-hud-top-left" title="Khu vực nhà máy">
+              <div class="cyber-hud-card cyber-hud-top-left" title="Khoảng cách">
                 <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2">
                   <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"></path>
                   <circle cx="12" cy="10" r="3"></circle>
                 </svg>
-                <span>295 km</span>
+                <span>12 km</span>
               </div>
 
-              <div class="cyber-hud-card cyber-hud-top-right" title="Điểm TB 5S">
-                75
+              <div class="cyber-hud-card cyber-hud-top-right" title="3/1">
+                3/1
               </div>
 
               <div class="cyber-hud-card cyber-hud-metric-card" data-go-tab="issue-stats" role="button" tabindex="0" title="Nhấp xem chi tiết Thống Kê An Toàn">
-                <span class="cyber-hud-metric-head">95%</span>
+                <span class="cyber-hud-metric-head">100%</span>
                 <span class="cyber-hud-metric-sub">Tuân thủ an toàn</span>
                 <div class="cyber-hud-bars">
                   <span class="cyber-hud-bar"></span>

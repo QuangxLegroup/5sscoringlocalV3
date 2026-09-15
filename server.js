@@ -95,100 +95,6 @@ async function seedAccounts(repository) {
   });
 }
 
-const SAMPLES_DIR = path.join(__dirname, "data", "samples", "2024");
-
-function loadSamplePayloads() {
-  try {
-    const files = fs.readdirSync(SAMPLES_DIR).filter((f) => f.endsWith(".json"));
-    const payloads = [];
-    for (const file of files) {
-      try {
-        const text = fs.readFileSync(path.join(SAMPLES_DIR, file), "utf8");
-        const data = JSON.parse(text);
-        if (data?.payload) {
-          payloads.push(data.payload);
-        }
-      } catch (err) {
-        console.warn(`Lỗi đọc file mẫu ${file}:`, err.message);
-      }
-    }
-    return payloads;
-  } catch (error) {
-    if (error.code !== "ENOENT") {
-      console.warn("Không đọc được thư mục samples:", error.message);
-    }
-    return [];
-  }
-}
-
-function toArrayHelper(value) {
-  if (Array.isArray(value)) return value;
-  if (value && typeof value === "object") {
-    return Object.entries(value).map(([k, v]) => {
-      if (v && typeof v === "object") {
-        return { id: v.id || k, ...v };
-      }
-      return v;
-    });
-  }
-  return [];
-}
-
-function mergeArrayByIdHelper(existing, incoming) {
-  const map = new Map();
-  for (const item of toArrayHelper(existing)) {
-    if (item?.id) map.set(item.id, item);
-  }
-  for (const item of toArrayHelper(incoming)) {
-    if (item?.id) {
-      const prev = map.get(item.id);
-      if (prev) {
-        map.set(item.id, { ...item, ...prev, settingsSnapshot: prev.settingsSnapshot || item.settingsSnapshot });
-      } else {
-        map.set(item.id, item);
-      }
-    }
-  }
-  return [...map.values()];
-}
-
-async function seedSampleData(repository) {
-  const payloads = loadSamplePayloads();
-  if (!payloads.length) return;
-
-  await repository.updateRoot((currentRoot) => {
-    const root = currentRoot || {};
-
-    const arrayKeys = [
-      "periods", "managers", "assessors", "areas", "scores",
-      "departmentHeadContacts",
-      "safetyManagers", "safetyAssessors", "safetyAreas",
-      "safetyDepartmentHeadContacts", "safetyDepartmentGroups",
-      "safetyRecords",
-    ];
-
-    const objectKeys = [
-      "fiveSChartTargets", "safetyReport", "safetyIdentificationOverrides",
-    ];
-
-    for (const payload of payloads) {
-      for (const key of arrayKeys) {
-        if (Array.isArray(payload[key]) && payload[key].length) {
-          root[key] = mergeArrayByIdHelper(root[key] || [], payload[key]);
-        }
-      }
-
-      for (const key of objectKeys) {
-        if (payload[key] && typeof payload[key] === "object") {
-          root[key] = { ...(root[key] || {}), ...payload[key] };
-        }
-      }
-    }
-
-    return root;
-  });
-}
-
 function createServer() {
   const dataRepository = new JsonFileRepository({ dataDir: DATA_DIR, fileName: DATA_FILE });
   const authService = new AuthService({ repository: dataRepository, secret: process.env.JWT_SECRET || "" });
@@ -220,7 +126,6 @@ async function listen(port) {
   const { dataRepository, dataFile, photoDir, server } = createServer();
 
   await seedAccounts(dataRepository);
-  await seedSampleData(dataRepository);
 
   server.on("error", (error) => {
     if (error.code === "EADDRINUSE") {
