@@ -394,6 +394,9 @@
   let dataUnsubscribe = null;
   let sessionHeartbeatTimer = 0;
   let suppressNextDataWatchRender = 0;
+  let activeInlineScoreCell = null;
+  let activeInlineScoreRestoreRaf = null;
+  let pendingScoreUiRefreshRaf = null;
   const SESSION_STORAGE_KEY = "legroup-5s-session";
   const SESSION_HEARTBEAT_MS = 30 * 1000;
   const LOGIN_ROUTE = "/login";
@@ -886,15 +889,15 @@
     const firstSafetyPeriod = normalized.periods.find((period) => [SAFETY_PERIOD_TYPE, LEGACY_PERIOD_TYPE].includes(normalizePeriodType(period.type)));
 
     if (!normalized.activePeriodId || !periodExists(normalized.activePeriodId)) {
-      normalized.activePeriodId = firstFiveSPeriod?.id || normalized.periods[0]?.id || "";
+      normalized.activePeriodId = firstFiveSPeriod?.id || firstSafetyPeriod?.id || "";
     }
     if (!normalized.activeFiveSPeriodId || !periodExists(normalized.activeFiveSPeriodId)) {
-      normalized.activeFiveSPeriodId = [FIVE_S_PERIOD_TYPE, LEGACY_PERIOD_TYPE].includes(normalizePeriodType(periodFromList(normalized.activePeriodId)?.type)) ? normalized.activePeriodId : firstFiveSPeriod?.id || normalized.activePeriodId || "";
+      normalized.activeFiveSPeriodId = [FIVE_S_PERIOD_TYPE, LEGACY_PERIOD_TYPE].includes(normalizePeriodType(periodFromList(normalized.activePeriodId)?.type)) ? normalized.activePeriodId : firstFiveSPeriod?.id || "";
     }
     if (!normalized.activeSafetyPeriodId || !periodExists(normalized.activeSafetyPeriodId)) {
       normalized.activeSafetyPeriodId = [SAFETY_PERIOD_TYPE, LEGACY_PERIOD_TYPE].includes(normalizePeriodType(periodFromList(normalized.activePeriodId)?.type)) ? normalized.activePeriodId : firstSafetyPeriod?.id || "";
     }
-    normalized.activePeriodId = normalized.activeFiveSPeriodId || normalized.activePeriodId;
+    normalized.activePeriodId = normalized.activeFiveSPeriodId || normalized.activeSafetyPeriodId || normalized.activePeriodId;
 
     const defaultAreaByCode = new Map(DEFAULT_AREA_COLUMNS.map((area) => [area.code, area]));
     normalized.areas = normalized.areas
@@ -2463,7 +2466,7 @@
   function getPeriod(periodId) {
     if (arguments.length === 0) {
       const activePeriodId = getActivePeriodId(FIVE_S_PERIOD_TYPE);
-      return state.periods.find((period) => period.id === activePeriodId) || state.periods[0] || null;
+      return state.periods.find((period) => period.id === activePeriodId) || null;
     }
     if (!periodId) {
       return null;
@@ -2517,6 +2520,22 @@
       return `${day}/${month}/${year}`;
     }
     return period?.month && period?.year ? `Tháng ${period.month}/${period.year}` : "";
+  }
+
+  function safetyPeriodInputDate(period) {
+    const createdAtDate = toIsoDate(period?.createdAt);
+    if (createdAtDate) {
+      return createdAtDate;
+    }
+    const label = stripSafetyPeriodLabelPrefix(period?.label || "");
+    const match = /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/.exec(label);
+    if (match) {
+      return `${match[3]}-${String(Number(match[2])).padStart(2, "0")}-${String(Number(match[1])).padStart(2, "0")}`;
+    }
+    if (period?.year && period?.month) {
+      return `${period.year}-${String(Number(period.month)).padStart(2, "0")}-01`;
+    }
+    return todayIsoDate();
   }
 
   function periodLabel(period) {
@@ -3395,8 +3414,9 @@
     const scoreSource = normalizeScoreSource(options.scoreSource);
     const areas = getAreasForPeriod(periodId);
     const editableAreaIds = options.editableAreaIds || new Set();
-    const adminMode = Boolean(options.adminMode) && !isPeriodArchived(periodId);
-    const canEdit = Boolean(options.editable) && !isPeriodArchived(periodId);
+    const hasOpenPeriod = Boolean(periodId) && isPeriodOpen(periodId, FIVE_S_PERIOD_TYPE);
+    const adminMode = Boolean(options.adminMode) && hasOpenPeriod && !isPeriodArchived(periodId);
+    const canEdit = Boolean(options.editable) && hasOpenPeriod && !isPeriodArchived(periodId);
     const includeFormulas = Boolean(options.formulas);
     const firstScoreRow = 5;
     const lastAreaColumn = excelColumnName(3 + areas.length);
@@ -3482,6 +3502,7 @@
     table.appendChild(picRow);
 
     let rowNumber = firstScoreRow;
+    let scoreGridRowIndex = 0;
     DEFAULT_ITEMS.forEach((item) => {
       const itemStartRow = rowNumber;
       const itemEndRow = itemStartRow + item.criteria.length - 1;
@@ -3495,7 +3516,7 @@
 
         row.appendChild(createCell("td", criterion.label, "criteria-cell"));
 
-        areas.forEach((area) => {
+        areas.forEach((area, areaIndex) => {
           const isNa = isNotApplicable(item.id, criterion.id, area);
           const record = getScoreRecord(periodId, area.id, item.id, criterion.id, scoreSource);
           const value = Number.isFinite(record?.score) ? record.score : null;
@@ -3519,17 +3540,26 @@
           if (isNa) {
             cell.setAttribute("aria-label", "Không áp dụng");
           } else if (isEditable) {
-            const button = document.createElement("button");
-            button.type = "button";
-            button.textContent = isCrossed ? "" : formatScore(value);
-            button.dataset.editScore = "true";
-            button.dataset.periodId = periodId;
-            button.dataset.areaId = area.id;
-            button.dataset.itemId = item.id;
-            button.dataset.criterionId = criterion.id;
-            button.dataset.scoreSource = scoreSource;
-            button.title = formatScoreRecord(record) || "Sửa điểm";
-            cell.appendChild(button);
+            const input = document.createElement("input");
+            input.className = "inline-score-input";
+            input.type = "text";
+            input.inputMode = "numeric";
+            input.maxLength = 1;
+            input.autocomplete = "off";
+            input.draggable = false;
+            input.spellcheck = false;
+            input.value = isCrossed ? "" : formatScore(value);
+            input.dataset.inlineScoreInput = "true";
+            input.dataset.periodId = periodId;
+            input.dataset.areaId = area.id;
+            input.dataset.itemId = item.id;
+            input.dataset.criterionId = criterion.id;
+            input.dataset.scoreSource = scoreSource;
+            input.dataset.scoreRowIndex = String(scoreGridRowIndex);
+            input.dataset.scoreColIndex = String(areaIndex);
+            input.title = formatScoreRecord(record) || "Nhập điểm";
+            input.setAttribute("aria-label", `Điểm Zone ${area.code} ${item.code} ${criterion.label}`);
+            cell.appendChild(input);
           } else {
             cell.textContent = isCrossed ? "" : formatScore(value);
           }
@@ -3538,6 +3568,11 @@
 
         if (criterionIndex === 0) {
           const averageCell = setRowSpan(createCell("td", formatNumber(itemAverage(periodId, item, areas, scoreSource), 2), "item-average"), item.criteria.length);
+          averageCell.dataset.averageKind = "item";
+          averageCell.dataset.periodId = periodId;
+          averageCell.dataset.itemId = item.id;
+          averageCell.dataset.scoreSource = normalizeScoreSource(scoreSource);
+          averageCell.dataset.decimals = "2";
           if (includeFormulas) {
             averageCell.setAttribute("x:fmla", `=IFERROR(AVERAGE(D${itemStartRow}:${lastAreaColumn}${itemEndRow}),"")`);
           }
@@ -3546,6 +3581,7 @@
 
         table.appendChild(row);
         rowNumber += 1;
+        scoreGridRowIndex += 1;
       });
     });
 
@@ -3567,6 +3603,11 @@
 
     areas.forEach((area, index) => {
       const totalCell = createCell("td", formatNumber(areaAverage(periodId, area, scoreSource), 2), "area-total");
+      totalCell.dataset.averageKind = "area";
+      totalCell.dataset.periodId = periodId;
+      totalCell.dataset.areaId = area.id;
+      totalCell.dataset.scoreSource = scoreSource;
+      totalCell.dataset.decimals = "2";
       if (options.includeFormulas) {
         const column = excelColumnName(4 + index);
         totalCell.setAttribute("x:fmla", `=IFERROR(AVERAGE(${column}${options.firstScoreRow}:${column}${options.lastScoreRow}),"")`);
@@ -3575,6 +3616,10 @@
     });
 
     const overallCell = setRowSpan(createCell("td", formatNumber(overallAverage(periodId, areas, scoreSource), 1), "overall-total"), 3);
+    overallCell.dataset.averageKind = "overall";
+    overallCell.dataset.periodId = periodId;
+    overallCell.dataset.scoreSource = scoreSource;
+    overallCell.dataset.decimals = "1";
     if (options.includeFormulas) {
       overallCell.setAttribute("x:fmla", `=IFERROR(AVERAGE(D${options.totalRowNumber}:${options.lastAreaColumn}${options.totalRowNumber}),"")`);
     }
@@ -3606,6 +3651,11 @@
       const span = group.areas.length;
       if (span > 1) {
         const averageCell = setColSpan(createCell("td", group.label ? formatNumber(groupAverage(periodId, group.areas, scoreSource), 2) : "", "group-average"), span);
+        averageCell.dataset.averageKind = "group";
+        averageCell.dataset.periodId = periodId;
+        averageCell.dataset.areaIds = group.areas.map((area) => area.id).join(",");
+        averageCell.dataset.scoreSource = scoreSource;
+        averageCell.dataset.decimals = "2";
         if (options.includeFormulas && group.label) {
           const startColumn = excelColumnName(4 + areas.indexOf(group.areas[0]));
           const endColumn = excelColumnName(4 + areas.indexOf(group.areas[group.areas.length - 1]));
@@ -3882,6 +3932,8 @@
     activeSafetyReport = "";
     closeModal();
     closeAccountMenu();
+    document.body.classList.add("login-mode");
+    document.body.classList.remove("app-mode");
     elements.appShell.hidden = true;
     elements.loginScreen.hidden = false;
     if (updateRoute) {
@@ -3891,6 +3943,8 @@
   }
 
   function showAppScreen() {
+    document.body.classList.add("app-mode");
+    document.body.classList.remove("login-mode");
     elements.loginScreen.hidden = true;
     elements.appShell.hidden = false;
   }
@@ -4121,7 +4175,7 @@
       const isActive = button.dataset.tab === activeTab && matchesReport;
       button.classList.toggle("is-active", isActive);
       button.classList.toggle("active", isActive);
-      if (isActive && button.closest(".header-quick-nav")) {
+      if (isActive && button.closest(".header-quick-nav") && !options.preserveScroll) {
         try {
           button.scrollIntoView({ behavior: "smooth", block: "nearest", inline: "center" });
         } catch (_) {}
@@ -4165,7 +4219,13 @@
     populateAssessorSelects();
     populateAreaSelects();
     updateUndoRedoButtons();
-    setActiveTab(activeTab, { replaceRoute: Boolean(options.replaceRoute), preserveSafetyReport: true });
+    setActiveTab(activeTab, {
+      replaceRoute: Boolean(options.replaceRoute),
+      updateRoute: options.updateRoute,
+      preserveScroll: Boolean(options.preserveScroll),
+      preserveSafetyReport: true,
+    });
+    scheduleInlineScoreFocusRestore();
   }
 
   function createPageContext() {
@@ -4487,6 +4547,7 @@
   function scoreButtonAttrs(periodId, area, item, criterion, scoreSource = SCORE_SOURCE_ASSESSOR) {
     return "data-edit-score=\"true\" data-period-id=\"" + escapeHtml(periodId) + "\" data-area-id=\"" + escapeHtml(area.id) + "\" data-item-id=\"" + escapeHtml(item.id) + "\" data-criterion-id=\"" + escapeHtml(criterion.id) + "\" data-score-source=\"" + escapeHtml(normalizeScoreSource(scoreSource)) + "\"";
   }
+
   function cssSelectorValue(value) {
     if (window.CSS?.escape) {
       return CSS.escape(String(value));
@@ -4525,6 +4586,73 @@
     if (dirty) {
       modalPreviewDirty = true;
     }
+  }
+
+  function applyInlineScorePreview({ periodId, areaId, itemId, criterionId, rawScore, scoreSource = SCORE_SOURCE_ASSESSOR }) {
+    const normalizedSource = normalizeScoreSource(scoreSource);
+    const selector = `[data-inline-score-input="true"][data-period-id="${cssSelectorValue(periodId)}"][data-area-id="${cssSelectorValue(areaId)}"][data-item-id="${cssSelectorValue(itemId)}"][data-criterion-id="${cssSelectorValue(criterionId)}"][data-score-source="${cssSelectorValue(normalizedSource)}"]`;
+    const isCrossed = rawScore === SCORE_CROSSED;
+    const nextScore = rawScore === "" || isCrossed ? null : Number(rawScore);
+    const isLow = Number.isFinite(nextScore) && nextScore <= 2;
+
+    document.querySelectorAll(selector).forEach((input) => {
+      const scoreCell = input.closest(".score-cell");
+      if (scoreCell) {
+        scoreCell.classList.toggle("score-na", isCrossed);
+        scoreCell.classList.toggle("score-low", isLow);
+        scoreCell.classList.toggle("score-empty", rawScore === "");
+      }
+      input.value = isCrossed ? "" : Number.isFinite(nextScore) ? String(nextScore) : "";
+      input.title = isCrossed ? "Gạch chéo" : Number.isFinite(nextScore) ? String(nextScore) : "Nhập điểm";
+    });
+  }
+
+  function setAverageCellText(cell, value) {
+    const decimals = Number(cell.dataset.decimals);
+    const formatted = formatNumber(value, Number.isFinite(decimals) ? decimals : 2);
+    cell.textContent = (cell.dataset.averagePrefix || "") + formatted;
+  }
+
+  function refreshAveragePreview({ periodId, areaId = "", itemId = "", scoreSource = SCORE_SOURCE_ASSESSOR }) {
+    const normalizedSource = normalizeScoreSource(scoreSource);
+    const areas = getAreasForPeriod(periodId);
+    const sourceSelector = `[data-period-id="${cssSelectorValue(periodId)}"][data-score-source="${cssSelectorValue(normalizedSource)}"]`;
+
+    if (itemId) {
+      const item = getItem(itemId);
+      if (item) {
+        document.querySelectorAll(`[data-average-kind="item"]${sourceSelector}[data-item-id="${cssSelectorValue(itemId)}"]`).forEach((cell) => {
+          setAverageCellText(cell, itemAverage(periodId, item, areas, normalizedSource));
+        });
+      }
+    }
+
+    if (areaId) {
+      const area = getAreaForPeriod(periodId, areaId);
+      if (area) {
+        const areaValue = areaAverage(periodId, area, normalizedSource);
+        document.querySelectorAll(`[data-average-kind="area"]${sourceSelector}[data-area-id="${cssSelectorValue(areaId)}"]`).forEach((cell) => {
+          setAverageCellText(cell, areaValue);
+        });
+        if (elements.assessorProgress && activeTab === "assessor" && elements.assessorAreaSelect?.value === areaId) {
+          const completed = getCompletedCellCount(periodId, area, normalizedSource);
+          const required = getRequiredCellsForArea(area);
+          elements.assessorProgress.textContent = `Đã chấm ${completed}/${required} ô. Điểm TB zone: ${formatNumber(areaValue, 2)}`;
+        }
+      }
+    }
+
+    document.querySelectorAll(`[data-average-kind="overall"]${sourceSelector}`).forEach((cell) => {
+      setAverageCellText(cell, overallAverage(periodId, areas, normalizedSource));
+    });
+
+    document.querySelectorAll(`[data-average-kind="group"]${sourceSelector}`).forEach((cell) => {
+      const groupAreas = String(cell.dataset.areaIds || "")
+        .split(",")
+        .map((id) => areas.find((area) => area.id === id))
+        .filter(Boolean);
+      setAverageCellText(cell, groupAreas.length ? groupAverage(periodId, groupAreas, normalizedSource) : null);
+    });
   }
 
   function renderAssessorTab() {
@@ -4575,6 +4703,7 @@
     table.innerHTML = "";
     table.dataset.periodId = periodId;
     table.dataset.areaId = area.id;
+    table.dataset.scoreSource = normalizedSource;
 
     const colgroup = document.createElement("colgroup");
     ["76px", "148px", "68px", "58px", "154px", "154px", "170px", "154px", "154px"].forEach((width) => {
@@ -4592,7 +4721,14 @@
     metaRow.appendChild(setColSpan(createCell("td", "Zone: " + area.code + "\n" + getAreaResponsibleNameForPeriod(periodId, area), "standard-reference-meta-cell assessor-4m-meta"), 2));
     metaRow.appendChild(setColSpan(createCell("td", "Kỳ: " + periodLabel(period) + "\nNguồn: " + getScoreSourceLabel(normalizedSource), "standard-reference-meta-cell assessor-4m-meta"), 2));
     metaRow.appendChild(setColSpan(createCell("td", "Đánh giá viên:\n" + getAccountDisplayName(currentUser, FIVE_S_PERIOD_TYPE, periodId), "standard-reference-meta-cell assessor-4m-meta"), 3));
-    metaRow.appendChild(setColSpan(createCell("td", "Điểm TB:\n" + formatNumber(areaAverage(periodId, area, normalizedSource), 2), "standard-reference-meta-cell assessor-4m-meta assessor-4m-average"), 2));
+    const metaAverageCell = setColSpan(createCell("td", "Điểm TB:\n" + formatNumber(areaAverage(periodId, area, normalizedSource), 2), "standard-reference-meta-cell assessor-4m-meta assessor-4m-average"), 2);
+    metaAverageCell.dataset.averageKind = "area";
+    metaAverageCell.dataset.periodId = periodId;
+    metaAverageCell.dataset.areaId = area.id;
+    metaAverageCell.dataset.scoreSource = normalizedSource;
+    metaAverageCell.dataset.decimals = "2";
+    metaAverageCell.dataset.averagePrefix = "Điểm TB:\n";
+    metaRow.appendChild(metaAverageCell);
     table.appendChild(metaRow);
 
     const headerRow = document.createElement("tr");
@@ -4642,7 +4778,14 @@
 
     const averageRow = document.createElement("tr");
     averageRow.appendChild(createCell("td", "", "standard-reference-blank"));
-    averageRow.appendChild(setColSpan(createCell("td", "Điểm trung bình Zone " + area.code + ": " + formatNumber(areaAverage(periodId, area, normalizedSource), 2), "standard-reference-average-label"), 8));
+    const zoneAverageCell = setColSpan(createCell("td", "Điểm trung bình Zone " + area.code + ": " + formatNumber(areaAverage(periodId, area, normalizedSource), 2), "standard-reference-average-label"), 8);
+    zoneAverageCell.dataset.averageKind = "area";
+    zoneAverageCell.dataset.periodId = periodId;
+    zoneAverageCell.dataset.areaId = area.id;
+    zoneAverageCell.dataset.scoreSource = normalizedSource;
+    zoneAverageCell.dataset.decimals = "2";
+    zoneAverageCell.dataset.averagePrefix = "Điểm trung bình Zone " + area.code + ": ";
+    averageRow.appendChild(zoneAverageCell);
     table.appendChild(averageRow);
   }
 
@@ -4674,8 +4817,10 @@
       itemOption.value = option.value;
       itemOption.textContent = option.label;
       itemOption.selected = option.value === selectedScore;
+      itemOption.toggleAttribute("selected", option.value === selectedScore);
       select.appendChild(itemOption);
     });
+    select.value = selectedScore;
     cell.classList.toggle("score-low", selectedScore === "1" || selectedScore === "2");
     cell.classList.toggle("score-na", selectedScore === SCORE_CROSSED);
     cell.appendChild(select);
@@ -4833,11 +4978,16 @@
       container.innerHTML = periods
         .map((period) => {
           const active = period.id === activeId ? "Đang mở" : "Mở kỳ";
-          const meta = normalizePeriodType(period.type) === SAFETY_PERIOD_TYPE ? "Đánh giá an toàn" : "Chấm 5S";
+          const periodType = normalizePeriodType(period.type) === SAFETY_PERIOD_TYPE ? SAFETY_PERIOD_TYPE : FIVE_S_PERIOD_TYPE;
+          const meta = periodType === SAFETY_PERIOD_TYPE ? "Đánh giá an toàn" : "Chấm 5S";
+          const editAction = periodType === SAFETY_PERIOD_TYPE ? "edit-safety-period-date" : "edit-five-s-period-date";
+          const editLabel = "Sửa";
+          const editDateButton = "<button class=\"tiny-button\" type=\"button\" data-action=\"" + escapeHtml(editAction) + "\" data-id=\"" + escapeHtml(period.id) + "\">" + escapeHtml(editLabel) + "</button>";
           return "<article class=\"compact-item\">" +
             "<div><strong>" + escapeHtml(periodLabel(period)) + "</strong><span>" + escapeHtml(meta) + "</span></div>" +
             "<div class=\"compact-actions\">" +
               "<button class=\"tiny-button\" type=\"button\" data-action=\"activate-period\" data-period-type=\"" + escapeHtml(type) + "\" data-id=\"" + escapeHtml(period.id) + "\">" + active + "</button>" +
+              editDateButton +
               "<button class=\"tiny-button danger-text-button\" type=\"button\" data-action=\"delete-period\" data-id=\"" + escapeHtml(period.id) + "\">Xóa</button>" +
             "</div>" +
           "</article>";
@@ -5347,9 +5497,15 @@
     const criterion = getCriterion(item, select.dataset.criterionId || "");
     const scoreSource = normalizeScoreSource(select.dataset.scoreSource || "");
     const rawScore = select.value;
+    const focusContext = getAssessorScoreSelectContext(select);
     const isCrossed = rawScore === SCORE_CROSSED;
     const nextScore = rawScore === "" || isCrossed ? null : Number(rawScore);
 
+    if (!periodId || !isPeriodOpen(periodId, FIVE_S_PERIOD_TYPE)) {
+      showToast("Không có kỳ đánh giá 5S đang mở nên không thể nhập dữ liệu.", true);
+      renderActiveTab();
+      return;
+    }
     if (!area || !item || !criterion) {
       showToast("Không tìm thấy ô chấm điểm.", true);
       renderActiveTab();
@@ -5361,6 +5517,14 @@
       return;
     }
 
+    syncAssessorScoreSelectPreview({
+      periodId,
+      areaId: area.id,
+      itemId: item.id,
+      criterionId: criterion.id,
+      rawScore,
+      scoreSource,
+    });
     select.disabled = true;
     try {
       await setScore({
@@ -5372,12 +5536,566 @@
         status: isCrossed ? SCORE_CROSSED : "",
         scoreSource,
       });
+      refreshAveragePreview({
+        periodId,
+        areaId: area.id,
+        itemId: item.id,
+        scoreSource,
+      });
+      scheduleAssessorScoreFocusRestore(focusContext);
       showToast("Đã lưu điểm.");
-      renderAll();
     } catch (error) {
       console.error(error);
       showToast(error?.message || "Lỗi khi lưu điểm.", true);
       renderActiveTab();
+    } finally {
+      document.querySelectorAll(assessorScoreSelectSelector({
+        periodId,
+        areaId: area.id,
+        itemId: item.id,
+        criterionId: criterion.id,
+        scoreSource,
+      })).forEach((matchingSelect) => {
+        matchingSelect.disabled = false;
+      });
+    }
+  }
+
+  function assessorScoreSelectSelector({ periodId, areaId, itemId, criterionId, scoreSource }) {
+    const normalizedSource = normalizeScoreSource(scoreSource);
+    return `[data-assessor-score-select="true"][data-period-id="${cssSelectorValue(periodId)}"][data-area-id="${cssSelectorValue(areaId)}"][data-item-id="${cssSelectorValue(itemId)}"][data-criterion-id="${cssSelectorValue(criterionId)}"][data-score-source="${cssSelectorValue(normalizedSource)}"]`;
+  }
+
+  function syncAssessorScoreSelectPreview({ periodId, areaId, itemId, criterionId, rawScore, scoreSource }) {
+    const selector = assessorScoreSelectSelector({ periodId, areaId, itemId, criterionId, scoreSource });
+    const isCrossed = rawScore === SCORE_CROSSED;
+    const nextScore = rawScore === "" || isCrossed ? null : Number(rawScore);
+    const isLow = Number.isFinite(nextScore) && nextScore <= 2;
+
+    document.querySelectorAll(selector).forEach((matchingSelect) => {
+      matchingSelect.value = rawScore;
+      const scoreCell = matchingSelect.closest(".standard-reference-score-input-cell");
+      scoreCell?.classList.toggle("score-low", isLow);
+      scoreCell?.classList.toggle("score-na", isCrossed);
+
+      const row = matchingSelect.closest("tr");
+      row?.querySelectorAll(".standard-reference-level-cell").forEach((levelCell, index) => {
+        levelCell.classList.toggle("is-selected-score", rawScore === String(index + 1));
+      });
+    });
+  }
+
+  function getAssessorScoreSelectContext(select) {
+    if (!select?.matches?.("[data-assessor-score-select]")) {
+      return null;
+    }
+    return {
+      periodId: select.dataset.periodId || "",
+      areaId: select.dataset.areaId || "",
+      itemId: select.dataset.itemId || "",
+      criterionId: select.dataset.criterionId || "",
+      scoreSource: normalizeScoreSource(select.dataset.scoreSource || ""),
+      inModal: Boolean(select.closest("#modal-backdrop") && !elements.modalBackdrop?.hidden),
+    };
+  }
+
+  function findAssessorScoreSelectByContext(context) {
+    if (!context) {
+      return null;
+    }
+    const selector = assessorScoreSelectSelector(context);
+    const candidates = Array.from(document.querySelectorAll(selector));
+    if (!candidates.length) {
+      return null;
+    }
+    const modalOpen = Boolean(elements.modalBackdrop && !elements.modalBackdrop.hidden);
+    if (context.inModal && modalOpen) {
+      return candidates.find((select) => select.closest("#modal-backdrop") === elements.modalBackdrop) || candidates[0];
+    }
+    return candidates.find((select) => !select.closest("#modal-backdrop")) || candidates[0];
+  }
+
+  function focusAssessorScoreSelect(select) {
+    if (!select?.matches?.("[data-assessor-score-select]")) {
+      return false;
+    }
+    select.focus({ preventScroll: true });
+    return true;
+  }
+
+  function scheduleAssessorScoreFocusRestore(context) {
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        const currentSelect = findAssessorScoreSelectByContext(context);
+        if (!currentSelect) {
+          return;
+        }
+        focusAssessorScoreSelect(currentSelect);
+      });
+    });
+  }
+
+  function getInlineScoreContext(input) {
+    const periodId = input?.dataset.periodId || "";
+    const area = getAreaForPeriod(periodId, input?.dataset.areaId || "");
+    const item = getItem(input?.dataset.itemId || "");
+    const criterion = getCriterion(item, input?.dataset.criterionId || "");
+    const scoreSource = normalizeScoreSource(input?.dataset.scoreSource || "");
+    return { periodId, area, item, criterion, scoreSource };
+  }
+
+  function cleanInlineScoreInputValue(input, nextValue = input?.value || "") {
+    const raw = String(nextValue || "").trim().toLowerCase();
+    const clean = raw === "0" || raw === "x" ? SCORE_CROSSED : /^[1-5]$/.test(raw) ? raw : "";
+    const displayValue = clean === SCORE_CROSSED ? "" : clean;
+    if (input && input.value !== displayValue) {
+      input.value = displayValue;
+    }
+    return clean;
+  }
+
+  function rememberActiveInlineScoreInput(input) {
+    if (!input?.matches?.("[data-inline-score-input]")) {
+      return;
+    }
+
+    activeInlineScoreCell = {
+      periodId: input.dataset.periodId || "",
+      areaId: input.dataset.areaId || "",
+      itemId: input.dataset.itemId || "",
+      criterionId: input.dataset.criterionId || "",
+      scoreSource: normalizeScoreSource(input.dataset.scoreSource || ""),
+      scoreRowIndex: input.dataset.scoreRowIndex || "",
+      scoreColIndex: input.dataset.scoreColIndex || "",
+      inModal: Boolean(input.closest("#modal-backdrop") && !elements.modalBackdrop?.hidden),
+      expiresAt: Date.now() + 8000,
+    };
+  }
+
+  function findInlineScoreInputByMemory(memory = activeInlineScoreCell) {
+    if (!memory || Date.now() > memory.expiresAt) {
+      return null;
+    }
+
+    const selector = `[data-inline-score-input="true"][data-period-id="${cssSelectorValue(memory.periodId)}"][data-area-id="${cssSelectorValue(memory.areaId)}"][data-item-id="${cssSelectorValue(memory.itemId)}"][data-criterion-id="${cssSelectorValue(memory.criterionId)}"][data-score-source="${cssSelectorValue(memory.scoreSource)}"]`;
+    const fallbackSelector = `[data-inline-score-input="true"][data-score-row-index="${cssSelectorValue(memory.scoreRowIndex)}"][data-score-col-index="${cssSelectorValue(memory.scoreColIndex)}"][data-score-source="${cssSelectorValue(memory.scoreSource)}"]`;
+    const candidates = [...document.querySelectorAll(selector), ...document.querySelectorAll(fallbackSelector)];
+    if (!candidates.length) {
+      return null;
+    }
+
+    const modalOpen = Boolean(elements.modalBackdrop && !elements.modalBackdrop.hidden);
+    if (memory.inModal && modalOpen) {
+      return candidates.find((input) => input.closest("#modal-backdrop") === elements.modalBackdrop) || candidates[0];
+    }
+    return candidates.find((input) => !input.closest("#modal-backdrop")) || candidates[0];
+  }
+
+  function scheduleInlineScoreFocusRestore() {
+    if (!activeInlineScoreCell || Date.now() > activeInlineScoreCell.expiresAt) {
+      return;
+    }
+
+    if (activeInlineScoreRestoreRaf) {
+      cancelAnimationFrame(activeInlineScoreRestoreRaf);
+    }
+
+    activeInlineScoreRestoreRaf = requestAnimationFrame(() => {
+      activeInlineScoreRestoreRaf = null;
+      const input = findInlineScoreInputByMemory();
+      if (input) {
+        focusInlineScoreInput(input);
+      }
+    });
+  }
+
+  function captureScoreScrollState() {
+    const scrollItems = [];
+    const addScrollItem = (element) => {
+      if (!element || scrollItems.some((item) => item.element === element)) {
+        return;
+      }
+      scrollItems.push({
+        element,
+        left: element === document.scrollingElement ? window.scrollX : element.scrollLeft,
+        top: element === document.scrollingElement ? window.scrollY : element.scrollTop,
+      });
+    };
+
+    addScrollItem(document.scrollingElement || document.documentElement);
+    const focusedScoreControl = document.activeElement?.closest?.("[data-inline-score-input],[data-assessor-score-select]");
+    let cursor = focusedScoreControl;
+    while (cursor && cursor !== document.body) {
+      if (cursor.scrollWidth > cursor.clientWidth + 1 || cursor.scrollHeight > cursor.clientHeight + 1) {
+        addScrollItem(cursor);
+      }
+      cursor = cursor.parentElement;
+    }
+    return scrollItems;
+  }
+
+  function restoreScoreScrollState(scrollItems = []) {
+    scrollItems.forEach(({ element, left, top }) => {
+      if (!element || (element !== document.scrollingElement && !element.isConnected)) {
+        return;
+      }
+      if (element === document.scrollingElement) {
+        window.scrollTo(left, top);
+      } else {
+        element.scrollLeft = left;
+        element.scrollTop = top;
+      }
+    });
+  }
+
+  function scheduleScoreUiRefresh() {
+    if (!currentUser) {
+      return;
+    }
+
+    if (pendingScoreUiRefreshRaf) {
+      cancelAnimationFrame(pendingScoreUiRefreshRaf);
+    }
+
+    if (activeTab === "assessor") {
+      pendingScoreUiRefreshRaf = requestAnimationFrame(() => {
+        pendingScoreUiRefreshRaf = null;
+        scheduleInlineScoreFocusRestore();
+      });
+      return;
+    }
+
+    const scrollState = captureScoreScrollState();
+    pendingScoreUiRefreshRaf = requestAnimationFrame(() => {
+      pendingScoreUiRefreshRaf = null;
+      renderAll({ updateRoute: false, preserveScroll: true });
+      restoreScoreScrollState(scrollState);
+      scheduleInlineScoreFocusRestore();
+      requestAnimationFrame(() => {
+        restoreScoreScrollState(scrollState);
+        scheduleInlineScoreFocusRestore();
+      });
+    });
+  }
+
+  async function commitInlineScoreInput(input, rawScoreOverride = undefined) {
+    if (!input?.matches?.("[data-inline-score-input]")) {
+      return false;
+    }
+
+    rememberActiveInlineScoreInput(input);
+    const rawScore = rawScoreOverride === undefined ? cleanInlineScoreInputValue(input) : rawScoreOverride;
+    const { periodId, area, item, criterion, scoreSource } = getInlineScoreContext(input);
+    if (!periodId || !area || !item || !criterion) {
+      showToast("Không tìm thấy ô chấm điểm.", true);
+      return false;
+    }
+
+    input.dataset.saving = "true";
+    try {
+      await setScore({
+        periodId,
+        area,
+        item,
+        criterion,
+        score: rawScore === "" || rawScore === SCORE_CROSSED ? null : Number(rawScore),
+        status: rawScore === SCORE_CROSSED ? SCORE_CROSSED : "",
+        scoreSource,
+      });
+      applyInlineScorePreview({
+        periodId,
+        areaId: area.id,
+        itemId: item.id,
+        criterionId: criterion.id,
+        rawScore,
+        scoreSource,
+      });
+      refreshAveragePreview({
+        periodId,
+        areaId: area.id,
+        itemId: item.id,
+        scoreSource,
+      });
+      input.dataset.savedValue = rawScore;
+      if (document.activeElement === input) {
+        focusInlineScoreInput(input);
+      }
+      return true;
+    } catch (error) {
+      console.error(error);
+      showToast(error?.message || "Lỗi khi lưu điểm.", true);
+      return false;
+    } finally {
+      delete input.dataset.saving;
+    }
+  }
+
+  function focusInlineScoreByOffset(input, offset) {
+    const { area, scoreSource } = getInlineScoreContext(input);
+    if (!area) {
+      return;
+    }
+
+    const table = input.closest("table");
+    const inputs = Array.from(table?.querySelectorAll(`[data-inline-score-input][data-area-id="${cssSelectorValue(area.id)}"][data-score-source="${cssSelectorValue(scoreSource)}"]`) || []);
+    const currentIndex = inputs.indexOf(input);
+    const nextInput = inputs[currentIndex + offset];
+    if (nextInput) {
+      focusInlineScoreInput(nextInput);
+    }
+  }
+
+  function focusInlineScoreInput(input) {
+    if (!input?.matches?.("[data-inline-score-input]")) {
+      return false;
+    }
+
+    rememberActiveInlineScoreInput(input);
+    input.focus({ preventScroll: true });
+    input.setSelectionRange?.(0, input.value.length);
+    scrollInlineScoreInputIntoView(input);
+    requestAnimationFrame(() => {
+      if (!input.isConnected) {
+        scheduleInlineScoreFocusRestore();
+        return;
+      }
+      if (document.activeElement !== input) {
+        input.focus({ preventScroll: true });
+      }
+      input.setSelectionRange?.(0, input.value.length);
+      scrollInlineScoreInputIntoView(input);
+    });
+    return true;
+  }
+
+  function isScrollableElement(element) {
+    if (!element || element === document.body || element === document.documentElement) {
+      return false;
+    }
+    const style = window.getComputedStyle(element);
+    const canScrollX = element.scrollWidth > element.clientWidth + 1 && /(auto|scroll|overlay)/.test(style.overflowX);
+    const canScrollY = element.scrollHeight > element.clientHeight + 1 && /(auto|scroll|overlay)/.test(style.overflowY);
+    return canScrollX || canScrollY;
+  }
+
+  function scrollElementIntoViewWithinContainer(target, container, padding = 28) {
+    if (!target || !container) {
+      return;
+    }
+
+    const targetRect = target.getBoundingClientRect();
+    const isDocument = container === document.scrollingElement || container === document.documentElement || container === document.body;
+    const containerRect = isDocument
+      ? { top: 0, left: 0, right: window.innerWidth, bottom: window.innerHeight }
+      : container.getBoundingClientRect();
+    const topPadding = isDocument && !target.closest("#modal-backdrop") ? 96 : padding;
+    const bottomPadding = padding;
+    let deltaX = 0;
+    let deltaY = 0;
+
+    if (targetRect.left < containerRect.left + padding) {
+      deltaX = targetRect.left - containerRect.left - padding;
+    } else if (targetRect.right > containerRect.right - padding) {
+      deltaX = targetRect.right - containerRect.right + padding;
+    }
+
+    if (targetRect.top < containerRect.top + topPadding) {
+      deltaY = targetRect.top - containerRect.top - topPadding;
+    } else if (targetRect.bottom > containerRect.bottom - bottomPadding) {
+      deltaY = targetRect.bottom - containerRect.bottom + bottomPadding;
+    }
+
+    if (!deltaX && !deltaY) {
+      return;
+    }
+
+    if (isDocument) {
+      window.scrollBy({ left: deltaX, top: deltaY, behavior: "auto" });
+      return;
+    }
+
+    container.scrollLeft += deltaX;
+    container.scrollTop += deltaY;
+  }
+
+  function scrollInlineScoreInputIntoView(input) {
+    if (!input?.matches?.("[data-inline-score-input]")) {
+      return;
+    }
+
+    const target = input.closest(".score-cell") || input.closest("td") || input;
+    const containers = [];
+    let cursor = target.parentElement;
+    while (cursor && cursor !== document.body) {
+      if (isScrollableElement(cursor) && !containers.includes(cursor)) {
+        containers.push(cursor);
+      }
+      cursor = cursor.parentElement;
+    }
+
+    const documentScroller = document.scrollingElement || document.documentElement;
+    if (documentScroller && !containers.includes(documentScroller)) {
+      containers.push(documentScroller);
+    }
+
+    containers.forEach((container) => scrollElementIntoViewWithinContainer(target, container));
+  }
+
+  function focusInlineScoreByGridOffset(input, rowOffset = 0, colOffset = 0) {
+    const table = input?.closest?.("table");
+    if (!table) {
+      return;
+    }
+
+    const currentRow = Number(input.dataset.scoreRowIndex);
+    const currentCol = Number(input.dataset.scoreColIndex);
+    if (!Number.isInteger(currentRow) || !Number.isInteger(currentCol)) {
+      return;
+    }
+
+    const maxSteps = table.querySelectorAll("[data-inline-score-input]").length;
+    let targetRow = currentRow + rowOffset;
+    let targetCol = currentCol + colOffset;
+    for (let step = 0; step < maxSteps; step += 1) {
+      if (targetRow < 0 || targetCol < 0) {
+        return;
+      }
+
+      const targetInput = table.querySelector(`[data-inline-score-input][data-score-row-index="${targetRow}"][data-score-col-index="${targetCol}"]`);
+      if (targetInput) {
+        focusInlineScoreInput(targetInput);
+        return;
+      }
+
+      targetRow += rowOffset;
+      targetCol += colOffset;
+    }
+  }
+
+  function getInlineScoreInputFromEvent(event) {
+    const targetInput = event.target?.closest?.("[data-inline-score-input]");
+    if (targetInput) {
+      return targetInput;
+    }
+
+    const activeInput = document.activeElement?.closest?.("[data-inline-score-input]");
+    return activeInput || null;
+  }
+
+  function stopInlineScoreKey(event) {
+    event.preventDefault();
+    event.stopPropagation();
+    event.stopImmediatePropagation?.();
+  }
+
+  function handleInlineScoreKeydown(event) {
+    const input = getInlineScoreInputFromEvent(event);
+    if (!input) {
+      return;
+    }
+
+    if (event.key === " ") {
+      stopInlineScoreKey(event);
+      return;
+    }
+
+    if (/^[0-5]$/.test(event.key)) {
+      stopInlineScoreKey(event);
+      rememberActiveInlineScoreInput(input);
+      const rawScore = cleanInlineScoreInputValue(input, event.key);
+      focusInlineScoreInput(input);
+      const { periodId, area, item, criterion, scoreSource } = getInlineScoreContext(input);
+      if (area && item && criterion) {
+        applyInlineScorePreview({
+          periodId,
+          areaId: area.id,
+          itemId: item.id,
+          criterionId: criterion.id,
+          rawScore,
+          scoreSource,
+        });
+      }
+      commitInlineScoreInput(input, rawScore);
+      return;
+    }
+
+    if (event.key === "Backspace" || event.key === "Delete") {
+      stopInlineScoreKey(event);
+      rememberActiveInlineScoreInput(input);
+      const rawScore = cleanInlineScoreInputValue(input, "");
+      focusInlineScoreInput(input);
+      commitInlineScoreInput(input, rawScore);
+      return;
+    }
+
+    if (event.key === "Enter") {
+      stopInlineScoreKey(event);
+      commitInlineScoreInput(input).finally(() => {
+        focusInlineScoreByOffset(input, event.shiftKey ? -1 : 1);
+      });
+      return;
+    }
+
+    if (event.key === "ArrowUp") {
+      stopInlineScoreKey(event);
+      focusInlineScoreByGridOffset(input, -1, 0);
+      return;
+    }
+
+    if (event.key === "ArrowDown") {
+      stopInlineScoreKey(event);
+      focusInlineScoreByGridOffset(input, 1, 0);
+      return;
+    }
+
+    if (event.key === "ArrowLeft") {
+      stopInlineScoreKey(event);
+      focusInlineScoreByGridOffset(input, 0, -1);
+      return;
+    }
+
+    if (event.key === "ArrowRight") {
+      stopInlineScoreKey(event);
+      focusInlineScoreByGridOffset(input, 0, 1);
+      return;
+    }
+
+    const allowedKeys = new Set(["Tab", "ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "Home", "End", "Escape"]);
+    if (!allowedKeys.has(event.key) && !event.ctrlKey && !event.metaKey) {
+      stopInlineScoreKey(event);
+    }
+  }
+
+  function handleInlineScorePaste(event) {
+    const input = event.target?.closest?.("[data-inline-score-input]");
+    if (!input) {
+      return;
+    }
+    event.preventDefault();
+    const pasted = event.clipboardData?.getData("text") || "";
+    const value = (pasted.match(/[0-5xX]/) || [""])[0];
+    const rawScore = cleanInlineScoreInputValue(input, value);
+    commitInlineScoreInput(input, rawScore);
+  }
+
+  function handleInlineScoreDragDrop(event) {
+    const input = event.target?.closest?.("[data-inline-score-input]");
+    if (!input) {
+      return;
+    }
+    event.preventDefault();
+    event.stopPropagation();
+    event.stopImmediatePropagation?.();
+  }
+
+  function handleInlineScoreBeforeInput(event) {
+    const input = event.target?.closest?.("[data-inline-score-input]");
+    if (!input) {
+      return;
+    }
+
+    if (event.inputType === "insertFromDrop") {
+      handleInlineScoreDragDrop(event);
     }
   }
 
@@ -5445,6 +6163,10 @@
 
   async function setScore({ periodId, area, item, criterion, score, status, scoreSource = SCORE_SOURCE_ASSESSOR }) {
     const normalizedSource = normalizeScoreSource(scoreSource);
+    if (!periodId || !isPeriodOpen(periodId, FIVE_S_PERIOD_TYPE)) {
+      showToast("Không có kỳ đánh giá 5S đang mở nên không thể nhập dữ liệu.", true);
+      return;
+    }
     if (!canEditFiveSScoreSource(currentUser, normalizedSource) || !getAllowedAreaIds(currentUser, periodId).has(area.id)) {
       showToast("Bạn không có quyền sửa ô này.", true);
       return;
@@ -5563,6 +6285,8 @@
       afterLabel: afterLabel || "Chưa chấm",
     });
 
+    suppressNextDataWatchRender += dbWrites.length;
+    scheduleScoreUiRefresh();
     await Promise.all(dbWrites);
   }
 
@@ -6002,7 +6726,9 @@
   function openFormModal({ title, html, submitText = "Lưu", submitClass = "primary-button", extraActions = "", modalClass = "", onSubmit }) {
     modalPreviewDirty = false;
     modalSubmitSucceeded = false;
-    setModalScrollLock(true);
+    const isTableFullscreen = modalClass === "table-fullscreen-modal";
+    setModalScrollLock(true, { tableFullscreen: isTableFullscreen });
+    elements.modalBackdrop.classList.toggle("table-fullscreen-backdrop", isTableFullscreen);
     elements.modalTitle.textContent = title;
     const modalCard = elements.modalBackdrop.querySelector(".modal-card");
     if (modalCard) {
@@ -6056,7 +6782,8 @@
   function closeModal() {
     const shouldRefreshPreview = modalPreviewDirty && !modalSubmitSucceeded && currentUser && state;
     elements.modalBackdrop.hidden = true;
-    setModalScrollLock(false);
+    elements.modalBackdrop.classList.remove("table-fullscreen-backdrop");
+    setModalScrollLock(false, { tableFullscreen: true });
     elements.modalTitle.textContent = "";
     elements.modalBody.innerHTML = "";
     elements.modalActions.innerHTML = "";
@@ -6071,9 +6798,13 @@
     }
   }
 
-  function setModalScrollLock(isLocked) {
+  function setModalScrollLock(isLocked, options = {}) {
     document.documentElement.classList.toggle("modal-open", isLocked);
     document.body.classList.toggle("modal-open", isLocked);
+    if (options.tableFullscreen) {
+      document.documentElement.classList.toggle("table-fullscreen-open", isLocked);
+      document.body.classList.toggle("table-fullscreen-open", isLocked);
+    }
   }
 
   async function prepareScorePhoto(file, existingRecord, removePhoto, periodId) {
@@ -8209,6 +8940,146 @@
       showToast("Lỗi khi lưu kỳ đánh giá.", true);
     }
   }
+
+  function editSafetyPeriodDate(id) {
+    if (!requireAdminAction()) {
+      return;
+    }
+
+    const period = getPeriod(id);
+    if (!period || normalizePeriodType(period.type) !== SAFETY_PERIOD_TYPE) {
+      showToast("Không tìm thấy kỳ đánh giá an toàn.", true);
+      return;
+    }
+
+    const currentDate = safetyPeriodInputDate(period);
+    openFormModal({
+      title: "Sửa ngày chấm an toàn",
+      submitText: "Lưu ngày",
+      html: "<div class=\"modal-context\">" +
+          "<span><strong>Kỳ hiện tại:</strong> " + escapeHtml(periodLabel(period)) + "</span>" +
+        "</div>" +
+        "<label>" +
+          "<span>Ngày đánh giá an toàn</span>" +
+          "<input name=\"safetyDate\" type=\"date\" value=\"" + escapeHtml(currentDate) + "\" required>" +
+        "</label>",
+      async onSubmit(formData) {
+        const isoDate = toIsoDate(formData.get("safetyDate"));
+        if (!isoDate) {
+          showToast("Ngày đánh giá an toàn không hợp lệ.", true);
+          return false;
+        }
+
+        const duplicate = getPeriodsByType(SAFETY_PERIOD_TYPE).find((item) => item.id !== period.id && safetyPeriodInputDate(item) === isoDate);
+        if (duplicate) {
+          showToast("Đã có kỳ đánh giá an toàn cùng ngày này.", true);
+          return false;
+        }
+
+        const date = new Date(isoDate + "T00:00:00");
+        if (Number.isNaN(date.getTime())) {
+          showToast("Ngày đánh giá an toàn không hợp lệ.", true);
+          return false;
+        }
+
+        const beforeLabel = periodLabel(period);
+        const month = date.getMonth() + 1;
+        const year = date.getFullYear();
+        const day = String(date.getDate()).padStart(2, "0");
+        const paddedMonth = String(month).padStart(2, "0");
+        period.type = SAFETY_PERIOD_TYPE;
+        period.month = month;
+        period.year = year;
+        period.label = day + "/" + paddedMonth + "/" + year;
+        period.createdAt = date.toISOString();
+        period.updatedAt = new Date().toISOString();
+
+        await dbRef("periods/" + period.id).set(period);
+        await logAdminChange({
+          subjectLabel: "Kỳ đánh giá an toàn",
+          beforeLabel,
+          afterLabel: periodLabel(period),
+          changeLabel: "Sửa ngày chấm an toàn",
+          note: "Cập nhật ngày đánh giá trong phần danh mục",
+          scope: SAFETY_PERIOD_TYPE,
+          periodId: period.id,
+        });
+        showToast("Đã cập nhật ngày chấm an toàn.");
+        renderAll();
+        return true;
+      },
+    });
+  }
+
+  function editFiveSPeriodDate(id) {
+    if (!requireAdminAction()) {
+      return;
+    }
+
+    const period = getPeriod(id);
+    if (!period || ![FIVE_S_PERIOD_TYPE, LEGACY_PERIOD_TYPE].includes(normalizePeriodType(period.type))) {
+      showToast("Không tìm thấy kỳ chấm 5S.", true);
+      return;
+    }
+
+    const currentMonth = Number(period.month) || new Date().getMonth() + 1;
+    const currentYear = Number(period.year) || new Date().getFullYear();
+    openFormModal({
+      title: "Sửa kỳ chấm 5S",
+      submitText: "Lưu kỳ",
+      html: "<div class=\"modal-context\">" +
+          "<span><strong>Kỳ hiện tại:</strong> " + escapeHtml(periodLabel(period)) + "</span>" +
+        "</div>" +
+        "<div class=\"form-grid\">" +
+          "<label>" +
+            "<span>Tháng 5S</span>" +
+            "<input name=\"month\" type=\"number\" min=\"1\" max=\"12\" value=\"" + escapeHtml(currentMonth) + "\" required>" +
+          "</label>" +
+          "<label>" +
+            "<span>Năm 5S</span>" +
+            "<input name=\"year\" type=\"number\" min=\"2020\" max=\"2100\" value=\"" + escapeHtml(currentYear) + "\" required>" +
+          "</label>" +
+        "</div>",
+      async onSubmit(formData) {
+        const month = Number(formData.get("month"));
+        const year = Number(formData.get("year"));
+        if (!Number.isInteger(month) || month < 1 || month > 12 || !Number.isInteger(year) || year < 2020 || year > 2100) {
+          showToast("Tháng hoặc năm không hợp lệ.", true);
+          return false;
+        }
+
+        const duplicate = getPeriodsByType(FIVE_S_PERIOD_TYPE).find((item) => (
+          item.id !== period.id && Number(item.month) === month && Number(item.year) === year
+        ));
+        if (duplicate) {
+          showToast("Đã có kỳ chấm 5S cùng tháng/năm này.", true);
+          return false;
+        }
+
+        const beforeLabel = periodLabel(period);
+        period.type = FIVE_S_PERIOD_TYPE;
+        period.month = month;
+        period.year = year;
+        period.label = "Tháng " + month + "/" + year;
+        period.updatedAt = new Date().toISOString();
+
+        await dbRef("periods/" + period.id).set(period);
+        await logAdminChange({
+          subjectLabel: "Kỳ chấm 5S",
+          beforeLabel,
+          afterLabel: periodLabel(period),
+          changeLabel: "Sửa kỳ chấm 5S",
+          note: "Cập nhật tháng/năm chấm 5S trong phần danh mục",
+          scope: FIVE_S_PERIOD_TYPE,
+          periodId: period.id,
+        });
+        showToast("Đã cập nhật kỳ chấm 5S.");
+        renderAll();
+        return true;
+      },
+    });
+  }
+
   function deletePeriod(id) {
     if (!requireAdminAction()) {
       return;
@@ -8430,7 +9301,7 @@
     }
 
     const activeSafetyPeriodId = getActivePeriodId(SAFETY_PERIOD_TYPE);
-    if (!isAdminAccount(currentUser) && !activeSafetyPeriodId) {
+    if (!activeSafetyPeriodId || !isPeriodOpen(activeSafetyPeriodId, SAFETY_PERIOD_TYPE)) {
       showToast("Hiện không có kỳ đánh giá an toàn nào đang mở.", true);
       return;
     }
@@ -8523,7 +9394,11 @@
     const isNew = !record;
     const period = getPeriod(isNew ? getActivePeriodId(SAFETY_PERIOD_TYPE) : record.periodId);
     const periodId = period?.id || "";
-    if (!periodId || blockIfArchivedPeriod(periodId, SAFETY_PERIOD_TYPE)) {
+    if (!periodId) {
+      showToast("Hiện không có kỳ đánh giá an toàn nào đang mở.", true);
+      return;
+    }
+    if (blockIfArchivedPeriod(periodId, SAFETY_PERIOD_TYPE)) {
       return;
     }
     if (!canUseSafety(currentUser)) {
@@ -9011,6 +9886,18 @@
     });
   }
 
+  function requireOpenPeriodForPageJson(page) {
+    const scope = getPageJsonScope(page);
+    const activePeriodId = getActivePeriodId(scope);
+    if (activePeriodId && isPeriodOpen(activePeriodId, scope)) {
+      return true;
+    }
+    showToast(scope === FIVE_S_PERIOD_TYPE
+      ? "Không có kỳ đánh giá 5S đang mở nên không thể import dữ liệu."
+      : "Không có kỳ đánh giá an toàn đang mở nên không thể import dữ liệu.", true);
+    return false;
+  }
+
   function pickJsonImportFile() {
     return new Promise((resolve) => {
       const input = document.createElement("input");
@@ -9126,6 +10013,9 @@
     }
 
     const targetPage = getActivePageJsonPage(sourceElement);
+    if (!requireOpenPeriodForPageJson(targetPage)) {
+      return;
+    }
     const file = await pickJsonImportFile();
     if (!file) {
       return;
@@ -9178,6 +10068,9 @@
     }
 
     const page = getActivePageJsonPage(sourceElement);
+    if (!requireOpenPeriodForPageJson(page)) {
+      return;
+    }
     openConfirmModal({
       title: "Xác nhận Import",
       message: `Import file JSON vào trang ${getPageJsonLabel(page)}? Dữ liệu trùng ID sẽ được cập nhật, dữ liệu mới sẽ được thêm. Sau khi import có thể bấm Hoàn tác hoặc Ctrl+Z nếu import nhầm.`,
@@ -11817,6 +12710,93 @@
     });
   }
 
+  function syncFormControlValuesForHtml(root) {
+    root.querySelectorAll?.("input,textarea,select").forEach((control) => {
+      if (control.tagName === "SELECT") {
+        Array.from(control.options || []).forEach((option) => {
+          option.toggleAttribute("selected", option.selected);
+        });
+        return;
+      }
+
+      if (control.tagName === "TEXTAREA") {
+        control.textContent = control.value || "";
+        return;
+      }
+
+      if (control.type === "checkbox" || control.type === "radio") {
+        control.toggleAttribute("checked", control.checked);
+        return;
+      }
+
+      control.setAttribute("value", control.value || "");
+    });
+  }
+
+  function openFullscreenTable(tableKind = "") {
+    if (tableKind === "assessor") {
+      const sourceTable = elements.assessorSheet?.querySelector(".assessor-4m-table");
+      const periodId = sourceTable?.dataset.periodId || getActivePeriodId(FIVE_S_PERIOD_TYPE);
+      const area = getAreaForPeriod(periodId, sourceTable?.dataset.areaId || elements.assessorAreaSelect?.value || "");
+      const scoreSource = normalizeScoreSource(sourceTable?.dataset.scoreSource || getScoreSourceForAccount(currentUser));
+      if (!periodId || !area) {
+        showToast("Chưa có bảng để phóng to.", true);
+        return;
+      }
+
+      const wrapper = document.createElement("div");
+      wrapper.className = "assessor-4m-wrap fullscreen-table-wrap";
+      wrapper.setAttribute("data-drag-scroll", "");
+      const table = document.createElement("table");
+      table.className = "matrix-table standard-reference-table assessor-4m-table";
+      wrapper.appendChild(table);
+      renderAssessorFourMTable(table, {
+        periodId,
+        area,
+        scoreSource,
+        editable: canEditFiveSScoreSource(currentUser, scoreSource) && !isPeriodArchived(periodId),
+      });
+      syncFormControlValuesForHtml(wrapper);
+
+      openFormModal({
+        title: "Phiếu chấm 5S",
+        submitText: "Đóng",
+        submitClass: "secondary-button",
+        modalClass: "table-fullscreen-modal",
+        html: wrapper.outerHTML,
+        onSubmit() {
+          return true;
+        },
+      });
+      return;
+    }
+
+    const sourceWrap = elements.summaryTable?.closest?.(".summary-matrix-wrap");
+    const sourceTable = sourceWrap?.querySelector("table");
+    if (!sourceWrap || !sourceTable) {
+      showToast("Chưa có bảng để phóng to.", true);
+      return;
+    }
+
+    const clone = sourceWrap.cloneNode(true);
+    clone.removeAttribute("id");
+    clone.classList.add("fullscreen-table-wrap");
+    clone.setAttribute("data-drag-scroll", "");
+    clone.querySelectorAll("[id]").forEach((node) => node.removeAttribute("id"));
+    syncFormControlValuesForHtml(clone);
+
+    openFormModal({
+      title: "Bảng điểm 5S",
+      submitText: "Đóng",
+      submitClass: "secondary-button",
+      modalClass: "table-fullscreen-modal",
+      html: clone.outerHTML,
+      onSubmit() {
+        return true;
+      },
+    });
+  }
+
   function inlineCopyStyles(sourceNode, cloneNode) {
     if (!(sourceNode instanceof Element) || !(cloneNode instanceof Element)) {
       return;
@@ -12354,6 +13334,8 @@
       "set-account-scope",
       "set-history-scope",
       "delete-period",
+      "edit-five-s-period-date",
+      "edit-safety-period-date",
       "edit-scorer",
       "delete-scorer",
       "edit-assessor",
@@ -12387,6 +13369,7 @@
 
     const handlers = {
       "go-home": () => goHome(),
+      "fullscreen-table": () => openFullscreenTable(id),
       "activate-period": () => activatePeriod(id, periodType),
       "import-page-json": () => confirmImportPageJson(sourceElement),
       "export-page-json": () => confirmExportPageJson(sourceElement),
@@ -12412,6 +13395,8 @@
       "add-safety-record": () => addSafetyRecord(),
       "delete-safety-record": () => deleteSafetyRecord(id),
       "delete-period": () => deletePeriod(id),
+      "edit-five-s-period-date": () => editFiveSPeriodDate(id),
+      "edit-safety-period-date": () => editSafetyPeriodDate(id),
       "edit-scorer": () => editScorer(id),
       "delete-scorer": () => deleteScorer(id),
       "edit-assessor": () => editAssessor(id),
@@ -12443,7 +13428,7 @@
     handlers[action]?.();
   }
   function isDragScrollIgnoredTarget(target) {
-    const scoreControl = target?.closest?.(".assessor-score-select,[data-edit-score]");
+    const scoreControl = target?.closest?.(".assessor-score-select,[data-edit-score],[data-inline-score-input]");
     if (scoreControl?.closest?.(".assessor-4m-wrap,.summary-matrix-wrap")) {
       return false;
     }
@@ -12713,6 +13698,34 @@
 
     document.addEventListener("pointerup", endUniversalDrag);
     document.addEventListener("pointercancel", endUniversalDrag);
+
+    document.addEventListener("keydown", handleInlineScoreKeydown, { capture: true });
+    document.addEventListener("beforeinput", handleInlineScoreBeforeInput, { capture: true });
+    document.addEventListener("paste", handleInlineScorePaste);
+    document.addEventListener("dragstart", handleInlineScoreDragDrop, { capture: true });
+    document.addEventListener("dragover", handleInlineScoreDragDrop, { capture: true });
+    document.addEventListener("drop", handleInlineScoreDragDrop, { capture: true });
+    document.addEventListener("input", (event) => {
+      const input = event.target?.closest?.("[data-inline-score-input]");
+      if (!input) {
+        return;
+      }
+      const rawScore = cleanInlineScoreInputValue(input);
+      commitInlineScoreInput(input, rawScore);
+    });
+    document.addEventListener("focusin", (event) => {
+      const input = event.target?.closest?.("[data-inline-score-input]");
+      if (!input) {
+        return;
+      }
+      rememberActiveInlineScoreInput(input);
+      input.setSelectionRange?.(0, input.value.length);
+    });
+    document.addEventListener("pointerdown", (event) => {
+      if (!event.target?.closest?.("[data-inline-score-input]")) {
+        activeInlineScoreCell = null;
+      }
+    });
 
     // Global click suppressor: prevents accidental clicks after drag ends
     document.addEventListener("click", (event) => {
