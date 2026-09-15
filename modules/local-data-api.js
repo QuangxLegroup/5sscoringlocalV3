@@ -477,6 +477,25 @@
     }
   }
 
+  async function deletePhoto(photo) {
+    if (demoMode) {
+      return { ok: true };
+    }
+
+    try {
+      return await request("/api/photos/delete", {
+        method: "POST",
+        body: JSON.stringify(photo || {}),
+      });
+    } catch (error) {
+      if (isAuthError(error)) {
+        throw error;
+      }
+      enterDemoMode(error);
+      return { ok: true };
+    }
+  }
+
   function ref(path = "") {
     return {
       async once(eventName) {
@@ -530,6 +549,7 @@
     setAuthToken,
     clearAuthToken,
     savePhoto,
+    deletePhoto,
     isDemoMode() {
       return demoMode;
     },

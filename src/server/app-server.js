@@ -100,6 +100,12 @@ function createAppServer({ authController, authService, dataController, staticFi
         return;
       }
 
+      if (requestUrl.pathname === "/api/photos/delete" && request.method === "POST") {
+        const authContext = await authService.authenticateRequest(request);
+        await dataController.handleDeletePhoto(request, response, authContext);
+        return;
+      }
+
       if (requestUrl.pathname.startsWith("/api/photos/") && request.method === "GET") {
         await authService.authenticateRequest(request);
         await dataController.handleReadPhoto(request, response, requestUrl);

@@ -26,6 +26,11 @@ class DataController {
     sendJson(response, 200, await this.dataService.savePhoto(photo, authContext));
   }
 
+  async handleDeletePhoto(request, response, authContext) {
+    const photo = await readJsonBody(request);
+    sendJson(response, 200, await this.dataService.deletePhoto(photo, authContext));
+  }
+
   async handleReadPhoto(request, response, requestUrl) {
     const photoPath = requestUrl.pathname.slice("/api/photos/".length);
     const photo = await this.dataService.readPhoto(photoPath);

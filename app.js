@@ -1124,6 +1124,11 @@
       completionLevelConfirm: score.completionLevelConfirm || "",
       completionStop6Confirm: score.completionStop6Confirm || "",
     }));
+    const scoreIds = new Set(normalized.scores.map((score) => score.id).filter(Boolean));
+    normalized.deletedSafetyRecords = normalized.deletedSafetyRecords.filter((record) => {
+      const sourceScoreId = record.sourceScoreId || (String(record.id || "").startsWith("safety-") ? String(record.id).slice("safety-".length) : "");
+      return Boolean(sourceScoreId && scoreIds.has(sourceScoreId));
+    });
     const deletedSafetyRecordIds = new Set(normalized.deletedSafetyRecords.map((record) => record.id).filter(Boolean));
     normalized.safetyRecords = normalized.safetyRecords
       .map(normalizeSafetyRecord)
@@ -1203,8 +1208,8 @@
       benchmark: s.benchmark,
       fiveSChartTargets: normalizeFiveSChartTargets(s.fiveSChartTargets),
       activePeriodId: s.activePeriodId || "",
-      activeFiveSPeriodId: s.activeFiveSPeriodId || s.activePeriodId || "",
-      activeSafetyPeriodId: s.activeSafetyPeriodId || s.activePeriodId || "",
+      activeFiveSPeriodId: s.activeFiveSPeriodId || "",
+      activeSafetyPeriodId: s.activeSafetyPeriodId || "",
       periods: toObj(s.periods),
       managers: toObj(managers),
       departmentHeadContacts: toObj(departmentHeadContacts),
@@ -1349,9 +1354,14 @@
     };
   }
 
+  function shouldKeepDeletedSafetyRecordMarker(record) {
+    const marker = getDeletedSafetyRecordMarker(record);
+    return Boolean(marker.sourceScoreId && (state.scores || []).some((score) => score.id === marker.sourceScoreId));
+  }
+
   async function markSafetyRecordDeleted(record) {
     const marker = getDeletedSafetyRecordMarker(record);
-    if (!marker.id) {
+    if (!marker.id || !shouldKeepDeletedSafetyRecordMarker(record)) {
       return;
     }
     await dbRef(`deletedSafetyRecords/${marker.id}`).set(marker);
@@ -1521,8 +1531,8 @@
   async function saveMeta() {
     await dbRef().update({
       activePeriodId: state.activePeriodId || "",
-      activeFiveSPeriodId: state.activeFiveSPeriodId || state.activePeriodId || "",
-      activeSafetyPeriodId: state.activeSafetyPeriodId || state.activePeriodId || "",
+      activeFiveSPeriodId: state.activeFiveSPeriodId || "",
+      activeSafetyPeriodId: state.activeSafetyPeriodId || "",
       benchmark: state.benchmark,
       fiveSChartTargets: normalizeFiveSChartTargets(state.fiveSChartTargets),
     });
@@ -3778,6 +3788,7 @@
       ? currentSessionHistoryId || payload.sessionHistoryId || makeId("history")
       : payload.sessionHistoryId || currentSessionHistoryId || makeId("history");
     saveSession(currentUser);
+    restorePersistedImportUndoAction();
     return currentUser;
   }
 
@@ -5388,6 +5399,7 @@
 
     // Remove from local storage
     await deleteScoreFromDb(record.id);
+    await deleteUnusedPhotoFiles(collectPhotoUrls([recordCopy]));
 
     pushUndoAction({
       type: "score",
@@ -5582,6 +5594,7 @@
   const undoStack = [];
   const redoStack = [];
   const MAX_UNDO_STACK = 50;
+  const IMPORT_UNDO_STORAGE_KEY = "legroup-5s-last-import-undo";
   let isExecutingUndoRedo = false;
 
   function pushUndoAction(action) {
@@ -5672,6 +5685,102 @@
     await Promise.all(writes);
   }
 
+  function storageMap(value) {
+    if (Array.isArray(value)) {
+      return Object.fromEntries(value.filter((item) => item?.id).map((item) => [item.id, item]));
+    }
+    return value && typeof value === "object" ? cloneValue(value) : {};
+  }
+
+  function buildImportSnapshotUpdates(targetSnapshot, oppositeSnapshot) {
+    const target = targetSnapshot && typeof targetSnapshot === "object" ? targetSnapshot : {};
+    const opposite = oppositeSnapshot && typeof oppositeSnapshot === "object" ? oppositeSnapshot : {};
+    const updates = {};
+    const scalarKeys = [
+      "version",
+      "benchmark",
+      "fiveSChartTargets",
+      "activePeriodId",
+      "activeFiveSPeriodId",
+      "activeSafetyPeriodId",
+      "safetyReport",
+      "safetyIdentificationOverrides",
+    ];
+    const collectionKeys = [
+      "periods",
+      "managers",
+      "departmentHeadContacts",
+      "assessors",
+      "areas",
+      "safetyManagers",
+      "safetyDepartmentHeadContacts",
+      "safetyAssessors",
+      "safetyAreas",
+      "safetyDepartmentGroups",
+      "scores",
+      "safetyRecords",
+      "deletedSafetyRecords",
+      "history",
+    ];
+
+    scalarKeys.forEach((key) => {
+      updates[key] = Object.prototype.hasOwnProperty.call(target, key) ? cloneValue(target[key]) : null;
+    });
+
+    collectionKeys.forEach((key) => {
+      const targetMap = storageMap(target[key]);
+      const oppositeMap = storageMap(opposite[key]);
+      const ids = new Set([...Object.keys(targetMap), ...Object.keys(oppositeMap)]);
+      ids.forEach((id) => {
+        updates[`${key}/${id}`] = Object.prototype.hasOwnProperty.call(targetMap, id) ? cloneValue(targetMap[id]) : null;
+      });
+    });
+
+    return updates;
+  }
+
+  async function restoreStateSnapshot(targetSnapshot, oppositeSnapshot) {
+    if (!targetSnapshot || typeof targetSnapshot !== "object") return;
+    const updates = buildImportSnapshotUpdates(targetSnapshot, oppositeSnapshot || {});
+    await updateRootWithOptionalRenderSuppression(updates, { suppressRender: true });
+    state = normalizeState(cloneValue(targetSnapshot));
+    invalidateScoreRecordIndex();
+  }
+
+  function persistImportUndoAction(action) {
+    try {
+      window.sessionStorage.setItem(IMPORT_UNDO_STORAGE_KEY, JSON.stringify(action));
+    } catch (error) {
+      console.warn("Không lưu được mốc hoàn tác import:", error);
+    }
+  }
+
+  function clearPersistedImportUndoAction() {
+    try {
+      window.sessionStorage.removeItem(IMPORT_UNDO_STORAGE_KEY);
+    } catch (error) {
+      console.warn("Không xóa được mốc hoàn tác import:", error);
+    }
+  }
+
+  function restorePersistedImportUndoAction() {
+    try {
+      const raw = window.sessionStorage.getItem(IMPORT_UNDO_STORAGE_KEY);
+      if (!raw) return;
+      const action = JSON.parse(raw);
+      if (action?.type !== "importJson" || !action.beforeState || !action.afterState) return;
+      if (!undoStack.some((item) => item.type === "importJson" && item.fileName === action.fileName && item.importedAt === action.importedAt)) {
+        undoStack.push(action);
+        if (undoStack.length > MAX_UNDO_STACK) {
+          undoStack.shift();
+        }
+        updateUndoRedoButtons();
+      }
+    } catch (error) {
+      console.warn("Không khôi phục được mốc hoàn tác import:", error);
+    }
+  }
+
   async function executeUndo() {
     if (undoStack.length === 0) {
       showToast("Không có thao tác nào để hoàn tác.");
@@ -5759,6 +5868,12 @@
         redoStack.push(action);
         showToast(`Hoàn tác: ${action.description || "Thông tin danh mục/tên"}`);
         renderAll();
+      } else if (action.type === "importJson") {
+        await restoreStateSnapshot(action.beforeState, action.afterState);
+        redoStack.push(action);
+        clearPersistedImportUndoAction();
+        showToast(`Đã hoàn tác import: ${action.description || "Import JSON"}`);
+        renderAll();
       }
     } catch (error) {
       console.error("Lỗi khi hoàn tác:", error);
@@ -5826,11 +5941,16 @@
           if (existingIndex >= 0) {
             state.safetyRecords.splice(existingIndex, 1);
           }
-          state.deletedSafetyRecords = [
-            ...(state.deletedSafetyRecords || []).filter((item) => item.id !== deletedMarker.id),
-            deletedMarker,
-          ];
-          await markSafetyRecordDeleted(deletedSource);
+          if (shouldKeepDeletedSafetyRecordMarker(deletedSource)) {
+            state.deletedSafetyRecords = [
+              ...(state.deletedSafetyRecords || []).filter((item) => item.id !== deletedMarker.id),
+              deletedMarker,
+            ];
+            await markSafetyRecordDeleted(deletedSource);
+          } else {
+            state.deletedSafetyRecords = (state.deletedSafetyRecords || []).filter((item) => item.id !== deletedMarker.id);
+            await tryUnmarkSafetyRecordDeleted(deletedMarker.id);
+          }
           await deleteSafetyRecordFromDb(targetId);
         } else {
           const afterCopy = cloneValue(after);
@@ -5862,6 +5982,12 @@
         }
         undoStack.push(action);
         showToast(`Làm lại: ${action.description || "Thông tin danh mục/tên"}`);
+        renderAll();
+      } else if (action.type === "importJson") {
+        await restoreStateSnapshot(action.afterState, action.beforeState);
+        undoStack.push(action);
+        persistImportUndoAction(action);
+        showToast(`Đã làm lại import: ${action.description || "Import JSON"}`);
         renderAll();
       }
     } catch (error) {
@@ -5983,6 +6109,40 @@
       photoDataUrl: savedPhoto.url || "",
       photoName: savedPhoto.fileName || fileName || "anh-minh-hoa.jpg",
     };
+  }
+
+  function isPhotoUrlReferenced(photoUrl = "") {
+    const url = String(photoUrl || "");
+    if (!url) {
+      return false;
+    }
+    return [...(state.scores || []), ...(state.safetyRecords || [])].some((record) => (
+      record?.photoDataUrl === url || record?.afterPhotoDataUrl === url
+    ));
+  }
+
+  async function deleteUnusedPhotoFile(photoUrl = "") {
+    const url = String(photoUrl || "");
+    if (!url || isPhotoUrlReferenced(url) || !dataStore?.deletePhoto) {
+      return;
+    }
+    try {
+      await dataStore.deletePhoto({ url });
+    } catch (error) {
+      console.warn("Không xóa được file ảnh không còn sử dụng:", error);
+    }
+  }
+
+  async function deleteUnusedPhotoFiles(photoUrls = []) {
+    const uniqueUrls = [...new Set(photoUrls.filter(Boolean))];
+    await Promise.all(uniqueUrls.map((url) => deleteUnusedPhotoFile(url)));
+  }
+
+  function collectPhotoUrls(records = []) {
+    return records.flatMap((record) => [
+      record?.photoDataUrl || "",
+      record?.afterPhotoDataUrl || "",
+    ]).filter(Boolean);
   }
 
   function resizeImageFile(file, maxSize, quality) {
@@ -7263,6 +7423,7 @@
         const beforeCatalog = captureCatalogState(catalogType);
         const removedScores = catalogType === FIVE_S_PERIOD_TYPE ? state.scores.filter((score) => score.periodId === periodId && score.areaId === id) : [];
         const removedSafetyRecords = catalogType === SAFETY_PERIOD_TYPE ? state.safetyRecords.filter((record) => record.periodId === periodId && record.areaId === id) : [];
+        const removedDeletedMarkers = catalogType === SAFETY_PERIOD_TYPE ? (state.deletedSafetyRecords || []).filter((marker) => marker.periodId === periodId && marker.areaId === id) : [];
         const areaIndex = areas.findIndex((item) => item.id === id);
         if (areaIndex >= 0) {
           areas.splice(areaIndex, 1);
@@ -7272,23 +7433,33 @@
           invalidateScoreRecordIndex();
         } else {
           state.safetyRecords = state.safetyRecords.filter((record) => record.periodId !== periodId || record.areaId !== id);
+          state.deletedSafetyRecords = (state.deletedSafetyRecords || []).filter((marker) => marker.periodId !== periodId || marker.areaId !== id);
         }
-        const writes = [
-          saveCatalogPeriodSnapshot(catalogType, periodId),
-          ...removedScores.map((s) => dbRef(`scores/${s.id}`).remove()),
-          ...removedSafetyRecords.map((record) => dbRef(`safetyRecords/${record.id}`).remove()),
-          logAdminChange({
-            subjectLabel: "Zone",
-            areaCode: area.code,
-            beforeLabel: `${area.code} · ${area.departmentHead || "-"} · ${area.summaryGroup || "-"} · ${getAreaResponsibleNameForPeriod(periodId, area)}`,
-            afterLabel: "Đã xóa",
-            changeLabel: `Xóa zone ${area.code}`,
-            note: catalogType === SAFETY_PERIOD_TYPE ? "Chỉ xóa dữ liệu AT của zone trong kỳ đang mở" : "Chỉ xóa điểm 5S của zone trong kỳ đang mở",
-            scope: catalogType,
-            periodId,
-          }),
-        ];
-        await Promise.all(writes);
+        const deleteUpdates = {};
+        removedScores.forEach((score) => {
+          deleteUpdates[`scores/${score.id}`] = null;
+        });
+        removedSafetyRecords.forEach((record) => {
+          deleteUpdates[`safetyRecords/${record.id}`] = null;
+        });
+        removedDeletedMarkers.forEach((marker) => {
+          deleteUpdates[`deletedSafetyRecords/${marker.id}`] = null;
+        });
+        await saveCatalogPeriodSnapshot(catalogType, periodId);
+        if (Object.keys(deleteUpdates).length) {
+          await updateRootWithOptionalRenderSuppression(deleteUpdates, { suppressRender: true });
+        }
+        await deleteUnusedPhotoFiles(collectPhotoUrls([...removedScores, ...removedSafetyRecords]));
+        await logAdminChange({
+          subjectLabel: "Zone",
+          areaCode: area.code,
+          beforeLabel: `${area.code} · ${area.departmentHead || "-"} · ${area.summaryGroup || "-"} · ${getAreaResponsibleNameForPeriod(periodId, area)}`,
+          afterLabel: "Đã xóa",
+          changeLabel: `Xóa zone ${area.code}`,
+          note: catalogType === SAFETY_PERIOD_TYPE ? "Chỉ xóa dữ liệu AT của zone trong kỳ đang mở" : "Chỉ xóa điểm 5S của zone trong kỳ đang mở",
+          scope: catalogType,
+          periodId,
+        });
         const afterSnapshot = capturePeriodSnapshot(periodId);
         const afterCatalog = captureCatalogState(catalogType);
         pushUndoAction({
@@ -8055,33 +8226,59 @@
       message: "Xóa " + periodLabel(period) + " trong dữ liệu nội bộ?",
       confirmText: "Xóa",
       danger: true,
-      onConfirm() {
+      async onConfirm() {
         const removedScores = state.scores.filter((score) => score.periodId === id);
         const removedSafetyRecords = state.safetyRecords.filter((record) => record.periodId === id);
+        const removedDeletedMarkers = (state.deletedSafetyRecords || []).filter((marker) => marker.periodId === id);
         state.periods = state.periods.filter((item) => item.id !== id);
         state.scores = state.scores.filter((score) => score.periodId !== id);
         invalidateScoreRecordIndex();
         state.safetyRecords = state.safetyRecords.filter((record) => record.periodId !== id);
+        state.deletedSafetyRecords = (state.deletedSafetyRecords || []).filter((marker) => marker.periodId !== id);
         if (
           (periodType === SAFETY_PERIOD_TYPE && state.activeSafetyPeriodId === id)
           || (periodType === FIVE_S_PERIOD_TYPE && (state.activeFiveSPeriodId === id || state.activePeriodId === id))
         ) {
           setActivePeriodId(periodType, getPeriodsByType(periodType)[0]?.id || "");
         }
-        const writes = [
-          dbRef("periods/" + id).remove(),
-          ...removedScores.map((score) => dbRef("scores/" + score.id).remove()),
-          ...removedSafetyRecords.map((record) => dbRef("safetyRecords/" + record.id).remove()),
-          saveMeta(),
-          logAdminChange({
+        if (state.activePeriodId === id) {
+          state.activePeriodId = state.activeFiveSPeriodId || getPeriodsByType(FIVE_S_PERIOD_TYPE)[0]?.id || "";
+        }
+
+        const updates = {
+          ["periods/" + id]: null,
+          activePeriodId: state.activePeriodId || "",
+          activeFiveSPeriodId: state.activeFiveSPeriodId || "",
+          activeSafetyPeriodId: state.activeSafetyPeriodId || "",
+          benchmark: state.benchmark,
+          fiveSChartTargets: normalizeFiveSChartTargets(state.fiveSChartTargets),
+        };
+        removedScores.forEach((score) => {
+          updates["scores/" + score.id] = null;
+        });
+        removedSafetyRecords.forEach((record) => {
+          updates["safetyRecords/" + record.id] = null;
+        });
+        removedDeletedMarkers.forEach((marker) => {
+          updates["deletedSafetyRecords/" + marker.id] = null;
+        });
+
+        try {
+          await updateRootWithOptionalRenderSuppression(updates, { suppressRender: true });
+          await deleteUnusedPhotoFiles(collectPhotoUrls([...removedScores, ...removedSafetyRecords]));
+          await logAdminChange({
             subjectLabel: periodType === SAFETY_PERIOD_TYPE ? "Kỳ đánh giá an toàn" : "Kỳ chấm 5S",
             beforeLabel: periodLabel(period),
             afterLabel: "Đã xóa",
             changeLabel: "Xóa kỳ " + periodLabel(period),
             note: "Dữ liệu của kỳ đã bị xóa khỏi dữ liệu nội bộ",
-          }),
-        ];
-        Promise.all(writes).then(() => showToast("Đã xóa kỳ đánh giá.")).catch(() => showToast("Lỗi khi xóa.", true));
+          });
+          showToast("Đã xóa kỳ đánh giá.");
+          renderAll();
+        } catch (error) {
+          console.error(error);
+          showToast("Lỗi khi xóa.", true);
+        }
       },
     });
   }
@@ -8280,14 +8477,20 @@
       async onConfirm() {
         const recordCopy = cloneValue(record);
         const deletedMarker = getDeletedSafetyRecordMarker(record);
+        const keepDeletedMarker = shouldKeepDeletedSafetyRecordMarker(record);
         state.safetyRecords = state.safetyRecords.filter((item) => item.id !== record.id);
-        state.deletedSafetyRecords = [
-          ...(state.deletedSafetyRecords || []).filter((item) => item.id !== deletedMarker.id),
-          deletedMarker,
-        ];
-        await tryMarkSafetyRecordDeleted(record);
+        state.deletedSafetyRecords = keepDeletedMarker
+          ? [
+              ...(state.deletedSafetyRecords || []).filter((item) => item.id !== deletedMarker.id),
+              deletedMarker,
+            ]
+          : (state.deletedSafetyRecords || []).filter((item) => item.id !== deletedMarker.id);
+        const updates = {
+          [`safetyRecords/${record.id}`]: null,
+          [`deletedSafetyRecords/${deletedMarker.id}`]: keepDeletedMarker ? deletedMarker : null,
+        };
+        await updateRootWithOptionalRenderSuppression(updates, { suppressRender: true });
         await Promise.all([
-          deleteSafetyRecordFromDb(record.id),
           tryLogAdminChange({
             subjectLabel: "Đánh giá an toàn",
             areaCode: area?.code || "",
@@ -8298,6 +8501,7 @@
             periodId: record.periodId,
           }),
         ]);
+        await deleteUnusedPhotoFiles(collectPhotoUrls([recordCopy]));
         pushUndoAction({
           type: "safetyRecord",
           description: `Xóa báo cáo AT${area?.code ? " Zone " + area.code : ""}: ${record.note || ""}`,
@@ -8476,6 +8680,10 @@
             scope: SAFETY_PERIOD_TYPE,
             periodId,
           }),
+        ]);
+        await deleteUnusedPhotoFiles([
+          existingRecordCopy?.photoDataUrl && existingRecordCopy.photoDataUrl !== payload.photoDataUrl ? existingRecordCopy.photoDataUrl : "",
+          existingRecordCopy?.afterPhotoDataUrl && existingRecordCopy.afterPhotoDataUrl !== payload.afterPhotoDataUrl ? existingRecordCopy.afterPhotoDataUrl : "",
         ]);
         pushUndoAction({
           type: "safetyRecord",
@@ -8930,6 +9138,7 @@
         return;
       }
 
+      const beforeImportState = stateToStorage(state);
       const importedRows = targetPage === "five-s"
         ? applyFiveSPageJsonImport(bundle.payload)
         : applySafetyPageJsonImport(bundle.payload);
@@ -8943,7 +9152,19 @@
         changeLabel: `Import JSON ${getPageJsonLabel(targetPage)}`,
         scope: getPageJsonScope(targetPage),
       });
-      showToast(`Đã import ${importedRows} bản ghi JSON.`);
+      const importUndoAction = {
+        type: "importJson",
+        description: `Import JSON ${getPageJsonLabel(targetPage)} từ ${file.name}`,
+        page: targetPage,
+        fileName: file.name,
+        importedRows,
+        importedAt: new Date().toISOString(),
+        beforeState: beforeImportState,
+        afterState: stateToStorage(state),
+      };
+      pushUndoAction(importUndoAction);
+      persistImportUndoAction(importUndoAction);
+      showToast(`Đã import ${importedRows} bản ghi JSON. Có thể bấm Hoàn tác nếu import nhầm.`);
       renderAll();
     } catch (error) {
       console.error(error);
@@ -8959,7 +9180,7 @@
     const page = getActivePageJsonPage(sourceElement);
     openConfirmModal({
       title: "Xác nhận Import",
-      message: `Import file JSON vào trang ${getPageJsonLabel(page)}? Dữ liệu trùng ID sẽ được cập nhật, dữ liệu mới sẽ được thêm.`,
+      message: `Import file JSON vào trang ${getPageJsonLabel(page)}? Dữ liệu trùng ID sẽ được cập nhật, dữ liệu mới sẽ được thêm. Sau khi import có thể bấm Hoàn tác hoặc Ctrl+Z nếu import nhầm.`,
       confirmText: "Import",
       async onConfirm() {
         await importPageJson(sourceElement);

@@ -49,6 +49,18 @@ function pickKeys(root, keys) {
   }, {});
 }
 
+function collectionValues(value) {
+  if (Array.isArray(value)) {
+    return value.filter((item) => item && typeof item === "object");
+  }
+  if (isPlainObject(value)) {
+    return Object.entries(value)
+      .map(([id, item]) => item && typeof item === "object" ? { id: item.id || id, ...item } : null)
+      .filter(Boolean);
+  }
+  return [];
+}
+
 function groupPeriodsByType(periods = []) {
   const periodById = new Map();
   periods.forEach((period) => {
@@ -208,14 +220,14 @@ class JsonFileRepository {
       return writeJsonFile(path.join(this.organizedDir, entry.file), pickKeys(root, entry.keys));
     }));
 
-    const periods = Array.isArray(root.periods) ? root.periods : [];
+    const periods = collectionValues(root.periods);
     const periodById = groupPeriodsByType(periods);
     const fiveSPeriods = periods.filter((period) => period?.type === FIVE_S_PERIOD_TYPE);
     const safetyPeriods = periods.filter((period) => period?.type === SAFETY_PERIOD_TYPE);
     await writeJsonFile(path.join(this.organizedDir, "cham-5s/periods.json"), fiveSPeriods);
     await writeJsonFile(path.join(this.organizedDir, "danh-gia-an-toan/periods.json"), safetyPeriods);
 
-    const scoreGroups = groupRowsByPeriod(Array.isArray(root.scores) ? root.scores : [], periodById);
+    const scoreGroups = groupRowsByPeriod(collectionValues(root.scores), periodById);
     await Promise.all([...scoreGroups.entries()].map(([key, group]) => {
       return writeJsonFile(path.join(this.organizedDir, "cham-5s", key), {
         period: group.period,
@@ -223,7 +235,7 @@ class JsonFileRepository {
       });
     }));
 
-    const safetyGroups = groupRowsByPeriod(Array.isArray(root.safetyRecords) ? root.safetyRecords : [], periodById);
+    const safetyGroups = groupRowsByPeriod(collectionValues(root.safetyRecords), periodById);
     await Promise.all([...safetyGroups.entries()].map(([key, group]) => {
       return writeJsonFile(path.join(this.organizedDir, "danh-gia-an-toan", key), {
         period: group.period,

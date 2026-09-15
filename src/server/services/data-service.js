@@ -227,6 +227,32 @@ class DataService {
     };
   }
 
+  async deletePhoto(photo = {}, authContext = null) {
+    this.authService?.assertPhotoAllowed(authContext);
+    const rawPath = String(photo.path || photo.url || "");
+    const marker = "/api/photos/";
+    const photoPath = rawPath.includes(marker) ? rawPath.slice(rawPath.indexOf(marker) + marker.length) : rawPath;
+    const parts = pathParts(decodeURIComponent(photoPath));
+    if (parts.length !== 2) {
+      throw createHttpError("Đường dẫn ảnh không hợp lệ.", 400);
+    }
+
+    const filePath = path.resolve(this.photoDir, ...parts);
+    if (!isInsideRoot(this.photoDir, filePath)) {
+      throw createHttpError("Đường dẫn ảnh không hợp lệ.", 403);
+    }
+
+    await fs.rm(filePath, { force: true });
+    try {
+      await fs.rmdir(path.dirname(filePath));
+    } catch (error) {
+      if (error.code !== "ENOENT" && error.code !== "ENOTEMPTY") {
+        throw error;
+      }
+    }
+    return { ok: true };
+  }
+
   async readPhoto(photoPath) {
     const parts = pathParts(decodeURIComponent(String(photoPath || "")));
     if (parts.length !== 2) {
