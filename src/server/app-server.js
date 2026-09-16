@@ -88,6 +88,12 @@ function createAppServer({ authController, authService, dataController, staticFi
         return;
       }
 
+      if (requestUrl.pathname === "/api/data/stream" && request.method === "GET") {
+        await authService.authenticateRequest(request);
+        dataController.handleStream(request, response);
+        return;
+      }
+
       if (requestUrl.pathname === "/api/data/write" && request.method === "POST") {
         const authContext = await authService.authenticateRequest(request);
         await dataController.handleWrite(request, response, authContext);

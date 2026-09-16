@@ -2266,7 +2266,8 @@ table {
   border-radius: 8px;
   background: #ffffff;
   cursor: grab;
-  touch-action: none;
+  touch-action: pan-x pan-y;
+  -webkit-overflow-scrolling: touch;
 }
 
 .assessor-4m-wrap::-webkit-scrollbar {
@@ -8950,6 +8951,39 @@ html, body {
   cursor: grabbing !important;
   user-select: none !important;
   scroll-behavior: auto !important;
+}
+
+/* codex-tablet-5s-score-visibility-fix */
+@media (max-width: 1180px) {
+  #tab-assessor .assessor-sheet,
+  #tab-summary .summary-matrix-wrap {
+    width: 100%;
+    max-width: 100%;
+    min-width: 0;
+  }
+
+  #tab-assessor .assessor-4m-wrap,
+  #tab-summary .summary-matrix-wrap {
+    min-height: min(620px, calc(100dvh - 250px));
+    max-height: calc(100dvh - 230px);
+    overflow: auto !important;
+    overscroll-behavior: contain;
+    touch-action: pan-x pan-y !important;
+    -webkit-overflow-scrolling: touch !important;
+  }
+
+  #tab-assessor .assessor-4m-table {
+    width: max-content;
+    min-width: 1136px;
+  }
+}
+
+@media (max-width: 768px) {
+  #tab-assessor .assessor-4m-wrap,
+  #tab-summary .summary-matrix-wrap {
+    min-height: min(560px, calc(100dvh - 275px));
+    max-height: calc(100dvh - 245px);
+  }
 }
 
 /* Fullscreen score tables: keep the table surface filling the whole screen. */

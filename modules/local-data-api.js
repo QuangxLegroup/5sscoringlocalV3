@@ -2,7 +2,7 @@
   "use strict";
 
   const API_ROOT = window.LOCAL_DATA_API_ROOT || "";
-  const POLL_INTERVAL_MS = 60000;
+  const POLL_INTERVAL_MS = 5000;
   const DEMO_STORAGE_KEY = "legroup-5s-demo-data";
   const VOLATILE_ACCOUNT_FIELDS = new Set([
     "activeSessionId",
@@ -15,6 +15,8 @@
   let rootSignature = "";
   let lastResponseSignature = "";
   let pollTimer = 0;
+  let stream = null;
+  let streamRetryTimer = 0;
   let polling = false;
   let demoMode = window.location.protocol === "file:";
   let authToken = "";
@@ -284,6 +286,7 @@
 
   function clearAuthToken() {
     authToken = "";
+    stopDataStream();
   }
 
   function applyAuthPayload(payload) {
@@ -443,6 +446,48 @@
     }
   }
 
+  function stopDataStream() {
+    if (stream) {
+      stream.close();
+      stream = null;
+    }
+    if (streamRetryTimer) {
+      window.clearTimeout(streamRetryTimer);
+      streamRetryTimer = 0;
+    }
+  }
+
+  function scheduleDataStreamReconnect() {
+    if (streamRetryTimer || demoMode || !listeners.size || !authToken || typeof EventSource === "undefined") {
+      return;
+    }
+
+    streamRetryTimer = window.setTimeout(() => {
+      streamRetryTimer = 0;
+      startDataStream();
+    }, 5000);
+  }
+
+  function startDataStream() {
+    if (stream || demoMode || !listeners.size || !authToken || typeof EventSource === "undefined") {
+      return;
+    }
+
+    try {
+      stream = new EventSource(buildUrl("/api/data/stream"), { withCredentials: true });
+      stream.addEventListener("data-changed", () => {
+        pollRoot();
+      });
+      stream.onerror = () => {
+        stopDataStream();
+        scheduleDataStreamReconnect();
+      };
+    } catch (error) {
+      console.warn("Không mở được kênh đồng bộ tức thời:", error);
+      scheduleDataStreamReconnect();
+    }
+  }
+
   async function write(operation, path, value) {
     if (demoMode) {
       return applyDemoWrite(operation, path, value);
@@ -535,6 +580,7 @@
         const listener = { path, callback };
         listeners.add(listener);
         startPolling();
+        startDataStream();
 
         if (!rootSignature) {
           loadRoot()
@@ -542,7 +588,12 @@
             .catch((error) => console.warn("Không đọc được dữ liệu nội bộ:", error));
         }
 
-        return () => listeners.delete(listener);
+        return () => {
+          listeners.delete(listener);
+          if (!listeners.size) {
+            stopDataStream();
+          }
+        };
       },
     };
   }

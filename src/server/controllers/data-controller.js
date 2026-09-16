@@ -6,6 +6,7 @@ const { sendJson } = require("../http/response");
 class DataController {
   constructor({ dataService }) {
     this.dataService = dataService;
+    this.streamClients = new Set();
   }
 
   handleHealth(request, response) {
@@ -18,7 +19,41 @@ class DataController {
 
   async handleWrite(request, response, authContext) {
     const command = await readJsonBody(request);
-    sendJson(response, 200, await this.dataService.writeData(command, authContext));
+    const root = await this.dataService.writeData(command, authContext);
+    sendJson(response, 200, root);
+    this.notifyDataChanged();
+  }
+
+  handleStream(request, response) {
+    response.writeHead(200, {
+      "Content-Type": "text/event-stream; charset=utf-8",
+      "Cache-Control": "no-cache, no-transform",
+      "Connection": "keep-alive",
+      "X-Accel-Buffering": "no",
+    });
+    response.write(`event: ready\ndata: ${Date.now()}\n\n`);
+
+    const client = { response };
+    this.streamClients.add(client);
+    const keepAlive = setInterval(() => {
+      response.write(`event: ping\ndata: ${Date.now()}\n\n`);
+    }, 25000);
+
+    request.on("close", () => {
+      clearInterval(keepAlive);
+      this.streamClients.delete(client);
+    });
+  }
+
+  notifyDataChanged() {
+    const data = String(Date.now());
+    for (const client of this.streamClients) {
+      try {
+        client.response.write(`event: data-changed\ndata: ${data}\n\n`);
+      } catch (error) {
+        this.streamClients.delete(client);
+      }
+    }
   }
 
   async handleSavePhoto(request, response, authContext) {

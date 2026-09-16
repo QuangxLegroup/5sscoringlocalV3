@@ -4847,6 +4847,7 @@
     select.dataset.itemId = item.id;
     select.dataset.criterionId = criterion.id;
     select.dataset.scoreSource = normalizeScoreSource(scoreSource);
+    select.dataset.savedValue = selectedScore;
     [
       { value: "", label: "-" },
       { value: "1", label: "1" },
@@ -5541,6 +5542,10 @@
     const criterion = getCriterion(item, select.dataset.criterionId || "");
     const scoreSource = normalizeScoreSource(select.dataset.scoreSource || "");
     const rawScore = select.value;
+    if (select.dataset.savingValue === rawScore || select.dataset.savedValue === rawScore) {
+      return;
+    }
+
     const focusContext = getAssessorScoreSelectContext(select);
     const isCrossed = rawScore === SCORE_CROSSED;
     const nextScore = rawScore === "" || isCrossed ? null : Number(rawScore);
@@ -5569,6 +5574,15 @@
       rawScore,
       scoreSource,
     });
+    document.querySelectorAll(assessorScoreSelectSelector({
+      periodId,
+      areaId: area.id,
+      itemId: item.id,
+      criterionId: criterion.id,
+      scoreSource,
+    })).forEach((matchingSelect) => {
+      matchingSelect.dataset.savingValue = rawScore;
+    });
     select.disabled = true;
     try {
       await setScore({
@@ -5579,6 +5593,15 @@
         score: nextScore,
         status: isCrossed ? SCORE_CROSSED : "",
         scoreSource,
+      });
+      document.querySelectorAll(assessorScoreSelectSelector({
+        periodId,
+        areaId: area.id,
+        itemId: item.id,
+        criterionId: criterion.id,
+        scoreSource,
+      })).forEach((matchingSelect) => {
+        matchingSelect.dataset.savedValue = rawScore;
       });
       refreshAveragePreview({
         periodId,
@@ -5601,6 +5624,7 @@
         scoreSource,
       })).forEach((matchingSelect) => {
         matchingSelect.disabled = false;
+        delete matchingSelect.dataset.savingValue;
       });
     }
   }
@@ -5755,18 +5779,32 @@
 
   function captureScoreScrollState() {
     const scrollItems = [];
-    const addScrollItem = (element) => {
+    const addScrollItem = (element, selector = "") => {
       if (!element || scrollItems.some((item) => item.element === element)) {
         return;
       }
       scrollItems.push({
         element,
+        selector,
         left: element === document.scrollingElement ? window.scrollX : element.scrollLeft,
         top: element === document.scrollingElement ? window.scrollY : element.scrollTop,
       });
     };
 
     addScrollItem(document.scrollingElement || document.documentElement);
+    document.querySelectorAll(
+      "#tab-assessor .assessor-4m-wrap, #tab-summary .summary-matrix-wrap, #tab-summary .wide-table-wrap, #tab-summary .table-wrap",
+    ).forEach((element) => {
+      const selector = element.classList.contains("assessor-4m-wrap")
+        ? "#tab-assessor .assessor-4m-wrap"
+        : element.classList.contains("summary-matrix-wrap")
+          ? "#tab-summary .summary-matrix-wrap"
+          : element.classList.contains("wide-table-wrap")
+            ? "#tab-summary .wide-table-wrap"
+            : "#tab-summary .table-wrap";
+      addScrollItem(element, selector);
+    });
+
     const focusedScoreControl = document.activeElement?.closest?.("[data-inline-score-input],[data-assessor-score-select]");
     let cursor = focusedScoreControl;
     while (cursor && cursor !== document.body) {
@@ -5779,15 +5817,20 @@
   }
 
   function restoreScoreScrollState(scrollItems = []) {
-    scrollItems.forEach(({ element, left, top }) => {
-      if (!element || (element !== document.scrollingElement && !element.isConnected)) {
+    scrollItems.forEach(({ element, selector, left, top }) => {
+      const target = element && (element === document.scrollingElement || element.isConnected)
+        ? element
+        : selector
+          ? document.querySelector(selector)
+          : null;
+      if (!target) {
         return;
       }
-      if (element === document.scrollingElement) {
+      if (target === document.scrollingElement) {
         window.scrollTo(left, top);
       } else {
-        element.scrollLeft = left;
-        element.scrollTop = top;
+        target.scrollLeft = left;
+        target.scrollTop = top;
       }
     });
   }
@@ -13852,6 +13895,12 @@
     document.addEventListener("dragover", handleInlineScoreDragDrop, { capture: true });
     document.addEventListener("drop", handleInlineScoreDragDrop, { capture: true });
     document.addEventListener("input", (event) => {
+      const assessorScoreSelect = event.target?.closest?.("[data-assessor-score-select]");
+      if (assessorScoreSelect) {
+        handleAssessorScoreSelectChange(assessorScoreSelect);
+        return;
+      }
+
       const input = event.target?.closest?.("[data-inline-score-input]");
       if (!input) {
         return;
@@ -14034,9 +14083,14 @@
       if (pendingDataWatchRaf) {
         cancelAnimationFrame(pendingDataWatchRaf);
       }
+      const scrollState = captureScoreScrollState();
       pendingDataWatchRaf = requestAnimationFrame(() => {
         pendingDataWatchRaf = null;
-        renderAll();
+        renderAll({ updateRoute: false, preserveScroll: true });
+        restoreScoreScrollState(scrollState);
+        requestAnimationFrame(() => {
+          restoreScoreScrollState(scrollState);
+        });
       });
     });
   }

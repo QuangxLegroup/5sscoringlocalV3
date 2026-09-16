@@ -27,7 +27,7 @@
         "5s": "assessor5s",
         "safety": "assessorSafety"
       },
-      "username": "mrngocdb",
+      "username": "msngocdb",
       "createdAt": "2026-09-11T06:01:39.205Z",
       "assessorId": "assessor-mtkepzm9-leo6og",
       "areaIds": [
@@ -69,8 +69,66 @@
         "area-28",
         "area-safety-xiolum"
       ],
-      "displayName": "mrngocdb",
+      "displayName": "MsNgoc",
       "passwordHash": "pbkdf2-sha256$210000$2H5OJ_L4mG7TOcT4vMBDsg$2iVJiNp75h5tIBnGyK6Znkhfo4IoTDEABfMAtI70sIg"
+    },
+    "account-mu3kgvpw-mtp8b3": {
+      "id": "account-mu3kgvpw-mtp8b3",
+      "role": "assessor5s",
+      "name": "MrHuy",
+      "accessTypes": [
+        "safety",
+        "5s"
+      ],
+      "rolesByType": {
+        "safety": "assessorSafety",
+        "5s": "assessor5s"
+      },
+      "username": "mrhuy",
+      "createdAt": "2026-09-16T03:54:18.644Z",
+      "displayName": "MrHuy",
+      "safetyAssessorId": "safety-assessor-mu3kfb79-ah1yf2",
+      "safetyAreaIds": [
+        "area-1",
+        "area-2",
+        "area-3",
+        "area-4",
+        "area-5",
+        "area-6",
+        "area-7",
+        "area-8",
+        "area-9",
+        "area-10",
+        "area-11",
+        "area-12",
+        "area-13",
+        "area-14",
+        "area-15",
+        "area-16",
+        "area-17",
+        "area-18",
+        "area-19",
+        "area-20",
+        "area-21",
+        "area-22",
+        "area-23",
+        "area-24",
+        "area-25",
+        "area-26",
+        "area-27",
+        "area-28",
+        "area-safety-xiolum",
+        "area-safety-tjmjl8"
+      ],
+      "areaIds": [
+        "area-2"
+      ],
+      "fiveSAssessorId": "",
+      "assessorId": "",
+      "fiveSAreaIds": [
+        "area-2"
+      ],
+      "passwordHash": "pbkdf2-sha256$210000$mhFw4NlwLCmKQhsP6lAxbQ$ylDcggWD7l7VUlh80WPWJ2kF3ddSVNKalpcC0tOTwl8"
     }
   }
 }
