@@ -2592,6 +2592,19 @@
     return String(left || "").trim().toLowerCase() === String(right || "").trim().toLowerCase();
   }
 
+  function safetyRecordTextMatchesName(value, name) {
+    const cleanName = String(name || "").trim();
+    const cleanValue = String(value || "").trim();
+    if (!cleanName || !cleanValue) {
+      return false;
+    }
+    return sameNormalizedText(cleanValue, cleanName) || cleanValue
+      .split(/[,;\n]+/g)
+      .map((part) => part.trim())
+      .filter(Boolean)
+      .some((part) => sameNormalizedText(part, cleanName));
+  }
+
   function isSafetyRecordOwnedByAccount(record, account = currentUser) {
     if (!record || !account) {
       return false;
@@ -2599,15 +2612,22 @@
     const username = String(account.username || "").trim();
     const recordUsername = String(record.accountUsername || "").trim();
     if (username && recordUsername) {
-      return sameNormalizedText(recordUsername, username);
+      if (sameNormalizedText(recordUsername, username)) {
+        return true;
+      }
+      const ownerAccount = state.accounts.find((item) => sameNormalizedText(item.username, recordUsername));
+      if (!ownerAccount || !isAdminAccount(ownerAccount)) {
+        return false;
+      }
     }
-    if (recordUsername) {
+    if (recordUsername && !state.accounts.some((item) => sameNormalizedText(item.username, recordUsername) && isAdminAccount(item))) {
       return false;
     }
     const displayName = getAccountDisplayName(account, SAFETY_PERIOD_TYPE, record.periodId || getActivePeriodId(SAFETY_PERIOD_TYPE));
     return Boolean(displayName) && (
-      sameNormalizedText(record.scorerName, displayName) ||
-      sameNormalizedText(record.issueFoundBy, displayName)
+      safetyRecordTextMatchesName(record.scorerName, displayName) ||
+      safetyRecordTextMatchesName(record.issueFoundBy, displayName) ||
+      safetyRecordTextMatchesName(record.issueFoundBy, username)
     );
   }
 

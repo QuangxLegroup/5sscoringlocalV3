@@ -220,6 +220,19 @@ function sameNormalizedText(left, right) {
   return String(left || "").trim().toLowerCase() === String(right || "").trim().toLowerCase();
 }
 
+function safetyRecordTextMatchesName(value, name) {
+  const cleanName = String(name || "").trim();
+  const cleanValue = String(value || "").trim();
+  if (!cleanName || !cleanValue) {
+    return false;
+  }
+  return sameNormalizedText(cleanValue, cleanName) || cleanValue
+    .split(/[,;\n]+/g)
+    .map((part) => part.trim())
+    .filter(Boolean)
+    .some((part) => sameNormalizedText(part, cleanName));
+}
+
 function accountHasAnyAccess(account) {
   return isAdminAccount(account) || hasAccountAccessType(account, FIVE_S_PERIOD_TYPE) || hasAccountAccessType(account, SAFETY_PERIOD_TYPE);
 }
@@ -606,13 +619,22 @@ class AuthService {
     const accountUsername = String(account?.username || "").trim();
     const recordUsername = String(record?.accountUsername || "").trim();
     if (accountUsername && recordUsername) {
-      return sameNormalizedText(recordUsername, accountUsername);
+      if (sameNormalizedText(recordUsername, accountUsername)) {
+        return true;
+      }
+      const ownerAccount = this.findAccount(root, (item) => sameNormalizedText(item.username, recordUsername));
+      if (!ownerAccount || !isAdminAccount(ownerAccount)) {
+        return false;
+      }
     }
-    if (recordUsername) {
+    if (recordUsername && !isAdminAccount(this.findAccount(root, (item) => sameNormalizedText(item.username, recordUsername)))) {
       return false;
     }
     const names = this.getAccountDisplayNameCandidates(root, account, record?.periodId || "", type);
-    return names.some((name) => sameNormalizedText(record?.scorerName, name) || sameNormalizedText(record?.issueFoundBy, name));
+    return names.some((name) => (
+      safetyRecordTextMatchesName(record?.scorerName, name) ||
+      safetyRecordTextMatchesName(record?.issueFoundBy, name)
+    ));
   }
 
   assertScoreWriteAllowed(root, account, command) {
@@ -769,7 +791,22 @@ class AuthService {
       return;
     }
 
-    const [rootKey] = pathParts(command.path);
+    const parts = pathParts(command.path);
+    if (!parts.length && String(command.operation || "") === "update") {
+      if (!isPlainObject(command.value)) {
+        throw createHttpError("Dữ liệu update phải là object.", 400);
+      }
+      Object.entries(command.value).forEach(([childPath, value]) => {
+        this.assertDataWriteAllowed({
+          operation: value === null ? "remove" : "set",
+          path: childPath,
+          value,
+        }, authContext, root);
+      });
+      return;
+    }
+
+    const [rootKey] = parts;
     if (rootKey === "scores") {
       this.assertScoreWriteAllowed(root, account, command);
       return;
