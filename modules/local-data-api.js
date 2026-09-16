@@ -83,6 +83,14 @@
   }
 
   function enterDemoMode(error) {
+    if (window.location.protocol !== "file:") {
+      console.warn("Không kết nối được API nội bộ; không chuyển sang demo để tránh tách dữ liệu:", error);
+      const apiError = new Error("Không kết nối được dữ liệu nội bộ. Vui lòng kiểm tra server/Docker đang chạy và mở đúng địa chỉ web.");
+      apiError.cause = error;
+      apiError.status = error?.status;
+      throw apiError;
+    }
+
     if (!demoMode) {
       console.warn("Không có API nội bộ, chuyển sang chế độ demo trong trình duyệt:", error);
       if (!readDemoRoot() && rootCache) {

@@ -5,12 +5,20 @@
       "role": "admin",
       "name": "Đường Bích Ngọc",
       "username": "duongbichngoc",
+      "accessTypes": [
+        "5s",
+        "safety"
+      ],
+      "rolesByType": {
+        "5s": "admin",
+        "safety": "admin"
+      },
       "passwordHash": "pbkdf2-sha256$210000$BcS7xRCRXdaI6MiRNgDQjQ$VGXt0JNQKWKjisKHsagu0aX7w-ROcfkWlljUlaVtZUY"
     },
     "account-mtwjtdvp-0gswir": {
       "id": "account-mtwjtdvp-0gswir",
       "role": "assessor5s",
-      "name": "MrQuang",
+      "name": "MrNgocDB",
       "accessTypes": [
         "5s",
         "safety"
@@ -19,7 +27,7 @@
         "5s": "assessor5s",
         "safety": "assessorSafety"
       },
-      "username": "mrquang",
+      "username": "mrngocdb",
       "createdAt": "2026-09-11T06:01:39.205Z",
       "assessorId": "assessor-mtkepzm9-leo6og",
       "areaIds": [
@@ -29,11 +37,40 @@
       "fiveSAreaIds": [
         "area-1"
       ],
-      "safetyAssessorId": "",
+      "safetyAssessorId": "assessor-mtkepzm9-leo6og",
       "safetyAreaIds": [
-        "area-1"
+        "area-1",
+        "area-2",
+        "area-3",
+        "area-4",
+        "area-5",
+        "area-6",
+        "area-7",
+        "area-8",
+        "area-9",
+        "area-10",
+        "area-11",
+        "area-12",
+        "area-13",
+        "area-14",
+        "area-15",
+        "area-16",
+        "area-17",
+        "area-18",
+        "area-19",
+        "area-20",
+        "area-21",
+        "area-22",
+        "area-23",
+        "area-24",
+        "area-25",
+        "area-26",
+        "area-27",
+        "area-28",
+        "area-safety-xiolum"
       ],
-      "passwordHash": "pbkdf2-sha256$210000$opCkitbseJ7Xtk8ABzcgRw$NXFRjqUV0wgRVe0XsD8p1jKhcdnssKmL0WHB-HtSN5w"
+      "displayName": "mrngocdb",
+      "passwordHash": "pbkdf2-sha256$210000$2H5OJ_L4mG7TOcT4vMBDsg$2iVJiNp75h5tIBnGyK6Znkhfo4IoTDEABfMAtI70sIg"
     }
   }
 }

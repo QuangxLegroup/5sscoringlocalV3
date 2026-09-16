@@ -344,6 +344,7 @@
     accountZoneList: document.getElementById("account-zone-list"),
     accountZoneLabel: document.getElementById("account-zone-label"),
     accountUsername: document.getElementById("account-username"),
+    accountDisplayName: document.getElementById("account-display-name"),
     accountPassword: document.getElementById("account-password"),
     accountList: document.getElementById("account-list"),
     modalBackdrop: document.getElementById("modal-backdrop"),
@@ -392,6 +393,8 @@
   let currentSessionStartedAt = "";
   let currentSessionHistoryId = "";
   let currentAuthToken = "";
+  const authenticatedPhotoUrlCache = new Map();
+  const authenticatedPhotoUrlPromises = new Map();
   let dataUnsubscribe = null;
   let sessionHeartbeatTimer = 0;
   let suppressNextDataWatchRender = 0;
@@ -1240,7 +1243,7 @@
     const snapshot = await dbRef().once("value");
     const raw = snapshot.val();
 
-    if (raw && raw.version === DATA_VERSION) {
+    if (raw) {
       const normalized = normalizeState(raw);
       cleanupDeprecatedEmailStorage(raw, normalized).catch((error) => {
         console.warn("Không dọn được dữ liệu email cũ:", error);
@@ -1248,6 +1251,11 @@
       cleanupExpiredHistoryStorage(raw).catch((error) => {
         console.warn("Không dọn được lịch sử cũ quá hạn:", error);
       });
+      if (raw.version !== DATA_VERSION) {
+        dbRef().set(stateToStorage(normalized)).catch((error) => {
+          console.warn("Không nâng cấp được version dữ liệu:", error);
+        });
+      }
       return normalized;
     }
 
@@ -2671,6 +2679,18 @@
     return getPeriodCatalogAssessor(catalogPeriodId, personId)?.name || getAssessor(personId, catalogType)?.name || account.name || account.username;
   }
 
+  function getAccountProfileName(account) {
+    if (!account) {
+      return "";
+    }
+
+    if (isAdminAccount(account)) {
+      return account.displayName || account.name || account.username || "";
+    }
+
+    return account.displayName || account.username || "";
+  }
+
   function getAreaResponsibleName(area, type = FIVE_S_PERIOD_TYPE) {
     return getAreaResponsibleNameForPeriod(getActivePeriodId(type), area);
   }
@@ -3730,7 +3750,7 @@
     return "";
   }
   function getUserInitials(account = currentUser) {
-    const displayName = getAccountDisplayName(account) || account?.username || "A";
+    const displayName = getAccountProfileName(account) || account?.username || "A";
     return displayName.trim().slice(0, 1).toLocaleUpperCase("vi");
   }
 
@@ -3910,6 +3930,7 @@
     stopSessionHeartbeat();
     stopDataWatch();
     dataStore?.clearAuthToken?.();
+    clearAuthenticatedPhotoUrlCache();
     currentSessionId = "";
     currentSessionStartedAt = "";
     currentSessionHistoryId = "";
@@ -4025,7 +4046,7 @@
   }
 
   function renderCurrentUser() {
-    const displayName = getAccountDisplayName(currentUser);
+    const displayName = getAccountProfileName(currentUser);
     const roleText = getRoleLabel(currentUser?.role);
     const initials = getUserInitials(currentUser);
     elements.currentUserName.textContent = displayName;
@@ -4341,11 +4362,13 @@
     const context = createPageContext();
     if (pageRegistry?.render?.(activeTab, context)) {
       renderRoleVisibility();
+      hydrateAuthenticatedPhotos(elements.appShell);
       return;
     }
 
     context.legacyRenderers[activeTab]?.();
     renderRoleVisibility();
+    hydrateAuthenticatedPhotos(elements.appShell);
   }
 
   function populatePeriodSelects() {
@@ -5277,6 +5300,7 @@
         return `<article class="account-card">
           <div>
             <strong>${escapeHtml(account.username)}</strong>
+            <span>Hiển thị: ${escapeHtml(getAccountProfileName(account) || account.username)}</span>
             <span>${escapeHtml(getAccountAccessLabel(account, activeAccountScope))} · ${escapeHtml(getAccountDisplayName(account, activeAccountScope) || account.username)} · ${escapeHtml(zones)}</span>
             <span>${escapeHtml(accountAccessSummary(account))}</span>
           </div>
@@ -6896,6 +6920,77 @@
     ]).filter(Boolean);
   }
 
+  function isInternalPhotoUrl(url = "") {
+    const value = String(url || "");
+    return value.startsWith("/api/photos/") || value.includes("/api/photos/");
+  }
+
+  function clearAuthenticatedPhotoUrlCache() {
+    authenticatedPhotoUrlCache.forEach((objectUrl) => {
+      if (String(objectUrl || "").startsWith("blob:")) {
+        URL.revokeObjectURL(objectUrl);
+      }
+    });
+    authenticatedPhotoUrlCache.clear();
+    authenticatedPhotoUrlPromises.clear();
+  }
+
+  async function getAuthenticatedPhotoObjectUrl(photoUrl = "") {
+    const url = String(photoUrl || "");
+    if (!isInternalPhotoUrl(url)) {
+      return url;
+    }
+
+    if (authenticatedPhotoUrlCache.has(url)) {
+      return authenticatedPhotoUrlCache.get(url);
+    }
+
+    if (authenticatedPhotoUrlPromises.has(url)) {
+      return authenticatedPhotoUrlPromises.get(url);
+    }
+
+    const promise = fetch(url, {
+      credentials: "include",
+      headers: currentAuthToken ? { Authorization: `Bearer ${currentAuthToken}` } : {},
+    })
+      .then((response) => {
+        if (!response.ok) {
+          throw new Error(`Không tải được ảnh (${response.status}).`);
+        }
+        return response.blob();
+      })
+      .then((blob) => {
+        const objectUrl = URL.createObjectURL(blob);
+        authenticatedPhotoUrlCache.set(url, objectUrl);
+        authenticatedPhotoUrlPromises.delete(url);
+        return objectUrl;
+      })
+      .catch((error) => {
+        authenticatedPhotoUrlPromises.delete(url);
+        console.warn("Không tải được ảnh minh họa:", error);
+        return url;
+      });
+
+    authenticatedPhotoUrlPromises.set(url, promise);
+    return promise;
+  }
+
+  function hydrateAuthenticatedPhotos(root = document) {
+    root.querySelectorAll?.("img").forEach((image) => {
+      const originalUrl = image.dataset.photoSrc || image.getAttribute("src") || "";
+      if (!isInternalPhotoUrl(originalUrl)) {
+        return;
+      }
+
+      image.dataset.photoSrc = originalUrl;
+      getAuthenticatedPhotoObjectUrl(originalUrl).then((objectUrl) => {
+        if (image.isConnected && image.dataset.photoSrc === originalUrl && objectUrl) {
+          image.src = objectUrl;
+        }
+      });
+    });
+  }
+
   function resizeImageFile(file, maxSize, quality) {
     return new Promise((resolve, reject) => {
       const reader = new FileReader();
@@ -7365,6 +7460,7 @@
     const isZoneOwnerRole = role === ROLE_ZONE_OWNER;
     const areaIds = getCheckedAreaIds(elements.accountForm);
     const username = elements.accountUsername.value.trim();
+    const displayName = (elements.accountDisplayName?.value || "").trim();
     const password = elements.accountPassword.value;
     const existing = state.accounts.find((account) => account.username === username);
     let personId = "";
@@ -7407,6 +7503,7 @@
       account.accessTypes = [...accessTypes];
       account.rolesByType = { ...normalizeAccountRolesByType(account), [scope]: role };
       account.name = name || account.name || username;
+      account.displayName = displayName || username;
       if (password) {
         account.password = password;
       }
@@ -8598,9 +8695,11 @@
 
           const beforeLabel = describeAccountForScope(account, scope);
           account.name = name;
+          account.displayName = name;
 
           if (currentUser && (currentUser.id === account.id || currentUser.role === "admin")) {
             currentUser.name = name;
+            currentUser.displayName = name;
             saveSession(currentUser);
           }
 
@@ -8655,6 +8754,10 @@
           <input name="username" type="text" value="${escapeHtml(account.username)}" required>
         </label>
         <label>
+          <span>Tên hiển thị</span>
+          <input name="displayName" type="text" value="${escapeHtml(account.displayName || "")}" placeholder="Mặc định theo tài khoản">
+        </label>
+        <label>
           <span>Mật khẩu</span>
           <input name="password" type="password" value="" minlength="4" placeholder="Để trống nếu không đổi">
         </label>
@@ -8668,6 +8771,7 @@
         const isZoneOwnerRole = role === ROLE_ZONE_OWNER;
         const areaIds = getCheckedAreaIds(form);
         const username = String(formData.get("username") || "").trim();
+        const displayName = String(formData.get("displayName") || "").trim();
         const password = String(formData.get("password") || "");
         let personId = "";
         let name = "";
@@ -8709,9 +8813,11 @@
         }
 
         const beforeLabel = describeAccountForScope(account, scope);
+        const isEditingCurrentAccount = currentUser && (currentUser.id === account.id || currentUser.username === account.username);
         account.accessTypes = [...new Set([...normalizeAccountAccessTypes(account.accessTypes, account.role), scope])];
         account.rolesByType = { ...normalizeAccountRolesByType(account), [scope]: role };
         account.name = name || account.name || username;
+        account.displayName = displayName || username;
         account.username = username;
         if (password) {
           account.password = password;
@@ -8727,6 +8833,10 @@
         }
         delete account.email;
         delete account.senderEmail;
+        if (isEditingCurrentAccount) {
+          currentUser = account;
+          saveSession(currentUser);
+        }
         await Promise.all([
           dbRef(`accounts/${account.id}`).set(account),
           logAdminChange({
@@ -10616,7 +10726,10 @@
 
   async function loadWorkbookImage(src, name, rowNumber, columnNumber, toColumnNumber, toRowNumber) {
     try {
-      const response = await fetch(src);
+      const response = await fetch(src, {
+        credentials: "include",
+        headers: isInternalPhotoUrl(src) && currentAuthToken ? { Authorization: `Bearer ${currentAuthToken}` } : {},
+      });
       if (!response.ok) {
         return null;
       }
@@ -13889,7 +14002,7 @@
 
     dataUnsubscribe = dbRef().on("value", (snapshot) => {
       const raw = snapshot.val();
-      if (!raw || raw.version !== DATA_VERSION) {
+      if (!raw) {
         return;
       }
 
