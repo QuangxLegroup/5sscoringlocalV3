@@ -376,7 +376,10 @@
                     <form class="form-grid split-period-form" id="period-safety-form">
                       <label class="full-span">
                         <span>Ngày đánh giá an toàn</span>
-                        <input id="period-safety-date" type="date" required>
+                        <span class="safety-date-editor">
+                          <input id="period-safety-date" type="text" placeholder="dd/mm/yyyy" pattern="[0-9]{2}/[0-9]{2}/[0-9]{4}" maxlength="10" required>
+                          <input id="period-safety-date-calendar" class="safety-date-calendar" aria-label="Chọn ngày đánh giá an toàn" type="date">
+                        </span>
                       </label>
                       <label class="full-span">
                         <span>Danh mục người của kỳ mới</span>

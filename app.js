@@ -306,6 +306,7 @@
     period5SList: document.getElementById("period-5s-list"),
     periodSafetyForm: document.getElementById("period-safety-form"),
     periodSafetyDate: document.getElementById("period-safety-date"),
+    periodSafetyDateCalendar: document.getElementById("period-safety-date-calendar"),
     periodSafetyCatalogMode: document.getElementById("period-safety-catalog-mode"),
     periodSafetyList: document.getElementById("period-safety-list"),
     catalogScopeSwitch: document.getElementById("catalog-scope-switch"),
@@ -3085,6 +3086,24 @@
     return `${date.getFullYear()}-${month}-${day}`;
   }
 
+  function isValidIsoDate(value) {
+    const isoDate = String(value || "");
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(isoDate)) {
+      return false;
+    }
+    const date = new Date(isoDate + "T00:00:00");
+    return !Number.isNaN(date.getTime()) && toIsoDate(date) === isoDate;
+  }
+
+  function parseDisplayDateToIso(value) {
+    const match = String(value || "").trim().match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+    if (!match) {
+      return "";
+    }
+    const isoDate = `${match[3]}-${match[2]}-${match[1]}`;
+    return isValidIsoDate(isoDate) ? isoDate : "";
+  }
+
   function formatDateDisplay(value) {
     const iso = toIsoDate(value);
     if (!iso) {
@@ -4373,7 +4392,8 @@
     const todayParts = today.split("-");
     if (elements.period5SMonth && !elements.period5SMonth.value) elements.period5SMonth.value = String(Number(todayParts[1]));
     if (elements.period5SYear && !elements.period5SYear.value) elements.period5SYear.value = todayParts[0];
-    if (elements.periodSafetyDate && !elements.periodSafetyDate.value) elements.periodSafetyDate.value = today;
+    if (elements.periodSafetyDate && !elements.periodSafetyDate.value) elements.periodSafetyDate.value = formatDateDisplay(today);
+    if (elements.periodSafetyDateCalendar && !elements.periodSafetyDateCalendar.value) elements.periodSafetyDateCalendar.value = today;
   }
   function populateAreaSelects() {
     const fiveSPeriodId = getActivePeriodId(FIVE_S_PERIOD_TYPE);
@@ -6916,7 +6936,7 @@
     let period = null;
 
     if (isSafetyPeriod) {
-      const isoDate = toIsoDate(elements.periodSafetyDate?.value) || todayIsoDate();
+      const isoDate = parseDisplayDateToIso(elements.periodSafetyDate?.value);
       const date = new Date(isoDate + "T00:00:00");
       if (Number.isNaN(date.getTime())) {
         showToast("Ngày đánh giá an toàn không hợp lệ.", true);
@@ -8967,10 +8987,8 @@
           "</span>" +
         "</label>",
       async onSubmit(formData) {
-        const parts = String(formData.get("safetyDate") || "").match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
-        const isoDate = parts ? `${parts[3]}-${parts[2]}-${parts[1]}` : "";
-        const parsedDate = new Date(isoDate + "T00:00:00");
-        if (!isoDate || Number.isNaN(parsedDate.getTime()) || toIsoDate(parsedDate) !== isoDate) {
+        const isoDate = parseDisplayDateToIso(formData.get("safetyDate"));
+        if (!isoDate) {
           showToast("Ngày đánh giá an toàn không hợp lệ.", true);
           return false;
         }
@@ -8982,11 +9000,6 @@
         }
 
         const date = new Date(isoDate + "T00:00:00");
-        if (Number.isNaN(date.getTime())) {
-          showToast("Ngày đánh giá an toàn không hợp lệ.", true);
-          return false;
-        }
-
         const beforeLabel = periodLabel(period);
         const month = date.getMonth() + 1;
         const year = date.getFullYear();
@@ -13535,6 +13548,12 @@
     elements.exportSafetyExcelButton?.addEventListener("click", confirmExportActiveSafetyReportExcel);
     elements.sendSafetyMailButton?.addEventListener("click", () => openSendSafetyMailModal(getActivePeriodId(SAFETY_PERIOD_TYPE)));
 
+    elements.periodSafetyDateCalendar?.addEventListener("change", () => {
+      elements.periodSafetyDate.value = formatDateDisplay(elements.periodSafetyDateCalendar.value);
+    });
+    elements.periodSafetyDate?.addEventListener("input", () => {
+      elements.periodSafetyDateCalendar.value = parseDisplayDateToIso(elements.periodSafetyDate.value);
+    });
     elements.period5SForm?.addEventListener("submit", (event) => handlePeriodSubmit(event, FIVE_S_PERIOD_TYPE));
     elements.periodSafetyForm?.addEventListener("submit", (event) => handlePeriodSubmit(event, SAFETY_PERIOD_TYPE));
     elements.scorerForm.addEventListener("submit", handleScorerSubmit);
