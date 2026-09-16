@@ -4743,6 +4743,73 @@ button.admin-home-card {
   font-weight: 750;
 }
 
+/* codex-image-fullscreen-modal */
+.modal-backdrop.image-fullscreen-backdrop {
+  inset: 0 !important;
+  width: 100vw !important;
+  height: 100vh !important;
+  height: 100dvh !important;
+  padding: 0 !important;
+  place-items: stretch !important;
+  overflow: hidden !important;
+  background: rgba(2, 6, 23, 0.96) !important;
+  backdrop-filter: none !important;
+}
+
+.image-fullscreen-modal {
+  width: 100vw !important;
+  height: 100vh !important;
+  height: 100dvh !important;
+  max-width: 100vw !important;
+  max-height: 100vh !important;
+  max-height: 100dvh !important;
+  margin: 0 !important;
+  border: 0 !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  display: grid !important;
+  grid-template-rows: minmax(0, 1fr) !important;
+  overflow: hidden !important;
+}
+
+.image-fullscreen-modal .modal-header,
+.image-fullscreen-modal .modal-actions {
+  display: none !important;
+}
+
+.image-fullscreen-modal .modal-body {
+  width: 100vw !important;
+  height: 100vh !important;
+  height: 100dvh !important;
+  min-height: 0 !important;
+  padding: 0 !important;
+  overflow: hidden !important;
+  background: transparent !important;
+}
+
+.image-fullscreen-view {
+  width: 100vw;
+  height: 100vh;
+  height: 100dvh;
+  min-height: 0;
+  display: grid;
+  place-items: center;
+  background: transparent;
+  cursor: zoom-out;
+}
+
+.image-fullscreen-view img {
+  max-width: 100vw;
+  max-height: 100vh;
+  max-height: 100dvh;
+  width: auto;
+  height: auto;
+  object-fit: contain;
+  display: block;
+  user-select: none;
+}
+
 /* codex-home-cards-open-dedicated-pages */
 .home-nav-card {
   grid-template-columns: 116px minmax(0, 1fr) 40px;
@@ -9101,6 +9168,73 @@ html, body {
   box-shadow: 0 12px 28px rgba(15, 23, 42, 0.22) !important;
   transform: none !important;
   pointer-events: auto;
+}
+
+/* Final image viewer override: center the image against the viewport, not the old modal box. */
+.modal-backdrop.image-fullscreen-backdrop {
+  position: fixed !important;
+  inset: 0 !important;
+  width: 100vw !important;
+  height: 100vh !important;
+  height: 100dvh !important;
+  padding: 0 !important;
+  margin: 0 !important;
+  display: grid !important;
+  place-items: center !important;
+  overflow: hidden !important;
+  background: rgba(2, 6, 23, 0.96) !important;
+}
+
+.modal-backdrop.image-fullscreen-backdrop .image-fullscreen-modal {
+  position: fixed !important;
+  inset: 0 !important;
+  width: 100vw !important;
+  height: 100vh !important;
+  height: 100dvh !important;
+  max-width: none !important;
+  max-height: none !important;
+  display: grid !important;
+  place-items: center !important;
+  grid-template-rows: minmax(0, 1fr) !important;
+  padding: 0 !important;
+  margin: 0 !important;
+  border: 0 !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  overflow: hidden !important;
+  transform: none !important;
+}
+
+.modal-backdrop.image-fullscreen-backdrop .modal-header,
+.modal-backdrop.image-fullscreen-backdrop .modal-actions {
+  display: none !important;
+}
+
+.modal-backdrop.image-fullscreen-backdrop .modal-body,
+.modal-backdrop.image-fullscreen-backdrop .image-fullscreen-view {
+  position: fixed !important;
+  inset: 0 !important;
+  width: 100vw !important;
+  height: 100vh !important;
+  height: 100dvh !important;
+  min-height: 0 !important;
+  display: grid !important;
+  place-items: center !important;
+  padding: 0 !important;
+  margin: 0 !important;
+  overflow: hidden !important;
+  background: transparent !important;
+}
+
+.modal-backdrop.image-fullscreen-backdrop .image-fullscreen-view img {
+  max-width: 100vw !important;
+  max-height: 100vh !important;
+  max-height: 100dvh !important;
+  width: auto !important;
+  height: auto !important;
+  object-fit: contain !important;
+  display: block !important;
 }
 
 /* Authentication visibility guard. Keep this at the end so hidden screens stay hidden. */

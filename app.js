@@ -6866,10 +6866,33 @@
     });
   }
 
+  function openImageFullscreenModal(image) {
+    const src = image?.currentSrc || image?.src || image?.dataset?.photoSrc || "";
+    if (!src) {
+      return;
+    }
+
+    modalPreviewDirty = false;
+    modalSubmitSucceeded = true;
+    setModalScrollLock(true);
+    elements.modalBackdrop.classList.remove("table-fullscreen-backdrop");
+    elements.modalBackdrop.classList.add("image-fullscreen-backdrop");
+    elements.modalTitle.textContent = "";
+    const modalCard = elements.modalBackdrop.querySelector(".modal-card");
+    if (modalCard) {
+      modalCard.className = "modal-card image-fullscreen-modal";
+    }
+    elements.modalBody.innerHTML = '<div class="image-fullscreen-view"><img src="' + escapeHtml(src) + '" alt="' + escapeHtml(image?.alt || "Ảnh phóng to") + '"></div>';
+    elements.modalActions.innerHTML = "";
+    elements.modalBody.querySelector(".image-fullscreen-view")?.addEventListener("click", closeModal);
+    elements.modalBackdrop.hidden = false;
+  }
+
   function closeModal() {
     const shouldRefreshPreview = modalPreviewDirty && !modalSubmitSucceeded && currentUser && state;
     elements.modalBackdrop.hidden = true;
     elements.modalBackdrop.classList.remove("table-fullscreen-backdrop");
+    elements.modalBackdrop.classList.remove("image-fullscreen-backdrop");
     setModalScrollLock(false, { tableFullscreen: true });
     elements.modalTitle.textContent = "";
     elements.modalBody.innerHTML = "";
@@ -13684,6 +13707,18 @@
 
     window.addEventListener("popstate", syncRouteFromLocation);
     window.addEventListener("hashchange", syncRouteFromLocation);
+    document.addEventListener("dblclick", (event) => {
+      const image = event.target?.closest?.("img");
+      if (!image || image.closest(".brand-line,.cyber-brand,.safety-logo-cell")) {
+        return;
+      }
+      const src = image.currentSrc || image.src || image.dataset.photoSrc || "";
+      if (!src) {
+        return;
+      }
+      event.preventDefault();
+      openImageFullscreenModal(image);
+    });
 
     const bindPeriodSelect = (select, type) => {
       if (!select) return;
