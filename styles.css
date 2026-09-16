@@ -9237,6 +9237,206 @@ html, body {
   display: block !important;
 }
 
+/* Galaxy Tab A 8" landscape: make the assessor sheet fit without horizontal drag in fullscreen. */
+.modal-card.table-fullscreen-modal .fullscreen-table-wrap .assessor-4m-table {
+  width: 100vw !important;
+  min-width: 0 !important;
+  max-width: 100vw !important;
+  table-layout: fixed !important;
+}
+
+.modal-card.table-fullscreen-modal .fullscreen-table-wrap .assessor-4m-table col:nth-child(1) {
+  width: 6.5% !important;
+}
+
+.modal-card.table-fullscreen-modal .fullscreen-table-wrap .assessor-4m-table col:nth-child(2) {
+  width: 12.5% !important;
+}
+
+.modal-card.table-fullscreen-modal .fullscreen-table-wrap .assessor-4m-table col:nth-child(3) {
+  width: 6.5% !important;
+}
+
+.modal-card.table-fullscreen-modal .fullscreen-table-wrap .assessor-4m-table col:nth-child(4) {
+  width: 4.8% !important;
+}
+
+.modal-card.table-fullscreen-modal .fullscreen-table-wrap .assessor-4m-table col:nth-child(5),
+.modal-card.table-fullscreen-modal .fullscreen-table-wrap .assessor-4m-table col:nth-child(6),
+.modal-card.table-fullscreen-modal .fullscreen-table-wrap .assessor-4m-table col:nth-child(8),
+.modal-card.table-fullscreen-modal .fullscreen-table-wrap .assessor-4m-table col:nth-child(9) {
+  width: 13.4% !important;
+}
+
+.modal-card.table-fullscreen-modal .fullscreen-table-wrap .assessor-4m-table col:nth-child(7) {
+  width: 16.1% !important;
+}
+
+@media (orientation: landscape) and (max-width: 1280px) and (max-height: 820px) {
+  #tab-assessor .assessor-4m-wrap {
+    overflow-x: hidden !important;
+  }
+
+  #tab-assessor .assessor-4m-table {
+    width: 100% !important;
+    min-width: 0 !important;
+    max-width: 100% !important;
+    table-layout: fixed !important;
+    font-size: 10px !important;
+  }
+
+  #tab-assessor .assessor-4m-table col:nth-child(1) {
+    width: 6.5% !important;
+  }
+
+  #tab-assessor .assessor-4m-table col:nth-child(2) {
+    width: 12.5% !important;
+  }
+
+  #tab-assessor .assessor-4m-table col:nth-child(3) {
+    width: 6.5% !important;
+  }
+
+  #tab-assessor .assessor-4m-table col:nth-child(4) {
+    width: 4.8% !important;
+  }
+
+  #tab-assessor .assessor-4m-table col:nth-child(5),
+  #tab-assessor .assessor-4m-table col:nth-child(6),
+  #tab-assessor .assessor-4m-table col:nth-child(8),
+  #tab-assessor .assessor-4m-table col:nth-child(9) {
+    width: 13.4% !important;
+  }
+
+  #tab-assessor .assessor-4m-table col:nth-child(7) {
+    width: 16.1% !important;
+  }
+
+  #tab-assessor .assessor-4m-table th,
+  #tab-assessor .assessor-4m-table td {
+    height: 19px !important;
+    padding: 1px 2px !important;
+    line-height: 1.02 !important;
+    overflow-wrap: anywhere;
+  }
+
+  #tab-assessor .assessor-4m-title {
+    height: 28px !important;
+    font-size: 13px !important;
+  }
+
+  #tab-assessor .assessor-4m-meta {
+    height: 26px !important;
+    font-size: 9.5px !important;
+    line-height: 1.04 !important;
+  }
+
+  #tab-assessor .assessor-4m-average {
+    font-size: 11px !important;
+  }
+
+  #tab-assessor .assessor-4m-table .standard-reference-column-head {
+    height: 25px !important;
+    font-size: 9.5px !important;
+    top: 0 !important;
+  }
+
+  #tab-assessor .assessor-4m-table .standard-reference-section-cell,
+  #tab-assessor .assessor-4m-table .standard-reference-location-cell,
+  #tab-assessor .assessor-4m-table .standard-reference-criterion-cell,
+  #tab-assessor .assessor-4m-table .standard-reference-level-cell {
+    font-size: 9.2px !important;
+    line-height: 1.02 !important;
+  }
+
+  #tab-assessor .assessor-4m-table .standard-reference-level-cell {
+    min-height: 0 !important;
+  }
+
+  #tab-assessor .standard-reference-score-input-cell {
+    padding: 0 1px !important;
+  }
+
+  #tab-assessor .assessor-score-select {
+    width: 100% !important;
+    min-width: 0 !important;
+    min-height: 24px !important;
+    height: 24px !important;
+    padding: 1px 2px !important;
+    border-radius: 4px !important;
+    font-size: 12px !important;
+  }
+
+  #tab-assessor .standard-reference-average-label {
+    height: 24px !important;
+    font-size: 11px !important;
+  }
+
+  .modal-card.table-fullscreen-modal .fullscreen-table-wrap .assessor-4m-table {
+    font-size: 10px !important;
+  }
+
+  .modal-card.table-fullscreen-modal .fullscreen-table-wrap .assessor-4m-table th,
+  .modal-card.table-fullscreen-modal .fullscreen-table-wrap .assessor-4m-table td {
+    height: 19px !important;
+    padding: 1px 2px !important;
+    line-height: 1.02 !important;
+    overflow-wrap: anywhere;
+  }
+
+  .modal-card.table-fullscreen-modal .fullscreen-table-wrap .assessor-4m-title {
+    height: 28px !important;
+    font-size: 13px !important;
+  }
+
+  .modal-card.table-fullscreen-modal .fullscreen-table-wrap .assessor-4m-meta {
+    height: 26px !important;
+    font-size: 9.5px !important;
+    line-height: 1.04 !important;
+  }
+
+  .modal-card.table-fullscreen-modal .fullscreen-table-wrap .assessor-4m-average {
+    font-size: 11px !important;
+  }
+
+  .modal-card.table-fullscreen-modal .fullscreen-table-wrap .assessor-4m-table .standard-reference-column-head {
+    height: 25px !important;
+    font-size: 9.5px !important;
+    top: 0 !important;
+  }
+
+  .modal-card.table-fullscreen-modal .fullscreen-table-wrap .assessor-4m-table .standard-reference-section-cell,
+  .modal-card.table-fullscreen-modal .fullscreen-table-wrap .assessor-4m-table .standard-reference-location-cell,
+  .modal-card.table-fullscreen-modal .fullscreen-table-wrap .assessor-4m-table .standard-reference-criterion-cell,
+  .modal-card.table-fullscreen-modal .fullscreen-table-wrap .assessor-4m-table .standard-reference-level-cell {
+    font-size: 9.2px !important;
+    line-height: 1.02 !important;
+  }
+
+  .modal-card.table-fullscreen-modal .fullscreen-table-wrap .assessor-4m-table .standard-reference-level-cell {
+    min-height: 0 !important;
+  }
+
+  .modal-card.table-fullscreen-modal .fullscreen-table-wrap .standard-reference-score-input-cell {
+    padding: 0 1px !important;
+  }
+
+  .modal-card.table-fullscreen-modal .fullscreen-table-wrap .assessor-score-select {
+    width: 100% !important;
+    min-width: 0 !important;
+    min-height: 24px !important;
+    height: 24px !important;
+    padding: 1px 2px !important;
+    border-radius: 4px !important;
+    font-size: 12px !important;
+  }
+
+  .modal-card.table-fullscreen-modal .fullscreen-table-wrap .standard-reference-average-label {
+    height: 24px !important;
+    font-size: 11px !important;
+  }
+}
+
 /* Authentication visibility guard. Keep this at the end so hidden screens stay hidden. */
 body.login-mode #app-shell,
 body:not(.app-mode) #app-shell[hidden],
