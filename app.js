@@ -2611,6 +2611,21 @@
     );
   }
 
+  function getSafetyRecordOwnerAccount(record) {
+    if (!record) {
+      return null;
+    }
+    const recordUsername = String(record.accountUsername || "").trim();
+    if (recordUsername) {
+      return state.accounts.find((account) => sameNormalizedText(account.username, recordUsername)) || null;
+    }
+    return state.accounts.find((account) => (
+      !isAdminAccount(account) &&
+      canUseSafety(account) &&
+      isSafetyRecordOwnedByAccount(record, account)
+    )) || null;
+  }
+
   function canManageSafetyRecord(record, account = currentUser) {
     if (!record || !account || isPeriodArchived(record.periodId)) {
       return false;
@@ -9699,6 +9714,13 @@
           periodId,
         );
         const now = new Date().toISOString();
+        const ownerAccount = record ? getSafetyRecordOwnerAccount(record) : currentUser;
+        const ownerUsername = record
+          ? String(record.accountUsername || ownerAccount?.username || currentUser?.username || "").trim()
+          : String(currentUser?.username || "").trim();
+        const ownerName = record
+          ? String(record.scorerName || getAccountDisplayName(ownerAccount, SAFETY_PERIOD_TYPE, periodId) || getAccountDisplayName(currentUser, SAFETY_PERIOD_TYPE, periodId)).trim()
+          : getAccountDisplayName(currentUser, SAFETY_PERIOD_TYPE, periodId);
         const payload = normalizeSafetyRecord({
           ...(record || {}),
           id: record?.id || makeId("safety"),
@@ -9726,8 +9748,8 @@
           completionDate: String(formData.get("completionDate") || "").trim(),
           completionLevelConfirm: String(formData.get("completionLevelConfirm") || "").trim(),
           completionStop6Confirm: "",
-          scorerName: getAccountDisplayName(currentUser, SAFETY_PERIOD_TYPE, periodId),
-          accountUsername: currentUser?.username || "",
+          scorerName: ownerName,
+          accountUsername: ownerUsername,
           createdAt: record?.createdAt || now,
           updatedAt: now,
         });
