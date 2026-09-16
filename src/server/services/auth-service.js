@@ -588,7 +588,10 @@ class AuthService {
     const personId = getAccountPersonId(account, type);
     const explicitIds = getAccountAreaIds(account, type);
     const byPerson = areas
-      .filter((area) => role === ROLE_ZONE_OWNER ? personId && area.scorerId === personId : personId && area.assessorId === personId)
+      .filter((area) => role === ROLE_ZONE_OWNER
+        ? personId && area.scorerId === personId
+        : personId && (area.assessorId === personId || (Array.isArray(area.assessorIds) && area.assessorIds.includes(personId)))
+      )
       .map((area) => area.id)
       .filter(Boolean);
     return new Set([...explicitIds, ...byPerson]);
@@ -616,25 +619,22 @@ class AuthService {
   }
 
   isRecordOwnedByAccount(root, record, account, type = SAFETY_PERIOD_TYPE) {
-    const accountUsername = String(account?.username || "").trim();
-    const recordUsername = String(record?.accountUsername || "").trim();
-    if (accountUsername && recordUsername) {
-      if (sameNormalizedText(recordUsername, accountUsername)) {
-        return true;
-      }
-      const ownerAccount = this.findAccount(root, (item) => sameNormalizedText(item.username, recordUsername));
-      if (!ownerAccount || !isAdminAccount(ownerAccount)) {
-        return false;
-      }
-    }
-    if (recordUsername && !isAdminAccount(this.findAccount(root, (item) => sameNormalizedText(item.username, recordUsername)))) {
+    if (!record || !account) {
       return false;
     }
+    if (isAdminAccount(account)) {
+      return true;
+    }
+    const accountUsername = String(account?.username || "").trim();
+    const recordUsername = String(record?.accountUsername || record?.createdBy || "").trim();
+    if (recordUsername) {
+      return sameNormalizedText(recordUsername, accountUsername);
+    }
     const names = this.getAccountDisplayNameCandidates(root, account, record?.periodId || "", type);
-    return names.some((name) => (
-      safetyRecordTextMatchesName(record?.scorerName, name) ||
-      safetyRecordTextMatchesName(record?.issueFoundBy, name)
-    ));
+    if (record?.scorerName) {
+      return names.some((name) => sameNormalizedText(record.scorerName, name));
+    }
+    return names.some((name) => safetyRecordTextMatchesName(record?.issueFoundBy, name));
   }
 
   assertScoreWriteAllowed(root, account, command) {

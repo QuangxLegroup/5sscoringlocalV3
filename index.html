@@ -443,6 +443,10 @@
                         <span>Tên assessor</span>
                         <input id="catalog-assessor-name" type="text" autocomplete="off" required>
                       </label>
+                      <div class="form-field" id="catalog-assessor-zones-field">
+                        <span id="catalog-assessor-zones-label">Zone được chấm</span>
+                        <div class="zone-check-list" id="catalog-assessor-zone-list"></div>
+                      </div>
                       <button class="primary-button" type="submit">Thêm assessor</button>
                     </form>
                     <div class="compact-list" id="catalog-assessor-list"></div>
@@ -464,7 +468,7 @@
                         <span>Trưởng phòng</span>
                         <input id="area-head" type="text" autocomplete="off">
                       </label>
-                      <label>
+                      <label id="area-summary-group-field">
                         <span>Nhóm tổng điểm</span>
                         <input id="area-summary-group" type="text" autocomplete="off">
                       </label>
@@ -472,11 +476,15 @@
                         <span>Người phụ trách zone / người được đánh giá</span>
                         <select id="area-scorer" required></select>
                       </label>
-                      <label>
+                      <label id="area-assessor-field">
                         <span>Assessor mặc định trên dòng cuối</span>
                         <select id="area-assessor" required></select>
                       </label>
-                      <label class="check-line">
+                      <div class="form-field" id="area-assessors-checkbox-field" hidden>
+                        <span>Danh sách assessor đang chấm zone này</span>
+                        <div class="zone-check-list" id="area-assessors-check-list"></div>
+                      </div>
+                      <label class="check-line" id="area-highlight-field">
                         <input id="area-highlight" type="checkbox">
                         <span>Tô vàng mã zone</span>
                       </label>
@@ -538,7 +546,7 @@
                         <span>Người phụ trách zone</span>
                         <select id="account-manager"></select>
                       </label>
-                      <div class="form-field">
+                      <div class="form-field" id="account-zone-field">
                         <span id="account-zone-label">Zone người được cấp tài khoản phụ trách</span>
                         <div class="zone-check-list" id="account-zone-list"></div>
                       </div>

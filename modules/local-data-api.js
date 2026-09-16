@@ -289,6 +289,16 @@
     stopDataStream();
   }
 
+  function notifyAuthRevoked(message = "") {
+    try {
+      window.dispatchEvent(new CustomEvent("local-data-auth-revoked", {
+        detail: { message: message || "Phiên đăng nhập đã bị thay thế." },
+      }));
+    } catch (error) {
+      console.warn("Không phát được sự kiện phiên đăng nhập bị thay thế:", error);
+    }
+  }
+
   function applyAuthPayload(payload) {
     setAuthToken(payload?.token || authToken);
     if (payload?.root) {
@@ -433,6 +443,7 @@
     } catch (error) {
       if (isAuthError(error)) {
         clearAuthToken();
+        notifyAuthRevoked(error.message);
       }
       console.warn("Không đồng bộ được dữ liệu nội bộ:", error);
     } finally {
@@ -477,6 +488,16 @@
       stream = new EventSource(buildUrl("/api/data/stream"), { withCredentials: true });
       stream.addEventListener("data-changed", () => {
         pollRoot();
+      });
+      stream.addEventListener("session-revoked", (event) => {
+        let message = "";
+        try {
+          message = JSON.parse(event.data || "{}")?.message || "";
+        } catch (error) {
+          message = String(event.data || "");
+        }
+        clearAuthToken();
+        notifyAuthRevoked(message);
       });
       stream.onerror = () => {
         stopDataStream();

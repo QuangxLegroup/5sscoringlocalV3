@@ -931,7 +931,7 @@
   }
 
   function renderSafetyMarkCell(selected, context, extraClass = "", value = "1") {
-    const className = selected ? `is-marked ${extraClass}` : "";
+    const className = [extraClass, selected ? "is-marked" : ""].filter(Boolean).join(" ");
     return `<td class="safety-mark-cell ${className}">${selected ? context.escapeHtml(value) : ""}</td>`;
   }
 
@@ -951,6 +951,8 @@
       getIssueLocation,
       getIssueMonth,
       getIssueStatusLabel,
+      getSafetyLevelConfirm,
+      getSafetyStop6Confirm,
       isIssueOpen,
       isPeriodArchived,
       isSafetyFoundSelected,
@@ -966,6 +968,7 @@
     const actions = canEdit
       ? `<div class="safety-actions">
           <button class="tiny-button" type="button" data-action="edit-safety-record" data-id="${escapeHtml(row.score.id)}">Sửa</button>
+          <button class="tiny-button danger-text-button" type="button" data-action="delete-safety-record" data-id="${escapeHtml(row.score.id)}">Xóa</button>
           <span class="item-meta">${escapeHtml(statusLabel)}</span>
         </div>`
       : `<div class="safety-actions"><span class="item-meta">${escapeHtml(statusLabel)}</span></div>`;
@@ -979,7 +982,7 @@
       <td>${row.score.photoDataUrl ? `<img class="safety-thumb" src="${row.score.photoDataUrl}" alt="Ảnh minh họa">` : ""}</td>
       <td>${escapeHtml(getIssueCount(row))}</td>
       ${SAFETY_STOP6_COLUMNS.map((column) => renderSafetyMarkCell(isSafetyStop6Selected(row.score, column.value), context)).join("")}
-      ${SAFETY_LEVEL_COLUMNS.map((column) => renderSafetyMarkCell(isSafetyLevelSelected(row.score, column.value), context, "level-mark")).join("")}
+      ${SAFETY_LEVEL_COLUMNS.map((column) => renderSafetyMarkCell(isSafetyLevelSelected(row.score, column.value), context, column.value === "A" ? "level-a-column" : "level-mark")).join("")}
       ${SAFETY_FOUND_COLUMNS.map((column) => renderSafetyMarkCell(isSafetyFoundSelected(row.score, column.value), context, "", getIssueFoundBy(row) || "1")).join("")}
       <td>${escapeHtml(getIssueEmployeeCode(row))}</td>
       <td>${escapeHtml(row.score.improvementContent || "")}</td>
@@ -987,8 +990,8 @@
       <td>${escapeHtml(row.score.actionOwner || "")}</td>
       <td>${escapeHtml(row.score.actionPlan || "")}</td>
       <td>${escapeHtml(completionDate)}</td>
-      <td>${escapeHtml(row.score.completionLevelConfirm || "")}</td>
-      <td>${escapeHtml(row.score.completionStop6Confirm || "")}</td>
+      <td>${escapeHtml(getSafetyLevelConfirm ? getSafetyLevelConfirm(row.score) : row.score.completionLevelConfirm || "")}</td>
+      <td>${escapeHtml(getSafetyStop6Confirm ? getSafetyStop6Confirm(row.score) : row.score.completionStop6Confirm || "")}</td>
     </tr>`;
   }
 
@@ -1024,14 +1027,14 @@
         <tr class="safety-meta-row"><td colspan="6"><span>Chức Danh:</span> ${escapeHtml(report.performerTitle || "")}</td><td colspan="5"><span>Chức Danh:</span> ${escapeHtml(report.checkerTitle || "")}</td><td colspan="17"></td></tr>
         <tr class="safety-meta-row"><td colspan="6"><span>Bộ Phận:</span> ${escapeHtml(report.department || "")}</td><td colspan="5"><span>Bộ Phận:</span> ${escapeHtml(report.checkerDepartment || "")}</td><td colspan="17"></td></tr>
         <tr class="safety-main-header">
-          <th rowspan="3">No</th><th rowspan="3">Vị trí</th><th rowspan="3">Ngày</th><th rowspan="3">Tháng</th><th rowspan="3">Mối nguy hiểm phát hiện được .</th><th rowspan="3">Hình Ảnh Minh Họa</th><th rowspan="3">Số lần phát hiện</th>
+          <th rowspan="3">No</th><th rowspan="3">Vị trí</th><th rowspan="3">Ngày</th><th rowspan="3">Tháng</th><th rowspan="3">Mối nguy hiểm phát hiện được</th><th rowspan="3">Hình Ảnh Minh Họa</th><th rowspan="3">Số lần phát hiện</th>
           <th colspan="13">${escapeHtml(report.instruction || DEFAULT_SAFETY_REPORT.instruction)}</th>
           <th rowspan="3">Mã nhân viên</th><th rowspan="3">Nội dung cải tiến, xử lý</th><th rowspan="3">Hình ảnh sau cải tiến, xử lý</th><th rowspan="3">Đảm nhiệm</th><th rowspan="3">Kế hoạch</th><th colspan="3">Hoàn thành</th>
         </tr>
         <tr class="safety-main-header"><th colspan="${SAFETY_STOP6_COLUMNS.length}">Phân loại STOP 6</th><th colspan="${SAFETY_LEVEL_COLUMNS.length}">Cấp bậc</th><th colspan="${SAFETY_FOUND_COLUMNS.length}">Phát hiện</th><th rowspan="2">Ngày</th><th rowspan="2">Xác nhận theo cấp độ</th><th rowspan="2">Xác nhận theo loại stop 6</th></tr>
         <tr class="safety-main-header safety-vertical-row">
           ${SAFETY_STOP6_COLUMNS.map((column) => `<th><span>${escapeHtml(column.label)}</span></th>`).join("")}
-          ${SAFETY_LEVEL_COLUMNS.map((column) => `<th><span>${escapeHtml(column.label)}</span></th>`).join("")}
+          ${SAFETY_LEVEL_COLUMNS.map((column) => `<th class="${column.value === "A" ? "level-a-column-head" : ""}"><span>${escapeHtml(column.label)}</span></th>`).join("")}
           ${SAFETY_FOUND_COLUMNS.map((column) => `<th><span>${escapeHtml(column.label)}</span></th>`).join("")}
         </tr>
       </thead>

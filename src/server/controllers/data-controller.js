@@ -4,8 +4,9 @@ const { readJsonBody } = require("../http/request");
 const { sendJson } = require("../http/response");
 
 class DataController {
-  constructor({ dataService }) {
+  constructor({ dataService, authService = null }) {
     this.dataService = dataService;
+    this.authService = authService;
     this.streamClients = new Set();
   }
 
@@ -35,13 +36,46 @@ class DataController {
 
     const client = { response };
     this.streamClients.add(client);
+    let authCheckBusy = false;
+    let closed = false;
+    const closeClient = () => {
+      if (closed) return;
+      closed = true;
+      clearInterval(keepAlive);
+      clearInterval(authCheck);
+      this.streamClients.delete(client);
+    };
     const keepAlive = setInterval(() => {
       response.write(`event: ping\ndata: ${Date.now()}\n\n`);
     }, 25000);
+    const authCheck = setInterval(() => {
+      if (!this.authService || authCheckBusy || closed || response.writableEnded) {
+        return;
+      }
+      authCheckBusy = true;
+      this.authService.authenticateRequest(request)
+        .catch((error) => {
+          const status = Number(error?.statusCode || error?.status || 0);
+          if (status !== 401 && status !== 403) {
+            return;
+          }
+          try {
+            const message = error?.message || "Phiên đăng nhập đã bị thay thế.";
+            response.write(`event: session-revoked\ndata: ${JSON.stringify({ message })}\n\n`);
+            response.end();
+          } catch (writeError) {
+            // The client is already gone.
+          } finally {
+            closeClient();
+          }
+        })
+        .finally(() => {
+          authCheckBusy = false;
+        });
+    }, 2000);
 
     request.on("close", () => {
-      clearInterval(keepAlive);
-      this.streamClients.delete(client);
+      closeClient();
     });
   }
 

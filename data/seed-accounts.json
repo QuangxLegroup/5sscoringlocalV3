@@ -29,45 +29,17 @@
       },
       "username": "msngocdb",
       "createdAt": "2026-09-11T06:01:39.205Z",
-      "assessorId": "assessor-mtkepzm9-leo6og",
+      "assessorId": "assessor-wgvjbk",
       "areaIds": [
         "area-1"
       ],
-      "fiveSAssessorId": "assessor-mtkepzm9-leo6og",
+      "fiveSAssessorId": "assessor-wgvjbk",
       "fiveSAreaIds": [
         "area-1"
       ],
       "safetyAssessorId": "assessor-mtkepzm9-leo6og",
       "safetyAreaIds": [
-        "area-1",
-        "area-2",
-        "area-3",
-        "area-4",
-        "area-5",
-        "area-6",
-        "area-7",
-        "area-8",
-        "area-9",
-        "area-10",
-        "area-11",
-        "area-12",
-        "area-13",
-        "area-14",
-        "area-15",
-        "area-16",
-        "area-17",
-        "area-18",
-        "area-19",
-        "area-20",
-        "area-21",
-        "area-22",
-        "area-23",
-        "area-24",
-        "area-25",
-        "area-26",
-        "area-27",
-        "area-28",
-        "area-safety-xiolum"
+        "area-1"
       ],
       "displayName": "MsNgoc",
       "passwordHash": "pbkdf2-sha256$210000$2H5OJ_L4mG7TOcT4vMBDsg$2iVJiNp75h5tIBnGyK6Znkhfo4IoTDEABfMAtI70sIg"
@@ -123,8 +95,8 @@
       "areaIds": [
         "area-2"
       ],
-      "fiveSAssessorId": "",
-      "assessorId": "",
+      "fiveSAssessorId": "assessor-1q0l6v",
+      "assessorId": "assessor-1q0l6v",
       "fiveSAreaIds": [
         "area-2"
       ],

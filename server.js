@@ -100,7 +100,7 @@ function createServer() {
   const authService = new AuthService({ repository: dataRepository, secret: process.env.JWT_SECRET || "" });
   const authController = new AuthController({ authService });
   const dataService = new DataService({ repository: dataRepository, photoDir: PHOTO_DIR, authService });
-  const dataController = new DataController({ dataService });
+  const dataController = new DataController({ dataService, authService });
 
   const staticFileService = new StaticFileService({ rootDir: __dirname });
   const staticFileController = new StaticFileController({ staticFileService });

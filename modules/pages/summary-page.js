@@ -166,16 +166,26 @@
   }
 
   function buildConsecutiveGroups(areas) {
-    return areas.reduce((groups, area, index) => {
-      const label = area.summaryGroup || area.departmentHead || "";
-      const current = groups[groups.length - 1];
-      if (current && current.label === label) {
+    const deptGroups = [];
+    areas.forEach((area, index) => {
+      const dept = area.departmentHead || "";
+      const current = deptGroups[deptGroups.length - 1];
+      if (current && current.dept === dept && dept) {
         current.areas.push(area);
       } else {
-        groups.push({ label, startIndex: index, areas: [area] });
+        deptGroups.push({ dept, startIndex: index, areas: [area] });
       }
-      return groups;
-    }, []);
+    });
+
+    return deptGroups.map((group) => {
+      const explicitLabel = group.areas.find((a) => String(a.summaryGroup || "").trim())?.summaryGroup?.trim();
+      const label = explicitLabel || group.dept || "";
+      return {
+        label,
+        startIndex: group.startIndex,
+        areas: group.areas,
+      };
+    });
   }
 
   function renderAverageScoreTable(context, period) {
