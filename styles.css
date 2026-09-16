@@ -9080,3 +9080,33 @@ body:not(.app-mode) #app-shell[hidden],
 body.login-mode #login-screen:not([hidden]) {
   display: grid !important;
 }
+.safety-date-editor {
+  position: relative;
+  display: block;
+}
+
+.safety-date-editor input[type="text"] {
+  padding-right: 52px;
+}
+
+.safety-date-editor .safety-date-calendar {
+  position: absolute;
+  right: 0;
+  top: 0;
+  width: 44px;
+  height: 100%;
+  padding: 10px;
+  border: 0;
+  background: transparent;
+  color: transparent;
+  min-width: 0;
+}
+
+.safety-date-calendar::-webkit-datetime-edit {
+  display: none;
+}
+
+.safety-date-calendar::-webkit-calendar-picker-indicator {
+  cursor: pointer;
+  margin: 0;
+}

@@ -8961,11 +8961,16 @@
         "</div>" +
         "<label>" +
           "<span>Ngày đánh giá an toàn</span>" +
-          "<input name=\"safetyDate\" type=\"date\" value=\"" + escapeHtml(currentDate) + "\" required>" +
+          "<span class=\"safety-date-editor\">" +
+            "<input name=\"safetyDate\" type=\"text\" placeholder=\"dd/mm/yyyy\" pattern=\"[0-9]{2}/[0-9]{2}/[0-9]{4}\" maxlength=\"10\" value=\"" + escapeHtml(formatDateDisplay(currentDate)) + "\" required>" +
+            "<input class=\"safety-date-calendar\" aria-label=\"Chọn ngày đánh giá an toàn\" type=\"date\" value=\"" + escapeHtml(currentDate) + "\">" +
+          "</span>" +
         "</label>",
       async onSubmit(formData) {
-        const isoDate = toIsoDate(formData.get("safetyDate"));
-        if (!isoDate) {
+        const parts = String(formData.get("safetyDate") || "").match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+        const isoDate = parts ? `${parts[3]}-${parts[2]}-${parts[1]}` : "";
+        const parsedDate = new Date(isoDate + "T00:00:00");
+        if (!isoDate || Number.isNaN(parsedDate.getTime()) || toIsoDate(parsedDate) !== isoDate) {
           showToast("Ngày đánh giá an toàn không hợp lệ.", true);
           return false;
         }
@@ -9008,6 +9013,15 @@
         renderAll();
         return true;
       },
+    });
+    const dateText = elements.modalBody.querySelector('[name="safetyDate"]');
+    const calendar = elements.modalBody.querySelector(".safety-date-calendar");
+    calendar.addEventListener("change", () => {
+      dateText.value = formatDateDisplay(calendar.value);
+    });
+    dateText.addEventListener("input", () => {
+      const parts = dateText.value.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+      calendar.value = parts ? `${parts[3]}-${parts[2]}-${parts[1]}` : "";
     });
   }
 
