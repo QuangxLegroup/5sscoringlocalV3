@@ -191,9 +191,8 @@ function getAccountAreaIds(account, type = FIVE_S_PERIOD_TYPE) {
   }
   const normalizedType = normalizeCatalogType(type);
   const typedKey = normalizedType === SAFETY_PERIOD_TYPE ? "safetyAreaIds" : "fiveSAreaIds";
-  const typedIds = Array.isArray(account[typedKey]) ? account[typedKey].filter(Boolean) : [];
-  if (typedIds.length) {
-    return [...new Set(typedIds)];
+  if (Array.isArray(account[typedKey])) {
+    return [...new Set(account[typedKey].filter(Boolean))];
   }
 
   const legacyIds = Array.isArray(account.areaIds) ? account.areaIds.filter(Boolean) : [];

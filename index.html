@@ -10,7 +10,8 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="styles.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link rel="stylesheet" href="styles.css?v=2026091723">
   </head>
   <body>
     <section class="loading-screen" id="loading-screen">
@@ -81,6 +82,10 @@
               <button class="tab-button admin-only five-s-access-only" type="button" data-tab="summary">
                 <span class="tab-icon">📊</span>
                 <span>Tổng hợp điểm 5S</span>
+              </button>
+              <button class="tab-button mobile-launch-tab-btn" type="button" id="sidebarMobileBtn" title="Mở giao diện chấm điểm trên điện thoại">
+                <span class="tab-icon">📱</span>
+                <span>Chấm Mobile</span>
               </button>
             </nav>
           </div>
@@ -171,6 +176,10 @@
           </nav>
 
           <div class="header-right-tools">
+            <button class="mobile-switch-header-btn" id="mobileSwitchHeaderBtn" type="button" title="Mở giao diện chấm điểm trên điện thoại">
+              <i class="fa-solid fa-mobile-screen-button"></i>
+              <span>Chấm Mobile</span>
+            </button>
             <div class="user-box cyber-user-box" id="user-box">
               <button class="account-menu-button cyber-user-pill" id="account-menu-button" type="button" aria-haspopup="true" aria-expanded="false" title="Menu tài khoản">
                 <span class="account-avatar cyber-user-avatar" id="account-avatar">Đ</span>
@@ -259,7 +268,7 @@
                 <select id="summary-score-source"></select>
               </label>
 
-              <button class="primary-button admin-only" id="export-excel-button" type="button">Xuất Excel</button>
+              <button class="btn-export-excel-gradient admin-only" id="export-excel-button" type="button"><i class="fa-solid fa-file-excel"></i> <span>Xuất Excel</span></button>
               <button class="secondary-button admin-only" type="button" data-action="import-page-json" data-page="five-s">Import</button>
               <button class="secondary-button admin-only" type="button" data-action="export-page-json" data-page="five-s">Export</button>
             </div>
@@ -303,7 +312,7 @@
               <div class="safety-actions">
                 <button class="primary-button safety-access-only" id="add-safety-record-button" type="button">Thêm ĐG AT</button>
                 <button class="secondary-button admin-only" id="edit-safety-meta-button" type="button">Thiết lập báo cáo</button>
-                <button class="secondary-button admin-only" id="export-safety-excel-button" type="button">Xuất ĐG AT</button>
+                <button class="btn-export-excel-gradient admin-only" id="export-safety-excel-button" type="button"><i class="fa-solid fa-file-excel"></i> <span>Xuất ĐG AT</span></button>
                 <button class="secondary-button admin-only" type="button" data-action="import-page-json">Import</button>
                 <button class="secondary-button admin-only" type="button" data-action="export-page-json">Export</button>
                 <button class="primary-button admin-only" id="send-safety-mail-button" type="button">Gửi báo cáo</button>
@@ -410,27 +419,6 @@
                     <div class="compact-list" id="scorer-list"></div>
                   </section>
 
-                  <section class="panel department-head-email-panel">
-                    <div class="section-heading catalog-section-heading">
-                      <div>
-                        <span class="section-step">Bước 5</span>
-                        <h2>Email trưởng phòng</h2>
-                      </div>
-                    </div>
-                    <form class="stacked-form" id="department-head-email-form">
-                      <label>
-                        <span>Trưởng phòng</span>
-                        <select id="department-head-email-name" required></select>
-                      </label>
-                      <label>
-                        <span>Email trưởng phòng</span>
-                        <textarea id="department-head-emails" placeholder="vd: truongphong1@congty.com, truongphong2@congty.com"></textarea>
-                      </label>
-                      <button class="primary-button" type="submit">Lưu email trưởng phòng</button>
-                    </form>
-                    <div class="compact-list" id="department-head-email-list"></div>
-                  </section>
-
                   <section class="panel catalog-assessor-panel">
                     <div class="section-heading catalog-section-heading">
                       <div>
@@ -491,6 +479,27 @@
                       <button class="primary-button" type="submit">Thêm zone</button>
                     </form>
                     <div class="compact-list" id="area-list"></div>
+                  </section>
+
+                  <section class="panel department-head-email-panel">
+                    <div class="section-heading catalog-section-heading">
+                      <div>
+                        <span class="section-step">Bước 5</span>
+                        <h2>Email trưởng phòng</h2>
+                      </div>
+                    </div>
+                    <form class="stacked-form" id="department-head-email-form">
+                      <label>
+                        <span>Trưởng phòng</span>
+                        <select id="department-head-email-name" required></select>
+                      </label>
+                      <label>
+                        <span>Email trưởng phòng</span>
+                        <textarea id="department-head-emails" placeholder="vd: truongphong1@congty.com, truongphong2@congty.com"></textarea>
+                      </label>
+                      <button class="primary-button" type="submit">Lưu email trưởng phòng</button>
+                    </form>
+                    <div class="compact-list" id="department-head-email-list"></div>
                   </section>
 
                   <section class="panel" id="safety-department-groups-panel" hidden>
@@ -598,32 +607,43 @@
     <script src="modules/pages/admin-home-page.js"></script>
     <script src="modules/pages/assessor-page.js"></script>
     <script src="modules/pages/summary-page.js"></script>
-    <script src="modules/pages/safety-page.js"></script>
+    <script src="modules/pages/safety-page.js?v=2026091723"></script>
     <script src="modules/pages/issue-stats-page.js"></script>
     <script src="modules/pages/catalog-page.js"></script>
     <script src="modules/pages/accounts-page.js"></script>
     <script src="modules/pages/data-page.js"></script>
+    <script src="modules/pages/mobile-prototype.js?v=2026091723"></script>
     <script src="standards.js"></script>
-    <script src="app.js"></script>
+    <script src="app.js?v=2026091723"></script>
   
     <script>
       (() => {
         const sidebar = document.querySelector(".app-sidebar");
         const toggleBtn = document.getElementById("sidebar-toggle-btn");
-        if (!sidebar || !toggleBtn) return;
+        if (sidebar && toggleBtn) {
+          const isCollapsed = localStorage.getItem("legroup_sidebar_collapsed") === "true";
+          if (isCollapsed) {
+            sidebar.classList.add("collapsed");
+            toggleBtn.title = "Mở rộng thanh bên";
+          }
 
-        const isCollapsed = localStorage.getItem("legroup_sidebar_collapsed") === "true";
-        if (isCollapsed) {
-          sidebar.classList.add("collapsed");
-          toggleBtn.title = "Mở rộng thanh bên";
+          toggleBtn.addEventListener("click", () => {
+            sidebar.classList.toggle("collapsed");
+            const collapsed = sidebar.classList.contains("collapsed");
+            localStorage.setItem("legroup_sidebar_collapsed", collapsed);
+            toggleBtn.title = collapsed ? "Mở rộng thanh bên" : "Thu gọn thanh bên";
+          });
         }
 
-        toggleBtn.addEventListener("click", () => {
-          sidebar.classList.toggle("collapsed");
-          const collapsed = sidebar.classList.contains("collapsed");
-          localStorage.setItem("legroup_sidebar_collapsed", collapsed);
-          toggleBtn.title = collapsed ? "Mở rộng thanh bên" : "Thu gọn thanh bên";
-        });
+        const openMobile = (e) => {
+          e?.preventDefault?.();
+          e?.stopPropagation?.();
+          if (typeof window.openMobilePrototype === "function") {
+            window.openMobilePrototype("5s");
+          }
+        };
+        document.getElementById("mobileSwitchHeaderBtn")?.addEventListener("click", openMobile);
+        document.getElementById("sidebarMobileBtn")?.addEventListener("click", openMobile);
       })();
     </script>
   </body>

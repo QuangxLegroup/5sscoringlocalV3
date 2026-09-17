@@ -537,6 +537,7 @@
       assessors: [],
       safetyAssessors: [],
       safetyReport: { ...DEFAULT_SAFETY_REPORT },
+      safetyMonthlyTargets: {},
       safetyIdentificationOverrides: {},
       scores: [],
       safetyRecords: [],
@@ -647,9 +648,8 @@
     }
     const normalizedType = normalizeCatalogType(type);
     const typedKey = normalizedType === SAFETY_PERIOD_TYPE ? "safetyAreaIds" : "fiveSAreaIds";
-    const typedIds = Array.isArray(account[typedKey]) ? account[typedKey].filter(Boolean) : [];
-    if (typedIds.length) {
-      return [...new Set(typedIds)];
+    if (Array.isArray(account[typedKey])) {
+      return [...new Set(account[typedKey].filter(Boolean))];
     }
 
     const legacyIds = Array.isArray(account.areaIds) ? account.areaIds.filter(Boolean) : [];
@@ -664,6 +664,9 @@
     const cleanIds = [...new Set((areaIds || []).filter(Boolean))];
     if (normalizedType === SAFETY_PERIOD_TYPE) {
       account.safetyAreaIds = cleanIds;
+      if (!hasAccountAccessType(account, FIVE_S_PERIOD_TYPE)) {
+        account.areaIds = cleanIds;
+      }
     } else {
       account.fiveSAreaIds = cleanIds;
       account.areaIds = cleanIds;
@@ -838,6 +841,7 @@
       safetyDepartmentGroups: snapshotToArray(raw.safetyDepartmentGroups),
       accounts: snapshotToArray(raw.accounts),
       safetyReport: { ...DEFAULT_SAFETY_REPORT, ...(raw.safetyReport || {}) },
+      safetyMonthlyTargets: raw.safetyMonthlyTargets || {},
       safetyIdentificationOverrides: normalizeTextOverrideMap(raw.safetyIdentificationOverrides),
       scores: snapshotToArray(raw.scores),
       safetyRecords: snapshotToArray(raw.safetyRecords),
@@ -1236,6 +1240,7 @@
       safetyDepartmentGroups: toObj(safetyDepartmentGroups),
       accounts: toObj(accounts),
       safetyReport: s.safetyReport || DEFAULT_SAFETY_REPORT,
+      safetyMonthlyTargets: s.safetyMonthlyTargets || {},
       safetyIdentificationOverrides: s.safetyIdentificationOverrides || {},
       scores: toObj((s.scores || []).map(compactForStorage)),
       safetyRecords: toObj((s.safetyRecords || []).map(compactForStorage)),
@@ -2783,6 +2788,56 @@
     return SAFETY_ZONE_TARGETS[code] || 0;
   }
 
+  function getSafetyMonthlyTarget(year, month) {
+    const y = String(year || "");
+    const m = String(month || "");
+    const targetMap = state?.safetyMonthlyTargets || {};
+    const val = targetMap[y]?.[m] ?? targetMap[`${y}-${m}`];
+    if (val !== undefined && val !== null && val !== "") {
+      const num = Number(val);
+      if (Number.isFinite(num) && num >= 0) {
+        return num;
+      }
+    }
+    try {
+      const raw = window.localStorage?.getItem("safetyMonthlyTargets");
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        const lVal = parsed[y]?.[m] ?? parsed[`${y}-${m}`];
+        if (lVal !== undefined && lVal !== null && lVal !== "") {
+          const num = Number(lVal);
+          if (Number.isFinite(num) && num >= 0) return num;
+        }
+      }
+    } catch {}
+    return 100;
+  }
+
+  async function updateSafetyMonthlyTarget(year, month, value) {
+    const y = String(year || "");
+    const m = String(month || "");
+    if (!y || !m) return 100;
+    const num = value === "" || value === null ? 100 : Math.max(0, Math.min(100, Math.round(Number(value) || 0)));
+    if (!state.safetyMonthlyTargets) {
+      state.safetyMonthlyTargets = {};
+    }
+    if (!state.safetyMonthlyTargets[y]) {
+      state.safetyMonthlyTargets[y] = {};
+    }
+    state.safetyMonthlyTargets[y][m] = num;
+    try {
+      window.localStorage?.setItem("safetyMonthlyTargets", JSON.stringify(state.safetyMonthlyTargets));
+    } catch {}
+    try {
+      await dbRef(`safetyMonthlyTargets/${y}/${m}`).set(num);
+    } catch (e) {
+      console.warn("Could not sync safetyMonthlyTargets to db:", e);
+    }
+    showToast(`Đã lưu mục tiêu T${m}/${y}: ${num}%`);
+    renderActiveTab();
+    return num;
+  }
+
   function getFiveSChartTargets() {
     return normalizeFiveSChartTargets(state?.fiveSChartTargets);
   }
@@ -3309,10 +3364,17 @@
     if (!assessorId) {
       return [];
     }
+    const catalogType = normalizeCatalogType(type);
     const areas = getAreasForPeriod(periodId);
-    return areas
+    const areaIdsFromAreas = areas
       .filter((area) => area.assessorId === assessorId || (Array.isArray(area.assessorIds) && area.assessorIds.includes(assessorId)))
       .map((area) => area.id);
+
+    const linkedAccounts = (state.accounts || [])
+      .filter((account) => hasAccountAccessType(account, catalogType) && getAccountPersonId(account, catalogType) === assessorId);
+    const areaIdsFromAccounts = linkedAccounts.flatMap((acc) => getAccountAreaIds(acc, catalogType));
+
+    return [...new Set([...areaIdsFromAreas, ...areaIdsFromAccounts])];
   }
 
   async function setAssessorAreaIds(assessorId, targetAreaIds, type = activeCatalogScope, periodId = getActivePeriodId(type)) {
@@ -3321,11 +3383,10 @@
     }
     const catalogType = normalizeCatalogType(type);
     const targetSet = new Set((targetAreaIds || []).filter(Boolean));
-    const mutableAreas = getMutablePeriodAreas(catalogType, periodId);
-    const assessor = getPeriodCatalogAssessor(periodId, assessorId);
+    const assessor = getPeriodCatalogAssessor(periodId, assessorId) || getAssessor(assessorId, catalogType);
     const assessorName = assessor?.name || "";
 
-    mutableAreas.forEach((area) => {
+    const applyToArea = (area, pId) => {
       const currentAssessorIds = new Set(Array.isArray(area.assessorIds) ? area.assessorIds : (area.assessorId ? [area.assessorId] : []));
       if (targetSet.has(area.id)) {
         currentAssessorIds.add(assessorId);
@@ -3338,24 +3399,62 @@
         if (area.assessorId === assessorId) {
           const remaining = [...currentAssessorIds];
           area.assessorId = remaining[0] || "";
-          area.assessorName = remaining[0] ? (getPeriodCatalogAssessor(periodId, remaining[0])?.name || "") : "";
+          area.assessorName = remaining[0] ? (getPeriodCatalogAssessor(pId || periodId, remaining[0])?.name || "") : "";
         }
       }
       area.assessorIds = [...currentAssessorIds];
+    };
+
+    // 1. Update active period snapshot areas
+    const mutableAreas = getMutablePeriodAreas(catalogType, periodId);
+    mutableAreas.forEach((area) => applyToArea(area, periodId));
+
+    // 2. Update root catalog areas
+    const rootAreas = getMutableAreas(catalogType);
+    if (Array.isArray(rootAreas)) {
+      rootAreas.forEach((area) => applyToArea(area, ""));
+    }
+
+    // 3. Update all other period snapshots of the same catalog type
+    const periodsToSave = [];
+    (state.periods || []).forEach((period) => {
+      if (normalizeCatalogType(period.type) === catalogType && period.settingsSnapshot?.areas) {
+        period.settingsSnapshot.areas.forEach((area) => applyToArea(area, period.id));
+        periodsToSave.push(period);
+      }
     });
 
+    // 4. Update affected accounts
     const affectedAccounts = (state.accounts || []).filter((acc) => (
       hasAccountAccessType(acc, catalogType) && getAccountPersonId(acc, catalogType) === assessorId
     ));
     const normalizedTargetAreaIds = [...targetSet];
     affectedAccounts.forEach((account) => {
       setAccountAreaIds(account, catalogType, normalizedTargetAreaIds);
+      if (catalogType === SAFETY_PERIOD_TYPE) {
+        account.safetyAreaIds = normalizedTargetAreaIds;
+        if (Array.isArray(account.areaIds)) {
+          account.areaIds = account.areaIds.filter((aid) => targetSet.has(aid) || (account.fiveSAreaIds || []).includes(aid));
+        }
+      } else {
+        account.fiveSAreaIds = normalizedTargetAreaIds;
+        account.areaIds = normalizedTargetAreaIds;
+      }
     });
 
-    await Promise.all([
+    // 5. Persist everything to database
+    const dbWrites = [
       saveCatalogPeriodSnapshot(catalogType, periodId),
+      ...periodsToSave.map((p) => savePeriodSnapshot(p)),
       ...affectedAccounts.map((account) => dbRef(`accounts/${account.id}`).set(account)),
-    ]);
+    ];
+    if (Array.isArray(rootAreas)) {
+      rootAreas.forEach((a) => {
+        dbWrites.push(dbRef(`${catalogDbPath(catalogType, "areas")}/${a.id}`).set(a));
+      });
+    }
+
+    await Promise.all(dbWrites);
   }
 
   function scoreGuideHtml(item, criterion) {
@@ -4557,6 +4656,8 @@
       getSafetyRowsForYear,
       getSafetyReportRoute,
       getSafetyZoneTarget,
+      getSafetyMonthlyTarget,
+      updateSafetyMonthlyTarget,
       getFiveSChartTarget,
       getFiveSChartTargets,
       getScoreSourceLabel,
@@ -4578,6 +4679,22 @@
       isSafetyStop6Selected,
       periodLabel,
       renderStandardReferenceTable,
+      setScore,
+      getScoreRecord,
+      saveSafetyRecord,
+      deleteSafetyRecord,
+      showToast,
+      prepareScorePhoto,
+      normalizeSafetyRecord,
+      getAreaForPeriod,
+      getArea,
+      getItem,
+      getCriterion,
+      getAccountDisplayName,
+      canEditFiveSScoreSource,
+      todayIsoDate,
+      saveScore,
+      makeId,
       legacyRenderers: {
         accounts: renderAccountsTab,
         assessor: renderAssessorTab,
@@ -4586,8 +4703,11 @@
       },
     };
   }
+  window.__GET_APP_CONTEXT__ = createPageContext;
+
   function renderActiveTab() {
     const context = createPageContext();
+    window.__APP_CONTEXT__ = context;
     if (pageRegistry?.render?.(activeTab, context)) {
       renderRoleVisibility();
       hydrateAuthenticatedPhotos(elements.appShell);
@@ -5296,20 +5416,27 @@
       const activeId = getActivePeriodId(type);
       container.innerHTML = periods
         .map((period) => {
-          const active = period.id === activeId ? "Đang mở" : "Mở kỳ";
+          const isActive = period.id === activeId;
+          const activeBtnClass = isActive ? "tiny-button active-period-btn" : "tiny-button";
+          const activeText = isActive ? "Đang mở" : "Mở kỳ";
           const periodType = normalizePeriodType(period.type) === SAFETY_PERIOD_TYPE ? SAFETY_PERIOD_TYPE : FIVE_S_PERIOD_TYPE;
           const meta = periodType === SAFETY_PERIOD_TYPE ? "Đánh giá an toàn" : "Chấm 5S";
           const editAction = periodType === SAFETY_PERIOD_TYPE ? "edit-safety-period-date" : "edit-five-s-period-date";
           const editLabel = "Sửa";
           const editDateButton = "<button class=\"tiny-button\" type=\"button\" data-action=\"" + escapeHtml(editAction) + "\" data-id=\"" + escapeHtml(period.id) + "\">" + escapeHtml(editLabel) + "</button>";
-          return "<article class=\"compact-item\">" +
-            "<div><strong>" + escapeHtml(periodLabel(period)) + "</strong><span>" + escapeHtml(meta) + "</span></div>" +
-            "<div class=\"compact-actions\">" +
-              "<button class=\"tiny-button\" type=\"button\" data-action=\"activate-period\" data-period-type=\"" + escapeHtml(type) + "\" data-id=\"" + escapeHtml(period.id) + "\">" + active + "</button>" +
-              editDateButton +
-              "<button class=\"tiny-button danger-text-button\" type=\"button\" data-action=\"delete-period\" data-id=\"" + escapeHtml(period.id) + "\">Xóa</button>" +
-            "</div>" +
-          "</article>";
+          return `<article class="compact-item catalog-period-item ${isActive ? "period-item-active" : ""}">
+            <div class="compact-main">
+              <div class="compact-title-row">
+                <strong>${escapeHtml(periodLabel(period))}</strong>
+                <span class="catalog-meta-pill ${isActive ? "pill-active" : "pill-muted"}">${escapeHtml(meta)}</span>
+              </div>
+            </div>
+            <div class="compact-actions">
+              <button class="${activeBtnClass}" type="button" data-action="activate-period" data-period-type="${escapeHtml(type)}" data-id="${escapeHtml(period.id)}">${activeText}</button>
+              ${editDateButton}
+              <button class="tiny-button danger-text-button" type="button" data-action="delete-period" data-id="${escapeHtml(period.id)}">Xóa</button>
+            </div>
+          </article>`;
         })
         .join("") || "<article class=\"compact-item\"><strong>" + escapeHtml(emptyMessage) + "</strong></article>";
     };
@@ -5328,10 +5455,23 @@
         const zones = areas
           .filter((area) => area.scorerId === manager.id)
           .map((area) => area.code);
-        return `<article class="compact-item">
-          <div>
-            <strong>${escapeHtml(manager.name)}</strong>
-            <span>Zone phụ trách / được đánh giá: ${escapeHtml(zones.join(", ") || "chưa có")}</span>
+        let zoneSummaryHtml = "";
+        const allZonesStr = zones.join(", ");
+        if (!zones.length) {
+          zoneSummaryHtml = '<span class="catalog-meta-pill text-muted">Chưa gán zone</span>';
+        } else if (zones.length > 5) {
+          const head = zones.slice(0, 4).join(", ");
+          const remain = zones.length - 4;
+          zoneSummaryHtml = `<span class="catalog-meta-pill pill-zone" title="${escapeHtml(allZonesStr)}">Zone: ${escapeHtml(head)} <span class="pill-more">+${remain} zone</span></span>`;
+        } else {
+          zoneSummaryHtml = `<span class="catalog-meta-pill pill-zone">Zone: ${escapeHtml(allZonesStr)}</span>`;
+        }
+        return `<article class="compact-item catalog-scorer-item">
+          <div class="compact-main">
+            <div class="compact-title-row">
+              <strong>${escapeHtml(manager.name)}</strong>
+              ${zoneSummaryHtml}
+            </div>
           </div>
           <div class="compact-actions">
             <button class="tiny-button" type="button" data-action="edit-scorer" data-id="${escapeHtml(manager.id)}">Sửa</button>
@@ -5339,7 +5479,7 @@
           </div>
         </article>`;
       })
-      .join("");
+      .join("") || '<article class="compact-item"><strong>Chưa có người phụ trách</strong><span>Thêm người phụ trách zone trước khi gán zone.</span></article>';
   }
 
 
@@ -5355,17 +5495,34 @@
         const clearButton = emails
           ? "<button class=\"tiny-button danger-text-button\" type=\"button\" data-action=\"clear-department-head-email\" data-id=\"" + escapeHtml(row.name) + "\">Xóa email</button>"
           : "";
-        return "<article class=\"compact-item department-head-email-item\">" +
-          "<div>" +
-            "<strong>" + escapeHtml(row.name) + "</strong>" +
-            "<span class=\"department-head-zone-line\">Zone: " + escapeHtml(row.areaCodes.join(", ") || "chưa gán zone") + "</span>" +
-            "<span class=\"department-head-email-line\">Email trưởng phòng: " + escapeHtml(emails || "chưa có") + "</span>" +
-          "</div>" +
-          "<div class=\"compact-actions\">" +
-            "<button class=\"tiny-button\" type=\"button\" data-action=\"edit-department-head-email\" data-id=\"" + escapeHtml(row.name) + "\">Sửa email</button>" +
-            clearButton +
-          "</div>" +
-        "</article>";
+        const areaCodes = row.areaCodes || [];
+        let zoneSummaryHtml = "";
+        const allZonesStr = areaCodes.join(", ");
+        if (!areaCodes.length) {
+          zoneSummaryHtml = '<span class="catalog-meta-pill text-muted">Chưa gán zone</span>';
+        } else if (areaCodes.length > 5) {
+          const head = areaCodes.slice(0, 4).join(", ");
+          const remain = areaCodes.length - 4;
+          zoneSummaryHtml = `<span class="catalog-meta-pill pill-zone" title="${escapeHtml(allZonesStr)}">Zone: ${escapeHtml(head)} <span class="pill-more">+${remain}</span></span>`;
+        } else {
+          zoneSummaryHtml = `<span class="catalog-meta-pill pill-zone">Zone: ${escapeHtml(allZonesStr)}</span>`;
+        }
+
+        return `<article class="compact-item department-head-email-item">
+          <div class="compact-main">
+            <div class="compact-title-row">
+              <strong>${escapeHtml(row.name)}</strong>
+              ${zoneSummaryHtml}
+            </div>
+            <div class="compact-meta-row">
+              <span class="meta-label">Email:</span> <span class="email-address-text">${escapeHtml(emails || "chưa cấu hình email")}</span>
+            </div>
+          </div>
+          <div class="compact-actions">
+            <button class="tiny-button" type="button" data-action="edit-department-head-email" data-id="${escapeHtml(row.name)}">Sửa email</button>
+            ${clearButton}
+          </div>
+        </article>`;
       })
       .join("") || "<article class=\"compact-item department-head-email-item\"><div><strong>Chưa có trưởng phòng</strong><span>Nhập trưởng phòng trong danh mục zone trước khi thiết lập email.</span></div></article>";
   }
@@ -5382,16 +5539,39 @@
       .map((assessor) => {
         const linkedAccounts = state.accounts
           .filter((account) => hasAccountAccessType(account, catalogType) && getAccountPersonId(account, catalogType) === assessor.id);
-        const accountAreaIds = new Set(linkedAccounts.flatMap((acc) => getAccountAreaIds(acc, catalogType)));
+        const assignedAreaIds = new Set(getAssessorAreaIds(assessor.id, catalogType, periodId));
         const zones = areas
-          .filter((area) => area.assessorId === assessor.id || (Array.isArray(area.assessorIds) && area.assessorIds.includes(assessor.id)) || accountAreaIds.has(area.id))
+          .filter((area) => assignedAreaIds.has(area.id))
           .map((area) => area.code);
         const accounts = linkedAccounts.map((account) => account.username);
-        return `<article class="compact-item">
-          <div>
-            <strong>${escapeHtml(assessor.name)}</strong>
-            <span>Zone chấm: ${escapeHtml(zones.join(", ") || "chưa có")}</span>
-            <span>Tài khoản: ${escapeHtml(accounts.join(", ") || "chưa có")}</span>
+
+        let zoneSummaryHtml = "";
+        const allZonesStr = zones.join(", ");
+        if (!zones.length) {
+          zoneSummaryHtml = '<span class="catalog-meta-pill text-muted">Chưa gán zone</span>';
+        } else if (areas.length > 0 && zones.length === areas.length) {
+          zoneSummaryHtml = `<span class="catalog-meta-pill pill-all" title="Toàn bộ ${zones.length} zone: ${escapeHtml(allZonesStr)}">Tất cả zone (${zones.length})</span>`;
+        } else if (zones.length > 4) {
+          const head = zones.slice(0, 4).join(", ");
+          const remain = zones.length - 4;
+          zoneSummaryHtml = `<span class="catalog-meta-pill" title="${escapeHtml(allZonesStr)}">${escapeHtml(head)} <span class="pill-more">+${remain} zone</span></span>`;
+        } else {
+          zoneSummaryHtml = `<span class="catalog-meta-pill">${escapeHtml(allZonesStr)}</span>`;
+        }
+
+        const accountHtml = accounts.length
+          ? `<span class="catalog-meta-pill pill-user" title="Tài khoản đăng nhập">👤 ${escapeHtml(accounts.join(", "))}</span>`
+          : '<span class="catalog-meta-pill text-muted">Chưa có TK</span>';
+
+        return `<article class="compact-item catalog-assessor-item">
+          <div class="compact-main">
+            <div class="compact-title-row">
+              <strong>${escapeHtml(assessor.name)}</strong>
+              ${accountHtml}
+            </div>
+            <div class="compact-meta-row">
+              <span class="meta-label">Zone chấm:</span> ${zoneSummaryHtml}
+            </div>
           </div>
           <div class="compact-actions">
             <button class="tiny-button" type="button" data-action="edit-assessor" data-id="${escapeHtml(assessor.id)}">Sửa</button>
@@ -5435,6 +5615,7 @@
   function renderAreaList() {
     const catalogType = activeCatalogScope;
     const periodId = getActivePeriodId(catalogType);
+    const isSafety = normalizeCatalogType(catalogType) === SAFETY_PERIOD_TYPE;
     elements.areaList.innerHTML = getAreasForPeriod(periodId)
       .map((area) => {
         const assessorNames = getAreaAllAssessorNamesForPeriod(periodId, area, catalogType);
@@ -5443,19 +5624,32 @@
           ? assessorNames.join(", ")
           : (configuredName || "chưa phân quyền");
         const bottomLineNote = configuredName
-          ? ` · Dòng cuối: ${configuredName}`
-          : " · Dòng cuối: theo assessor chấm gần nhất";
-        return `<article class="compact-item">
-        <div>
-          <strong>Zone ${escapeHtml(area.code)}</strong>
-          <span>Trưởng phòng: ${escapeHtml(area.departmentHead || "-")} · Nhóm tổng: ${escapeHtml(area.summaryGroup || "-")} · Người phụ trách zone: ${escapeHtml(getAreaResponsibleNameForPeriod(periodId, area))}</span>
-          <span>Assessor chấm: ${escapeHtml(assessorSummary)}${escapeHtml(bottomLineNote)}</span>
-        </div>
-        <div class="compact-actions">
-          <button class="tiny-button" type="button" data-action="edit-area" data-id="${escapeHtml(area.id)}">Sửa</button>
-          <button class="tiny-button danger-text-button" type="button" data-action="delete-area" data-id="${escapeHtml(area.id)}">Xóa</button>
-        </div>
-      </article>`;
+          ? `Dòng cuối: ${configuredName}`
+          : "Dòng cuối: theo assessor chấm gần nhất";
+        const scorerName = getAreaResponsibleNameForPeriod(periodId, area) || "—";
+        const deptHeadName = area.departmentHead || "—";
+
+        const summaryGroupTag = (!isSafety && area.summaryGroup)
+          ? `<span class="catalog-meta-pill pill-group" title="Nhóm tổng điểm">🏷️ ${escapeHtml(area.summaryGroup)}</span>`
+          : "";
+
+        return `<article class="compact-item catalog-area-item">
+          <div class="compact-main">
+            <div class="compact-title-row">
+              <span class="area-code-badge">Zone ${escapeHtml(area.code)}</span>
+              ${summaryGroupTag}
+            </div>
+            <div class="area-meta-grid">
+              <div class="area-meta-chip"><span class="meta-label">Trưởng phòng:</span> <strong>${escapeHtml(deptHeadName)}</strong></div>
+              <div class="area-meta-chip"><span class="meta-label">Phụ trách:</span> <strong>${escapeHtml(scorerName)}</strong></div>
+              <div class="area-meta-chip area-meta-assessor full-span"><span class="meta-label">Assessor:</span> <span>${escapeHtml(assessorSummary)}</span> <span class="meta-subtext">(${escapeHtml(bottomLineNote)})</span></div>
+            </div>
+          </div>
+          <div class="compact-actions">
+            <button class="tiny-button" type="button" data-action="edit-area" data-id="${escapeHtml(area.id)}">Sửa</button>
+            <button class="tiny-button danger-text-button" type="button" data-action="delete-area" data-id="${escapeHtml(area.id)}">Xóa</button>
+          </div>
+        </article>`;
       })
       .join("");
   }
@@ -6564,7 +6758,7 @@
     await saveHistoryEntry(historyEntry);
   }
 
-  async function setScore({ periodId, area, item, criterion, score, status, scoreSource = SCORE_SOURCE_ASSESSOR }) {
+  async function setScore({ periodId, area, item, criterion, score, status, scoreSource = SCORE_SOURCE_ASSESSOR, note = undefined, photoDataUrl = undefined, photoName = undefined }) {
     const normalizedSource = normalizeScoreSource(scoreSource);
     if (!periodId || !isPeriodOpen(periodId, FIVE_S_PERIOD_TYPE)) {
       showToast("Không có kỳ đánh giá 5S đang mở nên không thể nhập dữ liệu.", true);
@@ -6587,7 +6781,9 @@
     const existingCopy = cloneValue(existing);
     const beforeLabel = formatScoreRecord(existing);
     const afterLabel = status === SCORE_CROSSED ? "Gạch chéo" : Number.isFinite(score) ? String(score) : "";
-    const changed = beforeLabel !== afterLabel;
+    const noteChanged = note !== undefined && note !== (existing?.note || "");
+    const photoChanged = photoDataUrl !== undefined && photoDataUrl !== (existing?.photoDataUrl || "");
+    const changed = beforeLabel !== afterLabel || noteChanged || photoChanged;
 
     if (!changed) {
       return;
@@ -6611,7 +6807,7 @@
       scoreSource: normalizedSource,
       beforeLabel,
       afterLabel,
-      note: "",
+      note: note !== undefined ? note : (existing?.note || ""),
       scope: FIVE_S_PERIOD_TYPE,
     };
     state.history.unshift(historyEntry);
@@ -6634,9 +6830,9 @@
         scoreSource: normalizedSource,
         score,
         status,
-        note: existing?.note || "",
-        photoDataUrl: existing?.photoDataUrl || "",
-        photoName: existing?.photoName || "",
+        note: note !== undefined ? note : (existing?.note || ""),
+        photoDataUrl: photoDataUrl !== undefined ? photoDataUrl : (existing?.photoDataUrl || ""),
+        photoName: photoName !== undefined ? photoName : (existing?.photoName || ""),
         issueType: existing?.issueType || "",
         issueLevel: existing?.issueLevel || "",
         issueStatus: existing?.issueStatus || "",
@@ -7569,6 +7765,7 @@
     const catalogType = normalizeCatalogType(type);
     const period = getPeriod(periodId);
     const cleanName = normalizeDepartmentHeadName(name);
+    const headKey = departmentHeadKey(cleanName);
     const contact = period?.settingsSnapshot
       ? ensureDepartmentHeadContactForPeriod(cleanName, catalogType, period.id)
       : ensureDepartmentHeadContact(cleanName, catalogType);
@@ -7585,11 +7782,56 @@
     }
 
     contact.emails = nextEmails;
-    if (!period?.settingsSnapshot) {
-      const latest = getLatestWritablePeriod(catalogType);
-      if (latest) {
-        latest.settingsSnapshot = makeSettingsSnapshot(state, catalogType);
+
+    // 1. Đồng bộ danh mục gốc (cả 5S và An toàn) để khi tạo kỳ mới hoặc fallback không bị mang email cũ
+    const root5sContact = ensureDepartmentHeadContact(cleanName, FIVE_S_PERIOD_TYPE);
+    if (root5sContact) {
+      root5sContact.emails = nextEmails;
+    }
+    const rootSafetyContact = ensureDepartmentHeadContact(cleanName, SAFETY_PERIOD_TYPE);
+    if (rootSafetyContact) {
+      rootSafetyContact.emails = nextEmails;
+    }
+
+    const updates = {};
+    if (root5sContact) {
+      updates[`${catalogDbPath(FIVE_S_PERIOD_TYPE, "departmentHeadContacts")}/${root5sContact.id}`] = root5sContact;
+    }
+    if (rootSafetyContact) {
+      updates[`${catalogDbPath(SAFETY_PERIOD_TYPE, "departmentHeadContacts")}/${rootSafetyContact.id}`] = rootSafetyContact;
+    }
+
+    // 2. Đồng bộ qua tất cả các kỳ đang có snapshot để không bị tình trạng xóa ở kỳ này nhưng kỳ khác vẫn còn
+    const allPeriods = Array.isArray(state.periods)
+      ? state.periods
+      : (state.periods && typeof state.periods === "object" ? Object.values(state.periods) : []);
+
+    allPeriods.forEach((p) => {
+      if (!p?.settingsSnapshot) return;
+      let matched = false;
+      const pContacts = p.settingsSnapshot.departmentHeadContacts;
+      if (Array.isArray(pContacts)) {
+        pContacts.forEach((c) => {
+          if (departmentHeadKey(c?.name) === headKey) {
+            c.emails = nextEmails;
+            matched = true;
+          }
+        });
+      } else if (pContacts && typeof pContacts === "object") {
+        Object.values(pContacts).forEach((c) => {
+          if (departmentHeadKey(c?.name) === headKey) {
+            c.emails = nextEmails;
+            matched = true;
+          }
+        });
       }
+      if (matched || p.id === period?.id) {
+        updates[`periods/${p.id}/settingsSnapshot`] = p.settingsSnapshot;
+      }
+    });
+
+    if (period?.settingsSnapshot && !updates[`periods/${period.id}/settingsSnapshot`]) {
+      updates[`periods/${period.id}/settingsSnapshot`] = period.settingsSnapshot;
     }
 
     const historyPeriod = period || getPeriod(getActivePeriodId(catalogType));
@@ -7609,16 +7851,6 @@
       scope: catalogType,
     });
 
-    const updates = {};
-    if (period?.settingsSnapshot) {
-      updates[`periods/${period.id}/settingsSnapshot`] = period.settingsSnapshot;
-    } else {
-      const latest = getLatestWritablePeriod(catalogType);
-      updates[`${catalogDbPath(catalogType, "departmentHeadContacts")}/${contact.id}`] = contact;
-      if (latest?.settingsSnapshot) {
-        updates[`periods/${latest.id}/settingsSnapshot`] = latest.settingsSnapshot;
-      }
-    }
     if (historyEntry) {
       updates[`history/${historyEntry.id}`] = historyEntry;
     }
@@ -7724,24 +7956,18 @@
     const newAssessor = { id: makeId(catalogType === SAFETY_PERIOD_TYPE ? "safety-assessor" : "assessor"), name, createdAt: new Date().toISOString() };
     assessors.push(newAssessor);
 
+    const rootAssessors = getMutableAssessors(catalogType);
+    if (!rootAssessors.some((a) => a.id === newAssessor.id)) {
+      rootAssessors.push({ ...newAssessor });
+    }
+
     if (checkedAreaIds.length) {
-      const areas = getMutablePeriodAreas(catalogType, periodId);
-      const checkedSet = new Set(checkedAreaIds);
-      areas.forEach((area) => {
-        if (checkedSet.has(area.id)) {
-          const currentIds = new Set(Array.isArray(area.assessorIds) ? area.assessorIds : (area.assessorId ? [area.assessorId] : []));
-          currentIds.add(newAssessor.id);
-          area.assessorIds = [...currentIds];
-          if (!area.assessorId) {
-            area.assessorId = newAssessor.id;
-            area.assessorName = name;
-          }
-        }
-      });
+      await setAssessorAreaIds(newAssessor.id, checkedAreaIds, catalogType, periodId);
     }
 
     await Promise.all([
       saveCatalogPeriodSnapshot(catalogType, periodId),
+      dbRef(`${catalogDbPath(catalogType, "assessors")}/${newAssessor.id}`).set(newAssessor),
       logAdminChange({
         subjectLabel: "Assessor",
         afterLabel: name,
@@ -8298,6 +8524,12 @@
         const beforeName = assessor.name;
         assessor.name = name;
 
+        const rootAssessors = getMutableAssessors(catalogType);
+        const rootAssessor = rootAssessors.find((item) => item.id === id);
+        if (rootAssessor) {
+          rootAssessor.name = name;
+        }
+
         await setAssessorAreaIds(assessor.id, checkedAreaIds, catalogType, periodId);
 
         const areas = getMutablePeriodAreas(catalogType, periodId);
@@ -8307,12 +8539,21 @@
           }
         });
 
+        const rootAreas = getMutableAreas(catalogType);
+        if (Array.isArray(rootAreas)) {
+          rootAreas.forEach((area) => {
+            if (area.assessorId === assessor.id) {
+              area.assessorName = name;
+            }
+          });
+        }
+
         const affectedAccounts = state.accounts.filter((account) => hasAccountAccessType(account, catalogType) && getAccountPersonId(account, catalogType) === assessor.id);
         affectedAccounts.forEach((account) => {
           account.name = name;
         });
 
-        await Promise.all([
+        const dbWrites = [
           saveCatalogPeriodSnapshot(catalogType, periodId),
           ...affectedAccounts.map((account) => dbRef(`accounts/${account.id}`).set(account)),
           logAdminChange({
@@ -8323,7 +8564,19 @@
             scope: catalogType,
             periodId,
           }),
-        ]);
+        ];
+        if (rootAssessor) {
+          dbWrites.push(dbRef(`${catalogDbPath(catalogType, "assessors")}/${id}`).set(rootAssessor));
+        }
+        if (Array.isArray(rootAreas)) {
+          rootAreas.forEach((a) => {
+            if (a.assessorId === assessor.id) {
+              dbWrites.push(dbRef(`${catalogDbPath(catalogType, "areas")}/${a.id}`).set(a));
+            }
+          });
+        }
+
+        await Promise.all(dbWrites);
         const afterSnapshot = capturePeriodSnapshot(periodId);
         const afterCatalog = captureCatalogState(catalogType);
         pushUndoAction({
@@ -8377,8 +8630,14 @@
         if (index >= 0) {
           assessors.splice(index, 1);
         }
+        const rootAssessors = getMutableAssessors(catalogType);
+        const rootIndex = rootAssessors.findIndex((item) => item.id === id);
+        if (rootIndex >= 0) {
+          rootAssessors.splice(rootIndex, 1);
+        }
         await Promise.all([
           saveCatalogPeriodSnapshot(catalogType, periodId),
+          dbRef(`${catalogDbPath(catalogType, "assessors")}/${id}`).remove(),
           logAdminChange({
             subjectLabel: "Assessor",
             beforeLabel: assessor.name,
@@ -11127,7 +11386,7 @@
         </div>
       `,
       async onSubmit() {
-        await copyTextToClipboard(recipientEmails, "Đã copy toàn bộ email để dán vào Gmail.");
+        await copyTextToClipboard(recipientEmails, "Đã copy toàn bộ email.");
         return false;
       },
     });
@@ -14322,7 +14581,7 @@
           throw new Error("Clipboard API không khả dụng trong ngữ cảnh này");
         }
         await navigator.clipboard.write([new ClipboardItem({ "image/png": blob })]);
-        showToast("Đã copy biểu đồ dưới dạng ảnh. Có thể dán vào Word hoặc PowerPoint.");
+        showToast("Đã copy biểu đồ dưới dạng ảnh.");
       } catch (clipboardError) {
         console.warn("Clipboard write failed, showing fallback modal:", clipboardError);
         showReportImageFallback(blob);
@@ -14350,11 +14609,11 @@
         throw new Error("Clipboard API is not available");
       }
 
-      showToast("Đã copy bảng. Có thể dán vào Word, PowerPoint hoặc Excel.");
+      showToast("Đã copy bảng.");
     } catch (error) {
       console.error(error);
       if (fallbackSelectCopy(target)) {
-        showToast("Đã copy bảng. Có thể dán vào Word, PowerPoint hoặc Excel.");
+        showToast("Đã copy bảng.");
       } else {
         showToast("Trình duyệt đang chặn quyền copy clipboard.", true);
       }
@@ -14659,7 +14918,10 @@
       ".excel-wide-wrap",
       ".factory-summary-wrap",
       ".progress-summary-wrap",
+      ".rank-summary-wrap",
+      ".stop6-summary-wrap",
       ".department-zone-summary-wrap",
+      ".annual-department-table-wrap",
       ".modal-body",
       ".safety-record-entry-wrap",
       ".safety-assessment-month-chart",
@@ -14959,15 +15221,26 @@
       }
 
       const targetInput = event.target?.closest?.("[data-safety-target-input]");
-      if (!targetInput) {
+      if (targetInput) {
+        updateSafetyZoneTarget(targetInput.dataset.periodId || "", targetInput.dataset.areaId || "", targetInput.value).catch((error) => {
+          console.error(error);
+          showToast("Lỗi khi cập nhật mục tiêu/tháng.", true);
+          renderActiveTab();
+        });
         return;
       }
 
-      updateSafetyZoneTarget(targetInput.dataset.periodId || "", targetInput.dataset.areaId || "", targetInput.value).catch((error) => {
-        console.error(error);
-        showToast("Lỗi khi cập nhật mục tiêu/tháng.", true);
-        renderActiveTab();
-      });
+      const progressTargetInput = event.target?.closest?.("[data-progress-target-input]");
+      if (progressTargetInput) {
+        const year = progressTargetInput.dataset.year || "";
+        const month = progressTargetInput.dataset.month || "";
+        updateSafetyMonthlyTarget(year, month, progressTargetInput.value).catch((error) => {
+          console.error(error);
+          showToast("Lỗi khi cập nhật mục tiêu.", true);
+          renderActiveTab();
+        });
+        return;
+      }
     });
   }
   // ─── App initialisation ───────────────────────────────────────────────────────

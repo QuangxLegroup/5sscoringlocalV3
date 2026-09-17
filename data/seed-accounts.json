@@ -17,24 +17,18 @@
     },
     "account-mtwjtdvp-0gswir": {
       "id": "account-mtwjtdvp-0gswir",
-      "role": "assessor5s",
+      "role": "assessorSafety",
       "name": "MrNgocDB",
       "accessTypes": [
-        "5s",
         "safety"
       ],
       "rolesByType": {
-        "5s": "assessor5s",
         "safety": "assessorSafety"
       },
       "username": "msngocdb",
       "createdAt": "2026-09-11T06:01:39.205Z",
       "assessorId": "assessor-wgvjbk",
       "areaIds": [
-        "area-1"
-      ],
-      "fiveSAssessorId": "assessor-wgvjbk",
-      "fiveSAreaIds": [
         "area-1"
       ],
       "safetyAssessorId": "assessor-mtkepzm9-leo6og",

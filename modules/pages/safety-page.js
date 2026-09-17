@@ -26,6 +26,8 @@
     assessment: { key: "", page: 1 },
     factory: { key: "", page: 1 },
   };
+  let activeFactoryTab = "overview";
+  let activeDepartmentChartView = "stacked";
 
   function clampPage(value, totalPages) {
     const page = Number(value);
@@ -215,11 +217,13 @@
       });
     }
     if (elements.exportSafetyExcelButton) {
-      elements.exportSafetyExcelButton.textContent = isFactory
+      const escape = context.escapeHtml || ((str) => str);
+      const label = isFactory
         ? "Xuất tổng hợp nguy cơ"
         : isIdentification
           ? "Xuất tổng hợp nhận diện"
           : "Xuất ĐG AT";
+      elements.exportSafetyExcelButton.innerHTML = `<i class="fa-solid fa-file-excel"></i> <span>${escape(label)}</span>`;
     }
   }
 
@@ -385,18 +389,39 @@
     });
   }
 
+  function splitTextToTwoLines(text, maxCharsPerLine = 12) {
+    const raw = String(text || "").trim();
+    if (!raw) return { line1: "", line2: "" };
+    if (raw.length <= maxCharsPerLine || !raw.includes(" ")) {
+      return { line1: raw, line2: "" };
+    }
+    const words = raw.split(" ");
+    let line1 = "";
+    let line2 = "";
+    const targetHalf = Math.ceil(raw.length / 2);
+    for (const w of words) {
+      if (!line1 || (line1.length + w.length + 1 <= targetHalf + 2 && !line2)) {
+        line1 = line1 ? `${line1} ${w}` : w;
+      } else {
+        line2 = line2 ? `${line2} ${w}` : w;
+      }
+    }
+    return { line1: line1 || raw, line2 };
+  }
+
   function renderZoneGoalChart(stats, month, year, context) {
     const { escapeHtml } = context;
     if (!stats.length) {
       return '<div class="excel-empty-chart">Chưa có zone để dựng biểu đồ.</div>';
     }
-    const left = 44;
-    const top = 28;
-    const plotHeight = 160;
-    const bottom = 58;
-    const step = 52;
-    const plotWidth = Math.max(1040, stats.length * step);
-    const width = left + plotWidth + 28;
+    const left = 48;
+    const top = 32;
+    const plotHeight = 180;
+    const bottom = 84;
+    const minPlotWidth = 1200;
+    const step = stats.length > 0 ? Math.max(96, Math.floor(minPlotWidth / stats.length)) : 96;
+    const plotWidth = stats.length * step;
+    const width = left + plotWidth + 36;
     const height = top + plotHeight + bottom;
     const max = Math.max(10, ...stats.flatMap((stat) => [stat.target, stat.total, stat.countermeasure || stat.closed || 0]));
     const gridValues = Array.from({ length: 6 }, (_, index) => Math.round((max / 5) * index));
@@ -408,30 +433,49 @@
 
     const grid = gridValues.map((value) => {
       const y = chartY(value, max, top, plotHeight);
-      return `<g><line x1="${left}" y1="${y}" x2="${left + plotWidth}" y2="${y}" class="excel-grid-line"></line><text x="8" y="${y + 4}" class="excel-axis-label">${escapeHtml(value)}</text></g>`;
+      return `<g><line x1="${left}" y1="${y}" x2="${left + plotWidth}" y2="${y}" class="excel-grid-line"></line><text x="10" y="${y + 4}" class="excel-axis-label">${escapeHtml(value)}</text></g>`;
     }).join("");
 
+    const barWidth = 14;
     const bars = stats.map((stat, index) => {
       const x = left + index * step + step / 2;
-      const actualHeight = stat.total ? Math.max(3, (stat.total / max) * plotHeight) : 0;
-      const closedHeight = stat.countermeasure ? Math.max(3, (stat.countermeasure / max) * plotHeight) : 0;
+      const actualHeight = stat.total ? Math.max(4, (stat.total / max) * plotHeight) : 0;
+      const closedHeight = stat.countermeasure ? Math.max(4, (stat.countermeasure / max) * plotHeight) : 0;
       const actualY = top + plotHeight - actualHeight;
       const closedY = top + plotHeight - closedHeight;
       const targetY = chartY(stat.target, max, top, plotHeight);
+      const topY = Math.min(actualHeight > 0 ? actualY : targetY, closedHeight > 0 ? closedY : targetY, targetY);
+
+      // Zone label
+      const zoneCode = String(stat.code || "").trim();
+      const zoneFullName = zoneCode.toLowerCase().startsWith("zone") ? zoneCode : `Zone ${zoneCode}`;
+      const zoneLines = splitTextToTwoLines(zoneFullName, 13);
+      const zoneLabelSvg = zoneLines.line2
+        ? `<text x="${x.toFixed(1)}" y="${top + plotHeight + 20}" class="excel-zone-label"><tspan x="${x.toFixed(1)}" dy="0">${escapeHtml(zoneLines.line1)}</tspan><tspan x="${x.toFixed(1)}" dy="12">${escapeHtml(zoneLines.line2)}</tspan></text>`
+        : `<text x="${x.toFixed(1)}" y="${top + plotHeight + 24}" class="excel-zone-label">${escapeHtml(zoneLines.line1)}</text>`;
+
+      // Responsible / Owner label
+      const ownerText = String(stat.responsible || "").trim() || "-";
+      const ownerLines = splitTextToTwoLines(ownerText, 11);
+      const ownerLabelSvg = ownerLines.line2
+        ? `<text x="${x.toFixed(1)}" y="${top + plotHeight + 52}" class="excel-owner-label"><tspan x="${x.toFixed(1)}" dy="0">${escapeHtml(ownerLines.line1)}</tspan><tspan x="${x.toFixed(1)}" dy="11">${escapeHtml(ownerLines.line2)}</tspan></text>`
+        : `<text x="${x.toFixed(1)}" y="${top + plotHeight + 56}" class="excel-owner-label">${escapeHtml(ownerLines.line1)}</text>`;
+
       return `<g>
-        <rect x="${x - 12}" y="${actualY}" width="10" height="${actualHeight}" class="zone-bar-open"><title>Zone ${escapeHtml(stat.code)}: ${escapeHtml(stat.total)} vấn đề</title></rect>
-        <rect x="${x + 2}" y="${closedY}" width="10" height="${closedHeight}" class="zone-bar-closed"><title>Zone ${escapeHtml(stat.code)}: ${escapeHtml(stat.countermeasure || 0)} đối sách triển khai</title></rect>
-        <circle cx="${x}" cy="${targetY}" r="2.6" class="zone-target-dot"></circle>
-        <text x="${x}" y="${Math.min(actualY, closedY, targetY) - 5}" class="excel-bar-label">${escapeHtml(stat.total || "")}</text>
-        <text x="${x}" y="${height - 38}" class="excel-zone-label">Zone ${escapeHtml(stat.code)}</text>
-        <text x="${x}" y="${height - 20}" class="excel-owner-label">${escapeHtml(stat.responsible)}</text>
+        <line x1="${x.toFixed(1)}" y1="${top + plotHeight}" x2="${x.toFixed(1)}" y2="${top + plotHeight + 5}" stroke="#cbd5e1" stroke-width="1"></line>
+        <rect x="${(x - barWidth - 2).toFixed(1)}" y="${actualY.toFixed(1)}" width="${barWidth}" height="${actualHeight.toFixed(1)}" rx="2" class="zone-bar-open"><title>Zone ${escapeHtml(stat.code)}: ${escapeHtml(stat.total)} vấn đề</title></rect>
+        <rect x="${(x + 2).toFixed(1)}" y="${closedY.toFixed(1)}" width="${barWidth}" height="${closedHeight.toFixed(1)}" rx="2" class="zone-bar-closed"><title>Zone ${escapeHtml(stat.code)}: ${escapeHtml(stat.countermeasure || 0)} đối sách triển khai</title></rect>
+        <circle cx="${x.toFixed(1)}" cy="${targetY.toFixed(1)}" r="3.2" class="zone-target-dot"></circle>
+        ${stat.total ? `<text x="${x.toFixed(1)}" y="${(topY - 6).toFixed(1)}" class="excel-bar-label">${escapeHtml(stat.total)}</text>` : ""}
+        ${zoneLabelSvg}
+        ${ownerLabelSvg}
       </g>`;
     }).join("");
 
     return `<div class="excel-chart-panel zone-target-panel">
       <h3>MỤC TIÊU VÀ SỐ VẤN ĐỀ PHÁT HIỆN GIẢI QUYẾT THÁNG ${escapeHtml(month)}/${escapeHtml(year)}</h3>
-      <div class="excel-chart-scroll">
-        <svg class="excel-zone-chart" viewBox="0 0 ${width} ${height}" role="img" aria-label="Mục tiêu và số vấn đề theo zone">
+      <div class="excel-chart-scroll" data-drag-scroll>
+        <svg class="excel-zone-chart" style="min-width: ${width}px; width: 100%; height: auto;" viewBox="0 0 ${width} ${height}" role="img" aria-label="Mục tiêu và số vấn đề theo zone">
           ${grid}
           ${bars}
           <polyline points="${linePoints}" class="zone-target-line"></polyline>
@@ -626,24 +670,24 @@
     }
 
     const colors = config.colors || DEPARTMENT_COLORS;
-    const left = config.left || 54;
-    const top = config.top || 42;
-    const plotHeight = config.plotHeight || 220;
-    const plotWidth = Math.max(config.plotWidth || 660, 12 * Math.max(52, series.length * 8));
+    const left = config.left || 42;
+    const top = config.top || 28;
+    const plotHeight = config.plotHeight || 200;
+    const plotWidth = config.plotWidth || 640;
     const width = left + plotWidth + 24;
-    const height = config.height || 332;
+    const height = config.height || 268;
     const max = Math.max(10, ...series.flatMap((row) => row.monthly));
     const gridValues = Array.from({ length: 6 }, (_, index) => Math.round((max / 5) * index));
     const step = plotWidth / 12;
-    const groupWidth = Math.min(step * 0.8, Math.max(34, series.length * 7));
-    const barGap = 1.2;
-    const barWidth = Math.max(2.5, Math.min(9, (groupWidth - (series.length - 1) * barGap) / series.length));
+    const groupWidth = Math.min(step * 0.82, Math.max(30, series.length * (series.length > 8 ? 3.5 : 7)));
+    const barGap = series.length > 8 ? 0.8 : 1.2;
+    const barWidth = Math.max(2, (groupWidth - (series.length - 1) * barGap) / series.length);
     const axisTitle = config.yAxisTitle || "Số vụ";
     const monthPrefix = Object.prototype.hasOwnProperty.call(config, "monthPrefix") ? config.monthPrefix : "T";
 
     const grid = gridValues.map((value) => {
       const y = chartY(value, max, top, plotHeight);
-      return '<g><line x1="' + left + '" y1="' + y + '" x2="' + (left + plotWidth) + '" y2="' + y + '" class="excel-grid-line"></line><text x="8" y="' + (y + 4) + '" class="excel-axis-label">' + escapeHtml(value) + '</text></g>';
+      return '<g><line x1="' + left + '" y1="' + y + '" x2="' + (left + plotWidth) + '" y2="' + y + '" class="excel-grid-line"></line><text x="6" y="' + (y + 4) + '" class="excel-axis-label">' + escapeHtml(value) + '</text></g>';
     }).join("");
 
     const bars = MONTHS.map((month, monthIndex) => {
@@ -655,44 +699,46 @@
         const y = top + plotHeight - barHeight;
         const labelY = value ? y - 4 : top + plotHeight - 2;
         const fill = colors[seriesIndex % colors.length];
-        const rect = value ? '<rect x="' + x + '" y="' + y + '" width="' + barWidth + '" height="' + barHeight + '" fill="' + fill + '"><title>' + escapeHtml(row.name) + ' T' + month + ': ' + escapeHtml(value) + '</title></rect>' : '';
-        return rect + '<text x="' + (x + barWidth / 2) + '" y="' + labelY + '" class="clustered-label">' + escapeHtml(value) + '</text>';
+        const rect = value ? '<rect x="' + x + '" y="' + y + '" width="' + barWidth + '" height="' + barHeight + '" fill="' + fill + '" rx="1.5"><title>' + escapeHtml(row.name) + ' T' + month + ': ' + escapeHtml(value) + '</title></rect>' : '';
+        return rect + (value && barWidth >= 6 ? '<text x="' + (x + barWidth / 2) + '" y="' + labelY + '" class="clustered-label">' + escapeHtml(value) + '</text>' : '');
       }).join("");
-      return '<g>' + monthBars + '<text x="' + (left + monthIndex * step + step / 2) + '" y="' + (height - 28) + '" class="excel-month-label">' + escapeHtml(monthPrefix + month) + '</text></g>';
+      return '<g>' + monthBars + '<text x="' + (left + monthIndex * step + step / 2) + '" y="' + (height - 18) + '" class="excel-month-label">' + escapeHtml(monthPrefix + month) + '</text></g>';
     }).join("");
 
-    const legend = series.map((row, index) => '<span><i style="background:' + colors[index % colors.length] + '"></i>' + escapeHtml(row.name) + '</span>').join("");
-    const svg = '<svg class="' + escapeHtml(config.className || "") + '" viewBox="0 0 ' + width + ' ' + height + '" role="img" aria-label="' + escapeHtml(config.title || "Biểu đồ tổng hợp") + '">' +
+    const legend = series.map((row, index) => '<span class="factory-legend-item"><i style="background:' + colors[index % colors.length] + '"></i><span class="legend-text">' + escapeHtml(row.name) + '</span></span>').join("");
+    const svg = '<svg class="factory-chart-svg ' + escapeHtml(config.className || "") + '" viewBox="0 0 ' + width + ' ' + height + '" role="img" aria-label="' + escapeHtml(config.title || "Biểu đồ") + '">' +
       grid +
-      '<text transform="rotate(-90 18 ' + (top + plotHeight / 2) + ')" x="18" y="' + (top + plotHeight / 2) + '" class="excel-axis-title">' + escapeHtml(axisTitle) + '</text>' +
+      '<text transform="rotate(-90 14 ' + (top + plotHeight / 2) + ')" x="14" y="' + (top + plotHeight / 2) + '" class="excel-axis-title">' + escapeHtml(axisTitle) + '</text>' +
       bars +
       '</svg>';
 
-    if (config.legendSide) {
-      return '<div class="excel-chart-panel clustered-chart-panel"><h3>' + escapeHtml(config.title) + '</h3><div class="excel-chart-with-legend"><div class="excel-chart-scroll">' + svg + '</div><div class="excel-chart-legend vertical">' + legend + '</div></div></div>';
-    }
-
-    return '<div class="excel-chart-panel clustered-chart-panel"><h3>' + escapeHtml(config.title) + '</h3><div class="excel-chart-scroll">' + svg + '</div><div class="excel-chart-legend">' + legend + '</div></div>';
+    return '<div class="factory-chart-panel">' +
+      '<div class="factory-chart-canvas-wrap">' + svg + '</div>' +
+      '<div class="factory-chart-legend">' + legend + '</div>' +
+    '</div>';
   }
 
   function renderClusteredDepartmentChart(matrix, context) {
     return renderGroupedColumnChart(matrix, {
-      title: "Tổng hợp số nhận diện nguy hiểm / bộ phận",
+      title: "Tổng hợp số nhận diện nguy hiểm / bộ phận (Cột nhóm)",
       className: "factory-clustered-chart",
       colors: DEPARTMENT_COLORS,
-      legendSide: true,
-      monthPrefix: "",
-      plotHeight: 230,
-      plotWidth: 860,
-      height: 348,
+      monthPrefix: "T",
+      plotHeight: 210,
+      plotWidth: 740,
+      height: 270,
       yAxisTitle: "Số vụ",
     }, context);
   }
 
   function renderRankSummaryTable(matrix, context) {
     const escapeHtml = context.escapeHtml;
-    const rows = matrix.map((row) => '<tr><th>' + escapeHtml(row.name) + '</th>' + row.monthly.map((value) => '<td>' + countCell(value) + '</td>').join("") + '</tr>').join("");
-    return '<div class="dashboard-table-wrap rank-summary-wrap"><table class="rank-summary-table"><thead><tr><th colspan="13" class="factory-summary-title">TỔNG HỢP THEO CẤP ĐỘ NGUY HIỂM</th></tr><tr><th>Nhà máy</th>' + MONTHS.map((month) => '<th>T' + month + '</th>').join("") + '</tr></thead><tbody>' + rows + '</tbody></table></div>';
+    const totals = MONTHS.map((_, index) => matrix.reduce((sum, row) => sum + row.monthly[index], 0));
+    const grandTotal = totals.reduce((sum, value) => sum + value, 0);
+    const rows = matrix.map((row) => '<tr><th class="row-label-cell rank-col-label">' + escapeHtml(row.name) + '</th>' + row.monthly.map((value) => '<td>' + countCell(value) + '</td>').join("") + '<td class="col-total-cell">' + countCell(row.total) + '</td></tr>').join("");
+    return '<div class="dashboard-table-wrap rank-summary-wrap" data-drag-scroll><table class="rank-summary-table factory-styled-table">' +
+      '<colgroup><col style="width: 74px; min-width: 68px;">' + MONTHS.map(() => '<col style="width: 30px; min-width: 25px;">').join("") + '<col style="width: 42px; min-width: 38px;"></colgroup>' +
+      '<thead><tr><th class="rank-col-label">Cấp bậc</th>' + MONTHS.map((month) => '<th>T' + month + '</th>').join("") + '<th>Tổng</th></tr></thead><tbody>' + rows + '<tr class="factory-total-row"><th class="row-label-cell rank-col-label">Tổng cộng</th>' + totals.map((v) => '<td>' + countCell(v) + '</td>').join("") + '<td class="col-total-cell">' + countCell(grandTotal) + '</td></tr></tbody></table></div>';
   }
 
   function renderRankChart(matrix, context) {
@@ -701,28 +747,32 @@
       className: "rank-summary-chart",
       colors: RANK_COLORS,
       monthPrefix: "T",
-      plotHeight: 220,
-      plotWidth: 720,
-      height: 332,
+      plotHeight: 200,
+      plotWidth: 640,
+      height: 265,
       yAxisTitle: "SỐ VỤ",
     }, context);
   }
 
   function renderStop6SummaryTable(matrix, context) {
     const escapeHtml = context.escapeHtml;
-    const rows = matrix.map((row) => '<tr><th>' + escapeHtml(row.name) + '</th>' + row.monthly.map((value) => '<td>' + countCell(value) + '</td>').join("") + '<td>' + countCell(row.total) + '</td></tr>').join("");
-    return '<div class="dashboard-table-wrap stop6-summary-wrap"><table class="stop6-summary-table"><thead><tr><th colspan="14" class="factory-summary-title">Tổng Hợp loại tai nạn chỉ định STOP 6</th></tr><tr><th>Nhà máy</th>' + MONTHS.map((month) => '<th>T' + month + '</th>').join("") + '<th>TOTAL</th></tr></thead><tbody>' + rows + '</tbody></table></div>';
+    const totals = MONTHS.map((_, index) => matrix.reduce((sum, row) => sum + row.monthly[index], 0));
+    const grandTotal = totals.reduce((sum, value) => sum + value, 0);
+    const rows = matrix.map((row) => '<tr><th class="row-label-cell stop6-col-label">' + escapeHtml(row.name) + '</th>' + row.monthly.map((value) => '<td>' + countCell(value) + '</td>').join("") + '<td class="col-total-cell">' + countCell(row.total) + '</td></tr>').join("");
+    return '<div class="dashboard-table-wrap stop6-summary-wrap" data-drag-scroll><table class="stop6-summary-table factory-styled-table">' +
+      '<colgroup><col style="width: 82px; min-width: 78px;">' + MONTHS.map(() => '<col style="width: 30px; min-width: 25px;">').join("") + '<col style="width: 42px; min-width: 38px;"></colgroup>' +
+      '<thead><tr><th class="stop6-col-label">Loại STOP 6</th>' + MONTHS.map((month) => '<th>T' + month + '</th>').join("") + '<th>Tổng</th></tr></thead><tbody>' + rows + '<tr class="factory-total-row"><th class="row-label-cell stop6-col-label">Tổng cộng</th>' + totals.map((v) => '<td>' + countCell(v) + '</td>').join("") + '<td class="col-total-cell">' + countCell(grandTotal) + '</td></tr></tbody></table></div>';
   }
 
   function renderStop6Chart(matrix, context) {
     return renderGroupedColumnChart(matrix, {
-      title: "Tổng hợp nhận diện theo loại stop 6",
+      title: "Tổng hợp nhận diện theo loại STOP 6",
       className: "stop6-summary-chart",
       colors: STOP6_COLORS,
       monthPrefix: "T",
-      plotHeight: 230,
-      plotWidth: 840,
-      height: 344,
+      plotHeight: 200,
+      plotWidth: 660,
+      height: 265,
       yAxisTitle: "SỐ VỤ",
     }, context);
   }
@@ -731,15 +781,19 @@
     const { escapeHtml } = context;
     const totals = MONTHS.map((_, index) => matrix.reduce((sum, row) => sum + row.monthly[index], 0));
     const grandTotal = totals.reduce((sum, value) => sum + value, 0);
-    return `<div class="dashboard-table-wrap factory-summary-wrap">
-      <table class="factory-summary-table">
+    return `<div class="dashboard-table-wrap factory-summary-wrap" data-drag-scroll>
+      <table class="factory-summary-table factory-styled-table">
+        <colgroup>
+          <col style="width: 140px; min-width: 135px;">
+          ${MONTHS.map(() => '<col style="width: 32px; min-width: 28px;">').join("")}
+          <col style="width: 44px; min-width: 40px;">
+        </colgroup>
         <thead>
-          <tr><th colspan="14" class="factory-summary-title">TỔNG HỢP THEO SỐ NHẬN DIỆN</th></tr>
-          <tr><th>Tháng</th>${MONTHS.map((month) => `<th>${month}</th>`).join("")}<th></th></tr>
+          <tr><th>Bộ phận</th>${MONTHS.map((month) => `<th>T${month}</th>`).join("")}<th>Tổng</th></tr>
         </thead>
         <tbody>
-          ${matrix.map((row) => `<tr><th>${escapeHtml(row.name)}</th>${row.monthly.map((value) => `<td>${numberCell(value)}</td>`).join("")}<td>${numberCell(row.total)}</td></tr>`).join("")}
-          <tr class="factory-total-row"><th>Tổng</th>${totals.map((value) => `<td>${numberCell(value)}</td>`).join("")}<td>${numberCell(grandTotal)}</td></tr>
+          ${matrix.map((row) => `<tr><th class="row-label-cell">${escapeHtml(row.name)}</th>${row.monthly.map((value) => `<td>${numberCell(value)}</td>`).join("")}<td class="col-total-cell">${numberCell(row.total)}</td></tr>`).join("")}
+          <tr class="factory-total-row"><th class="row-label-cell">Tổng cộng</th>${totals.map((value) => `<td>${numberCell(value)}</td>`).join("")}<td class="col-total-cell">${numberCell(grandTotal)}</td></tr>
         </tbody>
       </table>
     </div>`;
@@ -747,21 +801,21 @@
 
   function renderStackedDepartmentChart(matrix, context) {
     const { escapeHtml } = context;
-    const left = 44;
-    const top = 34;
-    const plotHeight = 210;
+    const left = 40;
+    const top = 26;
+    const plotHeight = 200;
     const plotWidth = 640;
-    const width = 910;
-    const height = 306;
+    const width = left + plotWidth + 24;
+    const height = 265;
     const monthTotals = MONTHS.map((_, monthIndex) => matrix.reduce((sum, row) => sum + row.monthly[monthIndex], 0));
     const max = Math.max(10, ...monthTotals);
     const gridValues = Array.from({ length: 6 }, (_, index) => Math.round((max / 5) * index));
     const step = plotWidth / 12;
-    const barWidth = Math.min(34, step * 0.58);
+    const barWidth = Math.min(30, step * 0.54);
 
     const grid = gridValues.map((value) => {
       const y = chartY(value, max, top, plotHeight);
-      return `<g><line x1="${left}" y1="${y}" x2="${left + plotWidth}" y2="${y}" class="excel-grid-line"></line><text x="8" y="${y + 4}" class="excel-axis-label">${escapeHtml(value)}</text></g>`;
+      return `<g><line x1="${left}" y1="${y}" x2="${left + plotWidth}" y2="${y}" class="excel-grid-line"></line><text x="6" y="${y + 4}" class="excel-axis-label">${escapeHtml(value)}</text></g>`;
     }).join("");
 
     const bars = MONTHS.map((month, monthIndex) => {
@@ -770,46 +824,71 @@
         const value = row.monthly[monthIndex];
         const segmentHeight = value ? Math.max(2, (value / max) * plotHeight) : 0;
         currentY -= segmentHeight;
-        return value ? `<rect x="${left + monthIndex * step + (step - barWidth) / 2}" y="${currentY}" width="${barWidth}" height="${segmentHeight}" fill="${DEPARTMENT_COLORS[rowIndex % DEPARTMENT_COLORS.length]}"><title>${escapeHtml(row.name)} T${month}: ${value}</title></rect>${segmentHeight > 15 ? `<text x="${left + monthIndex * step + step / 2}" y="${currentY + segmentHeight / 2 + 4}" class="stacked-label">${value}</text>` : ""}` : "";
+        return value ? `<rect x="${left + monthIndex * step + (step - barWidth) / 2}" y="${currentY}" width="${barWidth}" height="${segmentHeight}" fill="${DEPARTMENT_COLORS[rowIndex % DEPARTMENT_COLORS.length]}"><title>${escapeHtml(row.name)} T${month}: ${value}</title></rect>${segmentHeight > 14 ? `<text x="${left + monthIndex * step + step / 2}" y="${currentY + segmentHeight / 2 + 4}" class="stacked-label">${value}</text>` : ""}` : "";
       }).join("");
-      return `<g>${parts}<text x="${left + monthIndex * step + step / 2}" y="${height - 28}" class="excel-month-label">${month}</text></g>`;
+      return `<g>${parts}<text x="${left + monthIndex * step + step / 2}" y="${height - 18}" class="excel-month-label">T${month}</text></g>`;
     }).join("");
 
-    const legend = matrix.map((row, index) => `<span><i style="background:${DEPARTMENT_COLORS[index % DEPARTMENT_COLORS.length]}"></i>${escapeHtml(row.name)}</span>`).join("");
+    const legend = matrix.map((row, index) => `<span class="factory-legend-item"><i style="background:${DEPARTMENT_COLORS[index % DEPARTMENT_COLORS.length]}"></i><span class="legend-text">${escapeHtml(row.name)}</span></span>`).join("");
 
-    return `<div class="excel-chart-panel stacked-chart-panel">
-      <h3>Tổng hợp số nhận diện nguy hiểm / bộ phận</h3>
-      <div class="excel-chart-with-legend">
-        <svg class="factory-stacked-chart" viewBox="0 0 ${width} ${height}" role="img" aria-label="Stacked bar theo bộ phận">
+    return `<div class="factory-chart-panel">
+      <div class="factory-chart-canvas-wrap">
+        <svg class="factory-chart-svg factory-stacked-chart" viewBox="0 0 ${width} ${height}" role="img" aria-label="Biểu đồ xếp chồng theo bộ phận">
           ${grid}
           ${bars}
         </svg>
-        <div class="excel-chart-legend vertical">${legend}</div>
       </div>
+      <div class="factory-chart-legend">${legend}</div>
     </div>`;
   }
 
-  function renderProgressTable(monthTotals, closedTotals) {
+  function renderProgressTable(monthTotals, closedTotals, year = 2026, context = {}) {
+    let lastDataMonth = 0;
+    MONTHS.forEach((m, idx) => {
+      if (Number(monthTotals[idx] || 0) > 0 || Number(closedTotals[idx] || 0) > 0) {
+        lastDataMonth = m;
+      }
+    });
+
     let cumulative = 0;
     let cumulativeClosed = 0;
     const rows = MONTHS.map((month, index) => {
-      cumulative += monthTotals[index];
-      cumulativeClosed += closedTotals[index];
+      const isPastOrCurrent = month <= (lastDataMonth || 12);
+      cumulative += Number(monthTotals[index] || 0);
+      cumulativeClosed += Number(closedTotals[index] || 0);
       const ratio = cumulative ? cumulativeClosed / cumulative : 0;
+      const rateText = isPastOrCurrent ? formatPercent(ratio) : "0%";
+      const targetVal = context?.getSafetyMonthlyTarget ? context.getSafetyMonthlyTarget(year, month) : 100;
+
       return `<tr>
-        <th>T${month}</th>
-        <td>${numberCell(monthTotals[index])}</td>
-        <td>${numberCell(closedTotals[index])}</td>
-        <td>${numberCell(cumulative)}</td>
-        <td>${numberCell(cumulativeClosed)}</td>
-        <td>${formatPercent(ratio)}</td>
-        <td>100%</td>
+        <th class="row-label-cell progress-col-month">T${month}</th>
+        <td class="progress-col-num">${numberCell(monthTotals[index])}</td>
+        <td class="progress-col-num">${numberCell(closedTotals[index])}</td>
+        <td class="progress-col-cum">${isPastOrCurrent ? numberCell(cumulative) : ""}</td>
+        <td class="progress-col-cum">${isPastOrCurrent ? numberCell(cumulativeClosed) : ""}</td>
+        <td class="progress-col-rate col-highlight-rate">${rateText}</td>
+        <td class="progress-col-target">
+          <div class="progress-target-cell">
+            <input class="progress-target-input" type="number" min="0" max="100" step="1" value="${targetVal}" placeholder="100" aria-label="Mục tiêu tháng ${month} năm ${year}" data-progress-target-input data-year="${year}" data-month="${month}">
+            <span class="progress-target-unit">%</span>
+          </div>
+        </td>
       </tr>`;
     }).join("");
 
-    return `<div class="dashboard-table-wrap progress-summary-wrap">
-      <table class="factory-progress-table">
-        <thead><tr><th>Nhà máy</th><th>Số nhận diện</th><th>Đối sách triển khai</th><th>Tích lũy số nhận diện</th><th>Tích lũy đối sách triển khai</th><th>Tỉ lệ triển khai đối sách</th><th>Mục tiêu</th></tr></thead>
+    return `<div class="dashboard-table-wrap progress-summary-wrap" data-drag-scroll>
+      <table class="factory-progress-table factory-styled-table">
+        <thead>
+          <tr>
+            <th class="progress-col-month">Tháng</th>
+            <th class="progress-col-num">Phát hiện</th>
+            <th class="progress-col-num">Đối sách</th>
+            <th class="progress-col-cum">Tích lũy<br>phát hiện</th>
+            <th class="progress-col-cum">Tích lũy<br>đối sách</th>
+            <th class="progress-col-rate">Tỉ lệ<br>đối sách</th>
+            <th class="progress-col-target">Mục tiêu</th>
+          </tr>
+        </thead>
         <tbody>${rows}</tbody>
       </table>
     </div>`;
@@ -817,12 +896,19 @@
 
   function renderProgressChart(monthTotals, closedTotals, context) {
     const escapeHtml = context.escapeHtml;
-    const left = 46;
+    const left = 42;
     const top = 26;
-    const plotHeight = 196;
+    const plotHeight = 190;
     const plotWidth = 640;
-    const width = 740;
-    const height = 282;
+    const width = left + plotWidth + 24;
+    const height = 265;
+    let lastDataMonth = 0;
+    MONTHS.forEach((m, idx) => {
+      if (Number(monthTotals[idx] || 0) > 0 || Number(closedTotals[idx] || 0) > 0) {
+        lastDataMonth = m;
+      }
+    });
+
     const cumulative = [];
     const cumulativeClosed = [];
     monthTotals.reduce((sum, value, index) => {
@@ -838,39 +924,41 @@
     const max = Math.max(10, ...monthTotals, ...closedTotals, ...cumulative, ...cumulativeClosed);
     const gridValues = Array.from({ length: 6 }, (_, index) => Math.round((max / 5) * index));
     const step = plotWidth / 12;
-    const barWidth = Math.min(16, step * 0.26);
+    const barWidth = Math.min(13, step * 0.24);
     const grid = gridValues.map((value) => {
       const y = chartY(value, max, top, plotHeight);
-      return '<g><line x1="' + left + '" y1="' + y + '" x2="' + (left + plotWidth) + '" y2="' + y + '" class="excel-grid-line"></line><text x="8" y="' + (y + 4) + '" class="excel-axis-label">' + escapeHtml(value) + '</text></g>';
+      return '<g><line x1="' + left + '" y1="' + y + '" x2="' + (left + plotWidth) + '" y2="' + y + '" class="excel-grid-line"></line><text x="6" y="' + (y + 4) + '" class="excel-axis-label">' + escapeHtml(value) + '</text></g>';
     }).join("");
     const bars = MONTHS.map((month, index) => {
       const x = left + index * step + step / 2;
       const actualH = monthTotals[index] ? Math.max(3, (monthTotals[index] / max) * plotHeight) : 0;
       const closedH = closedTotals[index] ? Math.max(3, (closedTotals[index] / max) * plotHeight) : 0;
       return '<g>' +
-        '<rect x="' + (x - barWidth - 2) + '" y="' + (top + plotHeight - actualH) + '" width="' + barWidth + '" height="' + actualH + '" class="progress-actual"><title>T' + month + ': ' + monthTotals[index] + '</title></rect>' +
-        '<rect x="' + (x + 2) + '" y="' + (top + plotHeight - closedH) + '" width="' + barWidth + '" height="' + closedH + '" class="progress-closed"><title>T' + month + ': ' + closedTotals[index] + '</title></rect>' +
-        '<text x="' + x + '" y="' + (height - 26) + '" class="excel-month-label">T' + month + '</text>' +
+        '<rect x="' + (x - barWidth - 1) + '" y="' + (top + plotHeight - actualH) + '" width="' + barWidth + '" height="' + actualH + '" class="progress-actual" rx="1"><title>T' + month + ' Phát hiện: ' + monthTotals[index] + '</title></rect>' +
+        '<rect x="' + (x + 1) + '" y="' + (top + plotHeight - closedH) + '" width="' + barWidth + '" height="' + closedH + '" class="progress-closed" rx="1"><title>T' + month + ' Đã khắc phục: ' + closedTotals[index] + '</title></rect>' +
+        '<text x="' + x + '" y="' + (height - 18) + '" class="excel-month-label">T' + month + '</text>' +
       '</g>';
     }).join("");
-    const line = cumulative.map((value, index) => (left + index * step + step / 2).toFixed(1) + ',' + chartY(value, max, top, plotHeight).toFixed(1)).join(" ");
-    const closedLine = cumulativeClosed.map((value, index) => (left + index * step + step / 2).toFixed(1) + ',' + chartY(value, max, top, plotHeight).toFixed(1)).join(" ");
-    const labels = cumulative.map((value, index) => '<text x="' + (left + index * step + step / 2) + '" y="' + (chartY(value, max, top, plotHeight) - 8) + '" class="excel-bar-label">' + (value || '') + '</text>').join("");
-    const closedLabels = cumulativeClosed.map((value, index) => '<text x="' + (left + index * step + step / 2) + '" y="' + (chartY(value, max, top, plotHeight) + 14) + '" class="excel-bar-label">' + (value || '') + '</text>').join("");
+    const activeIndices = MONTHS.map((m, i) => m <= (lastDataMonth || 12) ? i : -1).filter((i) => i >= 0);
+    const line = activeIndices.length ? activeIndices.map((index) => (left + index * step + step / 2).toFixed(1) + ',' + chartY(cumulative[index], max, top, plotHeight).toFixed(1)).join(" ") : "";
+    const closedLine = activeIndices.length ? activeIndices.map((index) => (left + index * step + step / 2).toFixed(1) + ',' + chartY(cumulativeClosed[index], max, top, plotHeight).toFixed(1)).join(" ") : "";
+    const labels = activeIndices.map((index) => '<text x="' + (left + index * step + step / 2) + '" y="' + (chartY(cumulative[index], max, top, plotHeight) - 7) + '" class="excel-bar-label">' + (cumulative[index] || '') + '</text>').join("");
+    const closedLabels = activeIndices.map((index) => '<text x="' + (left + index * step + step / 2) + '" y="' + (chartY(cumulativeClosed[index], max, top, plotHeight) + 13) + '" class="excel-bar-label">' + (cumulativeClosed[index] || '') + '</text>').join("");
 
-    return '<div class="excel-chart-panel progress-chart-panel">' +
-      '<h3>TỔNG HỢP NHẬN DIỆN VÀ ĐỐI SÁCH TRIỂN KHAI</h3>' +
-      '<svg class="factory-progress-chart" viewBox="0 0 ' + width + ' ' + height + '" role="img" aria-label="Chart tích lũy số nhận diện và đối sách">' +
-        grid + bars +
-        '<polyline points="' + line + '" class="progress-cumulative-line"></polyline>' +
-        '<polyline points="' + closedLine + '" class="progress-closed-line"></polyline>' +
-        labels + closedLabels +
-      '</svg>' +
-      '<div class="excel-chart-legend">' +
-        '<span><i class="legend-actual"></i>Số nhận diện</span>' +
-        '<span><i class="legend-counter"></i>Đối sách triển khai</span>' +
-        '<span><i class="legend-cumulative"></i>Tích lũy số nhận diện</span>' +
-        '<span><i class="legend-cumulative-closed"></i>Tích lũy đối sách triển khai</span>' +
+    return '<div class="factory-chart-panel">' +
+      '<div class="factory-chart-canvas-wrap">' +
+        '<svg class="factory-chart-svg factory-progress-chart" viewBox="0 0 ' + width + ' ' + height + '" role="img" aria-label="Biểu đồ tiến độ tích lũy">' +
+          grid + bars +
+          (line ? '<polyline points="' + line + '" class="progress-cumulative-line"></polyline>' : '') +
+          (closedLine ? '<polyline points="' + closedLine + '" class="progress-closed-line"></polyline>' : '') +
+          labels + closedLabels +
+        '</svg>' +
+      '</div>' +
+      '<div class="factory-chart-legend">' +
+        '<span class="factory-legend-item"><i class="legend-actual"></i>Số nhận diện</span>' +
+        '<span class="factory-legend-item"><i class="legend-counter"></i>Đối sách triển khai</span>' +
+        '<span class="factory-legend-item"><i class="legend-cumulative"></i>Tích lũy số nhận diện</span>' +
+        '<span class="factory-legend-item"><i class="legend-cumulative-closed"></i>Tích lũy đối sách</span>' +
       '</div>' +
     '</div>';
   }
@@ -878,16 +966,22 @@
   function renderMonthlyRateChart(monthTotals, closedTotals, year, context) {
     const escapeHtml = context.escapeHtml;
     const left = 46;
-    const top = 30;
-    const plotHeight = 214;
-    const plotWidth = 760;
-    const width = 850;
-    const height = 330;
+    const top = 26;
+    const plotHeight = 190;
+    const plotWidth = 640;
+    const width = left + plotWidth + 24;
+    const height = 265;
     const max = 1.2;
     const gridValues = [0, 0.2, 0.4, 0.6, 0.8, 1, 1.2];
     const step = plotWidth / 12;
-    const barWidth = Math.min(22, step * 0.34);
-    const targetY = chartY(1, max, top, plotHeight);
+    const barWidth = Math.min(22, step * 0.38);
+    let lastDataMonth = 0;
+    MONTHS.forEach((m, idx) => {
+      if (Number(monthTotals[idx] || 0) > 0 || Number(closedTotals[idx] || 0) > 0) {
+        lastDataMonth = m;
+      }
+    });
+
     let cumulativeTotal = 0;
     let cumulativeClosed = 0;
     const cumulativeRates = MONTHS.map((month, index) => {
@@ -895,38 +989,90 @@
       cumulativeClosed += Number(closedTotals[index] || 0);
       return cumulativeTotal ? cumulativeClosed / cumulativeTotal : 0;
     });
+
+    const targetValues = MONTHS.map((m) => {
+      return context?.getSafetyMonthlyTarget ? context.getSafetyMonthlyTarget(year, m) : 100;
+    });
+
+    const targetPoints = [];
+    const firstTargetRatio = (targetValues[0] || 100) / 100;
+    targetPoints.push(`${left.toFixed(1)},${chartY(firstTargetRatio, max, top, plotHeight).toFixed(1)}`);
+    MONTHS.forEach((m, idx) => {
+      const ratio = (targetValues[idx] || 100) / 100;
+      const x = left + idx * step + step / 2;
+      const y = chartY(ratio, max, top, plotHeight);
+      targetPoints.push(`${x.toFixed(1)},${y.toFixed(1)}`);
+    });
+    const lastTargetRatio = (targetValues[11] || 100) / 100;
+    targetPoints.push(`${(left + plotWidth).toFixed(1)},${chartY(lastTargetRatio, max, top, plotHeight).toFixed(1)}`);
+
+    const targetPolyline = `<polyline points="${targetPoints.join(' ')}" class="rate-target-line"></polyline>`;
+
+    const targetDots = MONTHS.map((month, index) => {
+      const val = targetValues[index];
+      const ratio = val / 100;
+      const x = left + index * step + step / 2;
+      const y = chartY(ratio, max, top, plotHeight);
+      const isCustom = val !== 100;
+      const dot = `<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="3.5" class="rate-target-dot"><title>Mục tiêu T${month}: ${val}%</title></circle>`;
+      const label = isCustom
+        ? `<text x="${x.toFixed(1)}" y="${(y - 7).toFixed(1)}" class="excel-bar-label font-bold" style="fill:#ea580c;font-size:11px;" text-anchor="middle">${val}%</text>`
+        : '';
+      return dot + label;
+    }).join("");
+
+    const all100 = targetValues.every((v) => v === 100);
+    const legendTargetText = all100 ? "Mục tiêu (100%)" : "Mục tiêu theo tháng (%)";
+
     const grid = gridValues.map((value) => {
       const y = chartY(value, max, top, plotHeight);
-      return '<g><line x1="' + left + '" y1="' + y + '" x2="' + (left + plotWidth) + '" y2="' + y + '" class="excel-grid-line"></line><text x="8" y="' + (y + 4) + '" class="excel-axis-label">' + formatPercent(value) + '</text></g>';
+      return '<g><line x1="' + left + '" y1="' + y + '" x2="' + (left + plotWidth) + '" y2="' + y + '" class="excel-grid-line"></line><text x="6" y="' + (y + 4) + '" class="excel-axis-label">' + formatPercent(value) + '</text></g>';
     }).join("");
     const bars = MONTHS.map((month, index) => {
-      const rate = cumulativeRates[index] || 0;
+      const hasData = month <= (lastDataMonth || 12);
+      const rate = hasData ? (cumulativeRates[index] || 0) : null;
       const x = left + index * step + step / 2;
-      const barHeight = rate ? Math.max(3, (Math.min(rate, max) / max) * plotHeight) : 0;
-      const fill = index % 2 === 0 ? "#00b0f0" : "#ffff00";
+      const barHeight = rate !== null && rate > 0 ? Math.max(3, (Math.min(rate, max) / max) * plotHeight) : 0;
+      const fill = index % 2 === 0 ? "#0284c7" : "#38bdf8";
+
+      const barElement = rate !== null
+        ? '<rect x="' + (x - barWidth / 2) + '" y="' + (top + plotHeight - barHeight) + '" width="' + barWidth + '" height="' + barHeight + '" class="rate-actual" rx="2" style="fill:' + fill + '"><title>T' + month + ': ' + formatPercent(rate) + '</title></rect>' +
+          '<text x="' + x + '" y="' + (top + plotHeight - Math.max(barHeight, 3) - 7) + '" class="excel-bar-label font-bold">' + formatPercent(rate) + '</text>'
+        : '';
+
       return '<g>' +
-        '<rect x="' + (x - barWidth / 2) + '" y="' + (top + plotHeight - barHeight) + '" width="' + barWidth + '" height="' + barHeight + '" class="rate-actual" style="fill:' + fill + '"><title>T' + month + ': ' + formatPercent(rate) + '</title></rect>' +
-        '<text x="' + x + '" y="' + (top + plotHeight - Math.max(barHeight, 3) - 8) + '" class="excel-bar-label">' + formatPercent(rate) + '</text>' +
-        '<text x="' + x + '" y="' + (height - 34) + '" class="excel-month-label">T' + month + '</text>' +
+        barElement +
+        '<text x="' + x + '" y="' + (height - 18) + '" class="excel-month-label">T' + month + '</text>' +
       '</g>';
     }).join("");
 
-    return '<div class="excel-chart-panel rate-chart-panel">' +
-      '<h3>Tỉ Lệ Triển Khai Đối Sách AT ' + escapeHtml(year) + '</h3>' +
-      '<div class="excel-chart-scroll"><svg class="monthly-rate-chart" viewBox="0 0 ' + width + ' ' + height + '" role="img" aria-label="Tỉ lệ lũy kế triển khai đối sách theo tháng">' +
-        grid + bars + '<line x1="' + left + '" y1="' + targetY + '" x2="' + (left + plotWidth) + '" y2="' + targetY + '" class="rate-target-line"></line>' +
-      '</svg></div>' +
-      '<div class="excel-chart-legend"><span><i class="legend-rate"></i>Tỉ lệ triển khai đối sách</span><span><i class="legend-target-line"></i>Mục tiêu</span></div>' +
+    return '<div class="factory-chart-panel">' +
+      '<div class="factory-chart-canvas-wrap">' +
+        '<svg class="factory-chart-svg monthly-rate-chart" viewBox="0 0 ' + width + ' ' + height + '" role="img" aria-label="Tỉ lệ lũy kế triển khai đối sách theo tháng">' +
+          grid + bars + targetPolyline + targetDots +
+        '</svg>' +
+      '</div>' +
+      '<div class="factory-chart-legend">' +
+        '<span class="factory-legend-item"><i class="legend-rate"></i>Tỉ lệ triển khai đối sách (%)</span>' +
+        '<span class="factory-legend-item"><i class="legend-target-line"></i>' + escapeHtml(legendTargetText) + '</span>' +
+      '</div>' +
     '</div>';
   }
 
-
   function renderDepartmentTabs(groups, selectedDepartment, year, context) {
     const { escapeHtml } = context;
-    const summaryLabel = "TỔNG HỢP " + (year || new Date().getFullYear());
-    return '<div class="safety-sheet-tabs">' +
-      '<button class="safety-sheet-tab summary-tab ' + (!selectedDepartment ? "is-active" : "") + '" style="--tab-color:#00b050" type="button" data-action="set-safety-department-filter" data-id="">' + escapeHtml(summaryLabel) + '</button>' +
-      groups.map((group, index) => '<button class="safety-sheet-tab ' + (group.name === selectedDepartment ? "is-active" : "") + '" style="--tab-color:' + TAB_COLORS[index % TAB_COLORS.length] + '" type="button" data-action="set-safety-department-filter" data-id="' + escapeHtml(group.name) + '">' + escapeHtml(group.name) + '</button>').join("") +
+    const summaryLabel = "TẤT CẢ BỘ PHẬN (" + (year || new Date().getFullYear()) + ")";
+    return '<div class="factory-dept-pills-bar">' +
+      '<button class="factory-dept-pill ' + (!selectedDepartment ? "is-active" : "") + '" type="button" data-action="set-safety-department-filter" data-id="">' +
+        '<i class="fa-solid fa-layer-group"></i> ' + escapeHtml(summaryLabel) +
+      '</button>' +
+      groups.map((group) => {
+        const areaCount = group.areas ? group.areas.length : 0;
+        return '<button class="factory-dept-pill ' + (group.name === selectedDepartment ? "is-active" : "") + '" type="button" data-action="set-safety-department-filter" data-id="' + escapeHtml(group.name) + '">' +
+          '<i class="fa-regular fa-building"></i> ' + escapeHtml(group.name) +
+          (areaCount ? '<span class="dept-count-badge">' + areaCount + '</span>' : '') +
+        '</button>';
+      }).join("") +
     '</div>';
   }
 
@@ -1041,7 +1187,6 @@
       <tbody>${rows.length ? rows.map((row, index) => renderSafetyRow(row, startIndex + index + 1, context)).join("") : `<tr><td colspan="28" class="empty-cell">${escapeHtml(emptyMessage)}</td></tr>`}</tbody>`;
   }
 
-
   function renderAnnualFactoryCard(filters, yearRows, groups, selectedDepartment, reportPeriod, context) {
     const escapeHtml = context.escapeHtml;
     const matrix = buildDepartmentMatrix(groups, yearRows, context);
@@ -1054,7 +1199,7 @@
     const selectedAreaIds = new Set(selectedAreas.map((area) => area.id));
     const detailRows = selectedAreaIds.size ? yearRows.filter((row) => selectedAreaIds.has(row.area.id)) : [];
     const detailTotals = selectedAreaIds.size ? buildZoneStats(detailRows, selectedAreas, reportPeriod?.id || "", context) : [];
-    const summaryLabel = selectedGroup ? selectedGroup.name : "Tổng hợp " + filters.year;
+    const summaryLabel = selectedGroup ? selectedGroup.name : "Tất cả bộ phận năm " + filters.year;
     const emptyDetailMessage = selectedGroup
       ? "Chưa có bảng đánh giá an toàn của " + selectedDepartment + " trong năm " + filters.year + "."
       : "Chưa có bảng đánh giá an toàn trong năm " + filters.year + ".";
@@ -1064,47 +1209,380 @@
     const detailPagination = getPaginationState("factory", detailPageKey, detailRows.length);
     const pagedDetailRows = detailRows.slice(detailPagination.startIndex, detailPagination.endIndex);
     const detailPager = renderSafetyPager("factory", detailPagination, detailRows.length, context);
+
+    // Calculate Executive KPI summary values
+    const totalDetectedYtd = monthTotals.reduce((sum, v) => sum + v, 0);
+    const totalCountermeasureYtd = countermeasureTotals.reduce((sum, v) => sum + v, 0);
+    const completionRatePct = totalDetectedYtd ? Math.round((totalCountermeasureYtd / totalDetectedYtd) * 100) : 0;
+    
+    // High Risk Rank A
+    const rankARow = rankMatrix.find((r) => String(r.name).toUpperCase().includes("A"));
+    const rankACount = rankARow ? rankARow.total : 0;
+    
+    // Top STOP 6 hazard
+    const stop6Sorted = [...stop6Matrix].sort((a, b) => (b.total || 0) - (a.total || 0));
+    const topStop6 = stop6Sorted[0]?.total > 0 ? stop6Sorted[0] : null;
+    const topStop6Text = topStop6 ? `${topStop6.name} (${topStop6.total} vụ)` : "Không có";
+
+    // Top department
+    const deptSorted = [...matrix].sort((a, b) => (b.total || 0) - (a.total || 0));
+    const topDept = deptSorted[0]?.total > 0 ? deptSorted[0] : null;
+    const topDeptText = topDept ? `${topDept.name} (${topDept.total} vụ)` : "Không có";
+
     const departmentSummaryHtml = '<div class="dashboard-table-wrap department-zone-summary-wrap" data-drag-scroll>' +
-      '<table class="department-zone-summary-table">' +
-        '<thead><tr><th>Zone</th><th>Bộ phận</th><th>Mục tiêu tháng</th><th>Số nhận diện năm</th><th>Chưa xử lý</th><th>Đã xử lý</th><th>Đang xử lý</th><th>Quá hạn</th><th>Đối sách triển khai</th></tr></thead>' +
-        '<tbody>' + (detailTotals.length ? detailTotals.map((stat) => '<tr><th>Zone ' + escapeHtml(stat.code) + '</th><td>' + escapeHtml(stat.department) + '</td><td>' + escapeHtml(stat.target || "") + '</td><td>' + numberCell(stat.total) + '</td><td>' + numberCell(stat.statusCounts.open) + '</td><td>' + numberCell(stat.statusCounts.closed) + '</td><td>' + numberCell(stat.statusCounts.in_progress) + '</td><td>' + numberCell(stat.statusCounts.overdue) + '</td><td>' + numberCell(stat.countermeasure) + '</td></tr>').join("") : '<tr><td colspan="9" class="empty-cell">Chưa có bộ phận để tổng hợp.</td></tr>') + '</tbody>' +
+      '<table class="department-zone-summary-table factory-styled-table">' +
+        '<thead><tr><th>Zone</th><th style="text-align: left; padding-left: 14px; min-width: 120px;">Bộ phận</th><th>Mục tiêu/tháng</th><th>Số nhận diện năm</th><th>Chưa xử lý</th><th>Đã xử lý</th><th>Đang xử lý</th><th>Quá hạn</th><th>Đối sách</th></tr></thead>' +
+        '<tbody>' + (detailTotals.length ? detailTotals.map((stat) => '<tr><th class="row-label-cell">Zone ' + escapeHtml(stat.code) + '</th><td class="dept-name-cell">' + escapeHtml(stat.department) + '</td><td>' + escapeHtml(stat.target || "") + '</td><td><strong>' + numberCell(stat.total) + '</strong></td><td><span class="badge-status-open">' + numberCell(stat.statusCounts.open) + '</span></td><td><span class="badge-status-closed">' + numberCell(stat.statusCounts.closed) + '</span></td><td><span class="badge-status-prog">' + numberCell(stat.statusCounts.in_progress) + '</span></td><td><span class="badge-status-overdue">' + numberCell(stat.statusCounts.overdue) + '</span></td><td>' + numberCell(stat.countermeasure) + '</td></tr>').join("") : '<tr><td colspan="9" class="empty-cell">Chưa có bộ phận để tổng hợp.</td></tr>') + '</tbody>' +
       '</table>' +
     '</div>';
+
     const departmentDetailHtml = detailPager +
       '<div class="table-wrap wide-table-wrap annual-department-table-wrap" data-drag-scroll>' +
         '<table class="safety-table annual-detail-safety-table">' + renderSafetyTableHtml(pagedDetailRows, reportPeriod, context, emptyDetailMessage, detailPagination.startIndex) + '</table>' +
       '</div>' +
       detailPager;
 
-    return '<section class="dashboard-card wide excel-report-card factory-risk-card">' +
-      '<div class="section-heading excel-title-heading"><h2>TỔNG HỢP NGUY CƠ MẤT AN TOÀN NHÀ MÁY</h2><span>Năm ' + escapeHtml(filters.year) + '</span></div>' +
-      '<div class="factory-report-layout">' +
-        copyableReportBlock(copyPrefix + "summary-table", renderFactorySummaryTable(matrix, context), "Copy", context) +
-        copyableReportBlock(copyPrefix + "department-stacked-chart", renderStackedDepartmentChart(matrix, context), "Copy", context) +
-      '</div>' +
-      '<div class="factory-clustered-layout">' +
-        copyableReportBlock(copyPrefix + "department-clustered-chart", renderClusteredDepartmentChart(matrix, context), "Copy", context) +
-        copyableReportBlock(copyPrefix + "monthly-rate-chart", renderMonthlyRateChart(monthTotals, countermeasureTotals, filters.year, context), "Copy", context) +
-      '</div>' +
-      '<div class="annual-chart-grid">' +
-        copyableReportBlock(copyPrefix + "progress-table", renderProgressTable(monthTotals, countermeasureTotals), "Copy", context) +
-        copyableReportBlock(copyPrefix + "progress-chart", renderProgressChart(monthTotals, countermeasureTotals, context), "Copy", context) +
-      '</div>' +
-      '<div class="annual-analysis-grid">' +
-        copyableReportBlock(copyPrefix + "rank-table", renderRankSummaryTable(rankMatrix, context), "Copy", context) +
-        copyableReportBlock(copyPrefix + "rank-chart", renderRankChart(rankMatrix, context), "Copy", context) +
-      '</div>' +
-      '<div class="annual-analysis-grid stop6-analysis-grid">' +
-        copyableReportBlock(copyPrefix + "stop6-table", renderStop6SummaryTable(stop6Matrix, context), "Copy", context) +
-        copyableReportBlock(copyPrefix + "stop6-chart", renderStop6Chart(stop6Matrix, context), "Copy", context) +
-      '</div>' +
-      '<div class="department-year-summary">' +
-        '<div class="section-heading"><h3>Tổng hợp từng bộ phận trong năm</h3><span>' + escapeHtml(summaryLabel) + '</span></div>' +
-        renderDepartmentTabs(groups, selectedDepartment, filters.year, context) +
-        copyableReportBlock(copyPrefix + "department-summary-" + safeDomId(selectedDepartment || "tong-hop"), departmentSummaryHtml, "Copy", context) +
-        copyableReportBlock(copyPrefix + "department-detail-" + safeDomId(selectedDepartment || "tong-hop"), departmentDetailHtml, "Copy", context) +
-      '</div>' +
-    '</section>';
+    let currentTab = activeFactoryTab || "overview";
+    if (selectedDepartment && activeFactoryTab !== "all") {
+      currentTab = "detail";
+    }
+    const currentChartView = activeDepartmentChartView || "stacked";
+
+    return `
+      <section class="dashboard-card wide excel-report-card factory-risk-dashboard-card">
+        
+        <!-- Header: Main Title & Action Tools -->
+        <div class="factory-dashboard-top-header">
+          <div class="top-header-left">
+            <span class="top-header-icon"><i class="fa-solid fa-industry"></i></span>
+            <div>
+              <h2 class="top-header-title">TỔNG HỢP NGUY CƠ MẤT AN TOÀN NHÀ MÁY</h2>
+              <span class="top-header-sub">Năm Báo Cáo: <strong class="text-brand-400 font-mono">${escapeHtml(filters.year)}</strong> · Toàn Nhà Máy</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- KPI Summary Cards Row (Executive Metrics) -->
+        <div class="factory-kpi-grid">
+          <div class="factory-kpi-card">
+            <div class="kpi-card-header">
+              <span class="kpi-icon-wrap icon-amber"><i class="fa-solid fa-triangle-exclamation"></i></span>
+              <span class="kpi-badge">Tổng nguy cơ</span>
+            </div>
+            <div class="kpi-main">
+              <strong class="kpi-value font-mono">${totalDetectedYtd}</strong>
+              <span class="kpi-label">Tổng nhận diện nguy cơ</span>
+            </div>
+            <div class="kpi-subtext"><i class="fa-regular fa-calendar-check"></i> Toàn bộ 12 tháng năm ${escapeHtml(filters.year)}</div>
+          </div>
+
+          <div class="factory-kpi-card">
+            <div class="kpi-card-header">
+              <span class="kpi-icon-wrap icon-blue"><i class="fa-solid fa-shield-halved"></i></span>
+              <span class="kpi-badge">Đã xử lý</span>
+            </div>
+            <div class="kpi-main">
+              <strong class="kpi-value font-mono">${totalCountermeasureYtd}</strong>
+              <span class="kpi-label">Đối sách đã triển khai</span>
+            </div>
+            <div class="kpi-subtext"><i class="fa-solid fa-arrows-spin"></i> Biện pháp khắc phục đã duyệt</div>
+          </div>
+
+          <div class="factory-kpi-card">
+            <div class="kpi-card-header">
+              <span class="kpi-icon-wrap icon-green"><i class="fa-solid fa-bullseye"></i></span>
+              <span class="kpi-badge">Mục tiêu 100%</span>
+            </div>
+            <div class="kpi-main">
+              <strong class="kpi-value font-mono text-emerald-400">${completionRatePct}%</strong>
+              <span class="kpi-label">Tỉ lệ hoàn thành đối sách</span>
+            </div>
+            <div class="kpi-progress-bar">
+              <div class="kpi-progress-fill" style="width: ${Math.min(100, completionRatePct)}%"></div>
+            </div>
+          </div>
+
+          <div class="factory-kpi-card">
+            <div class="kpi-card-header">
+              <span class="kpi-icon-wrap icon-rose"><i class="fa-solid fa-circle-exclamation"></i></span>
+              <span class="kpi-badge badge-danger">Cấp A</span>
+            </div>
+            <div class="kpi-main">
+              <strong class="kpi-value font-mono text-rose-400">${rankACount}</strong>
+              <span class="kpi-label">Nguy cơ nghiêm trọng (Rank A)</span>
+            </div>
+            <div class="kpi-subtext"><i class="fa-solid fa-bell"></i> Ưu tiên giám sát & giải quyết ngay</div>
+          </div>
+
+          <div class="factory-kpi-card">
+            <div class="kpi-card-header">
+              <span class="kpi-icon-wrap icon-purple"><i class="fa-solid fa-chart-pie"></i></span>
+              <span class="kpi-badge">Top STOP 6</span>
+            </div>
+            <div class="kpi-main">
+              <strong class="kpi-value text-sm font-semibold truncate" title="${escapeHtml(topStop6Text)}">${escapeHtml(topStop6Text)}</strong>
+              <span class="kpi-label">Nguy cơ STOP 6 nhiều nhất</span>
+            </div>
+            <div class="kpi-subtext"><i class="fa-solid fa-building"></i> Điểm nóng: ${escapeHtml(topDeptText)}</div>
+          </div>
+        </div>
+
+        <!-- Main Section Navigation Tabs -->
+        <div class="factory-nav-tabs" role="tablist">
+          <button type="button" class="factory-nav-pill ${currentTab === 'overview' ? 'is-active' : ''}" data-factory-tab="overview">
+            <i class="fa-solid fa-chart-line"></i>
+            <span>1. Tổng Quan & Tiến Độ</span>
+          </button>
+          <button type="button" class="factory-nav-pill ${currentTab === 'analysis' ? 'is-active' : ''}" data-factory-tab="analysis">
+            <i class="fa-solid fa-triangle-exclamation"></i>
+            <span>2. Phân Tích Cấp Độ & STOP 6</span>
+          </button>
+          <button type="button" class="factory-nav-pill ${currentTab === 'detail' ? 'is-active' : ''}" data-factory-tab="detail">
+            <i class="fa-solid fa-clipboard-list"></i>
+            <span>3. Chi Tiết Bộ Phận & Nhật Ký</span>
+          </button>
+          <button type="button" class="factory-nav-pill ${currentTab === 'all' ? 'is-active' : ''}" data-factory-tab="all">
+            <i class="fa-solid fa-table-cells"></i>
+            <span>Xem Toàn Bộ</span>
+          </button>
+        </div>
+
+        <!-- ══════════════════════════════════════════════════════════════════════════
+             TAB PANE 1: TỔNG QUAN BỘ PHẬN & TIẾN ĐỘ
+             ══════════════════════════════════════════════════════════════════════════ -->
+        <div class="factory-tab-pane ${currentTab !== 'overview' && currentTab !== 'all' ? 'is-hidden' : ''}" data-factory-pane="overview">
+          
+          <!-- Card 1: Phân bổ Mối nguy theo Bộ phận (Table + Toggleable Chart) -->
+          <div class="factory-section-card">
+            <div class="factory-card-header">
+              <div class="card-header-left">
+                <span class="card-header-icon icon-blue"><i class="fa-solid fa-building-user"></i></span>
+                <div>
+                  <h3 class="card-header-title">Phân Bổ Nhận Diện Nguy Cơ Theo Bộ Phận</h3>
+                  <span class="card-header-sub">Tổng hợp số lượng phát hiện 12 tháng theo từng khối / phòng ban</span>
+                </div>
+              </div>
+              <div class="card-header-right">
+                <div class="chart-view-toggle">
+                  <button type="button" class="view-toggle-btn ${currentChartView === 'stacked' ? 'is-active' : ''}" data-chart-view="stacked" title="Xem dạng cột xếp chồng">
+                    <i class="fa-solid fa-layer-group"></i> Xếp chồng
+                  </button>
+                  <button type="button" class="view-toggle-btn ${currentChartView === 'clustered' ? 'is-active' : ''}" data-chart-view="clustered" title="Xem dạng cột nhóm">
+                    <i class="fa-solid fa-chart-column"></i> Cột nhóm
+                  </button>
+                </div>
+                <button type="button" class="btn-card-copy" data-action="copy-report-target" data-copy-format="html" data-copy-target="${copyPrefix}summary-table" title="Copy bảng số liệu">
+                  <i class="fa-regular fa-copy"></i> Copy Bảng
+                </button>
+                <button type="button" class="btn-card-copy" data-action="copy-report-target" data-copy-format="image" data-copy-target="${copyPrefix}department-stacked-chart" title="Copy biểu đồ ảnh">
+                  <i class="fa-regular fa-image"></i> Copy Biểu Đồ
+                </button>
+              </div>
+            </div>
+            <div class="factory-card-body factory-grid-pair">
+              <div class="factory-col-table">
+                <div class="copyable-report-content" id="${copyPrefix}summary-table" data-copy-format="html">
+                  ${renderFactorySummaryTable(matrix, context)}
+                </div>
+              </div>
+              <div class="factory-col-chart">
+                <div class="chart-box-stacked copyable-report-content ${currentChartView === 'stacked' ? '' : 'is-hidden'}" id="${copyPrefix}department-stacked-chart" data-copy-format="image">
+                  ${renderStackedDepartmentChart(matrix, context)}
+                </div>
+                <div class="chart-box-clustered copyable-report-content ${currentChartView === 'clustered' ? '' : 'is-hidden'}" id="${copyPrefix}department-clustered-chart" data-copy-format="image">
+                  ${renderClusteredDepartmentChart(matrix, context)}
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Card 2: Tiến độ & Tích lũy Triển khai Đối sách -->
+          <div class="factory-section-card">
+            <div class="factory-card-header">
+              <div class="card-header-left">
+                <span class="card-header-icon icon-green"><i class="fa-solid fa-arrow-trend-up"></i></span>
+                <div>
+                  <h3 class="card-header-title">Tiến Độ & Tích Lũy Triển Khai Đối Sách</h3>
+                  <span class="card-header-sub">So sánh số lượng phát hiện, giải pháp đã xử lý và tốc độ tích lũy 12 tháng</span>
+                </div>
+              </div>
+              <div class="card-header-right">
+                <button type="button" class="btn-card-copy" data-action="copy-report-target" data-copy-format="html" data-copy-target="${copyPrefix}progress-table" title="Copy bảng số liệu">
+                  <i class="fa-regular fa-copy"></i> Copy Bảng
+                </button>
+                <button type="button" class="btn-card-copy" data-action="copy-report-target" data-copy-format="image" data-copy-target="${copyPrefix}progress-chart" title="Copy biểu đồ ảnh">
+                  <i class="fa-regular fa-image"></i> Copy Biểu Đồ
+                </button>
+              </div>
+            </div>
+            <div class="factory-card-body factory-grid-pair">
+              <div class="factory-col-table">
+                <div class="copyable-report-content" id="${copyPrefix}progress-table" data-copy-format="html">
+                  ${renderProgressTable(monthTotals, countermeasureTotals, filters.year, context)}
+                </div>
+              </div>
+              <div class="factory-col-chart">
+                <div class="copyable-report-content" id="${copyPrefix}progress-chart" data-copy-format="image">
+                  ${renderProgressChart(monthTotals, countermeasureTotals, context)}
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Card 3: Tỉ lệ Lũy Kế Hoàn Thành Đối Sách Theo Tháng -->
+          <div class="factory-section-card">
+            <div class="factory-card-header">
+              <div class="card-header-left">
+                <span class="card-header-icon icon-amber"><i class="fa-solid fa-percent"></i></span>
+                <div>
+                  <h3 class="card-header-title">Tỉ Lệ Triển Khai Đối Sách AT Năm ${escapeHtml(filters.year)}</h3>
+                  <span class="card-header-sub">Đo lường tỉ lệ phần trăm lũy kế hoàn thành giải pháp so với đường mục tiêu</span>
+                </div>
+              </div>
+              <div class="card-header-right">
+                <button type="button" class="btn-card-copy" data-action="copy-report-target" data-copy-format="image" data-copy-target="${copyPrefix}monthly-rate-chart" title="Copy biểu đồ ảnh">
+                  <i class="fa-regular fa-image"></i> Copy Biểu Đồ
+                </button>
+              </div>
+            </div>
+            <div class="factory-card-body">
+              <div class="copyable-report-content" id="${copyPrefix}monthly-rate-chart" data-copy-format="image">
+                ${renderMonthlyRateChart(monthTotals, countermeasureTotals, filters.year, context)}
+              </div>
+            </div>
+          </div>
+
+        </div>
+
+        <!-- ══════════════════════════════════════════════════════════════════════════
+             TAB PANE 2: PHÂN TÍCH CẤP ĐỘ & STOP 6
+             ══════════════════════════════════════════════════════════════════════════ -->
+        <div class="factory-tab-pane ${currentTab !== 'analysis' && currentTab !== 'all' ? 'is-hidden' : ''}" data-factory-pane="analysis">
+          
+          <!-- Card 4: Tổng hợp theo Cấp độ Nguy hiểm (Rank A / B / C) -->
+          <div class="factory-section-card">
+            <div class="factory-card-header">
+              <div class="card-header-left">
+                <span class="card-header-icon icon-rose"><i class="fa-solid fa-gauge-high"></i></span>
+                <div>
+                  <h3 class="card-header-title">Tổng Hợp Phân Bổ Theo Cấp Độ Nguy Hiểm (Rank)</h3>
+                  <span class="card-header-sub">Phân tích mức độ rủi ro: Cấp A (Nghiêm trọng), Cấp B (Trung bình), Cấp C (Nhẹ)</span>
+                </div>
+              </div>
+              <div class="card-header-right">
+                <button type="button" class="btn-card-copy" data-action="copy-report-target" data-copy-format="html" data-copy-target="${copyPrefix}rank-table" title="Copy bảng số liệu">
+                  <i class="fa-regular fa-copy"></i> Copy Bảng
+                </button>
+                <button type="button" class="btn-card-copy" data-action="copy-report-target" data-copy-format="image" data-copy-target="${copyPrefix}rank-chart" title="Copy biểu đồ ảnh">
+                  <i class="fa-regular fa-image"></i> Copy Biểu Đồ
+                </button>
+              </div>
+            </div>
+            <div class="factory-card-body factory-grid-pair">
+              <div class="factory-col-table">
+                <div class="copyable-report-content" id="${copyPrefix}rank-table" data-copy-format="html">
+                  ${renderRankSummaryTable(rankMatrix, context)}
+                </div>
+              </div>
+              <div class="factory-col-chart">
+                <div class="copyable-report-content" id="${copyPrefix}rank-chart" data-copy-format="image">
+                  ${renderRankChart(rankMatrix, context)}
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Card 5: Phân loại Tai nạn Chỉ định STOP 6 -->
+          <div class="factory-section-card">
+            <div class="factory-card-header">
+              <div class="card-header-left">
+                <span class="card-header-icon icon-purple"><i class="fa-solid fa-shield-virus"></i></span>
+                <div>
+                  <h3 class="card-header-title">Tổng Hợp Phân Loại Tai Nạn Chỉ Định STOP 6</h3>
+                  <span class="card-header-sub">Thống kê 7 nhóm tai nạn trọng điểm cần kiểm soát tuyệt đối trong nhà máy</span>
+                </div>
+              </div>
+              <div class="card-header-right">
+                <button type="button" class="btn-card-copy" data-action="copy-report-target" data-copy-format="html" data-copy-target="${copyPrefix}stop6-table" title="Copy bảng số liệu">
+                  <i class="fa-regular fa-copy"></i> Copy Bảng
+                </button>
+                <button type="button" class="btn-card-copy" data-action="copy-report-target" data-copy-format="image" data-copy-target="${copyPrefix}stop6-chart" title="Copy biểu đồ ảnh">
+                  <i class="fa-regular fa-image"></i> Copy Biểu Đồ
+                </button>
+              </div>
+            </div>
+            <div class="factory-card-body factory-grid-pair">
+              <div class="factory-col-table">
+                <div class="copyable-report-content" id="${copyPrefix}stop6-table" data-copy-format="html">
+                  ${renderStop6SummaryTable(stop6Matrix, context)}
+                </div>
+              </div>
+              <div class="factory-col-chart">
+                <div class="copyable-report-content" id="${copyPrefix}stop6-chart" data-copy-format="image">
+                  ${renderStop6Chart(stop6Matrix, context)}
+                </div>
+              </div>
+            </div>
+          </div>
+
+        </div>
+
+        <!-- ══════════════════════════════════════════════════════════════════════════
+             TAB PANE 3: CHI TIẾT BỘ PHẬN & NHẬT KÝ
+             ══════════════════════════════════════════════════════════════════════════ -->
+        <div class="factory-tab-pane ${currentTab !== 'detail' && currentTab !== 'all' ? 'is-hidden' : ''}" data-factory-pane="detail">
+          
+          <!-- Card 6: Bảng Tổng Hợp Theo Zone Từng Bộ Phận -->
+          <div class="factory-section-card">
+            <div class="factory-card-header">
+              <div class="card-header-left">
+                <span class="card-header-icon icon-blue"><i class="fa-solid fa-sitemap"></i></span>
+                <div>
+                  <h3 class="card-header-title">Tổng Hợp Từng Bộ Phận Trong Năm</h3>
+                  <span class="card-header-sub">${escapeHtml(summaryLabel)} · Thống kê chỉ tiêu và trạng thái xử lý theo Zone</span>
+                </div>
+              </div>
+              <div class="card-header-right">
+                <button type="button" class="btn-card-copy" data-action="copy-report-target" data-copy-format="html" data-copy-target="${copyPrefix}department-summary-${safeDomId(selectedDepartment || 'tong-hop')}" title="Copy bảng tổng hợp bộ phận">
+                  <i class="fa-regular fa-copy"></i> Copy Bảng
+                </button>
+              </div>
+            </div>
+            <div class="factory-card-body">
+              ${renderDepartmentTabs(groups, selectedDepartment, filters.year, context)}
+              <div class="copyable-report-content mt-3" id="${copyPrefix}department-summary-${safeDomId(selectedDepartment || 'tong-hop')}" data-copy-format="html">
+                ${departmentSummaryHtml}
+              </div>
+            </div>
+          </div>
+
+          <!-- Card 7: Bảng Theo Dõi Nhận Dạng Nguy Hiểm & Hoạt Động Khắc Phục -->
+          <div class="factory-section-card">
+            <div class="factory-card-header">
+              <div class="card-header-left">
+                <span class="card-header-icon icon-green"><i class="fa-solid fa-list-check"></i></span>
+                <div>
+                  <h3 class="card-header-title">BẢNG THEO DÕI NHẬN DẠNG NGUY HIỂM VÀ KHẮC PHỤC</h3>
+                  <span class="card-header-sub">HAZARD IDENTIFICATION &amp; ACTIVITY FOLLOW UP SHEET · Nhật ký chi tiết kèm ảnh hiện trường</span>
+                </div>
+              </div>
+              <div class="card-header-right">
+                <button type="button" class="btn-card-copy" data-action="copy-report-target" data-copy-format="html" data-copy-target="${copyPrefix}department-detail-${safeDomId(selectedDepartment || 'tong-hop')}" title="Copy bảng chi tiết">
+                  <i class="fa-regular fa-copy"></i> Copy Nhật Ký
+                </button>
+              </div>
+            </div>
+            <div class="factory-card-body">
+              <div class="copyable-report-content" id="${copyPrefix}department-detail-${safeDomId(selectedDepartment || 'tong-hop')}" data-copy-format="html">
+                ${departmentDetailHtml}
+              </div>
+            </div>
+          </div>
+
+        </div>
+
+      </section>
+    `;
   }
 
   function renderSafetyAssessmentStatusChart(monthRows, context) {
@@ -1274,8 +1752,7 @@
     const groups = shouldUseAdminScope
       ? getAllDepartmentGroups(context, reportPeriodId, areaFilter)
       : getVisibleDepartmentGroups(context, reportPeriodId, areaFilter);
-    const selectedDepartment = "";
-    syncDepartmentFilter(context, groups, filters.year);
+    const selectedDepartment = syncDepartmentFilter(context, groups, filters.year);
     const visibleAreaIds = new Set(visibleAreas.map((area) => area.id));
     const rawYearRows = getSafetyRowsForYear(filters.year, { areaId: areaFilter }).filter((row) => visibleAreaIds.has(row.area.id));
     const rawMonthRows = filterRowsByMonth(rawYearRows, filters.month, context);
@@ -1294,6 +1771,58 @@
 
     renderSafetyDashboard(activeReport, filters, monthRows, yearRows, visibleAreas, groups, selectedDepartment, reportPeriod, context);
   }
+
+  document.addEventListener("click", (event) => {
+    const navBtn = event.target.closest(".factory-nav-pill");
+    if (navBtn) {
+      const targetTab = navBtn.dataset.factoryTab;
+      if (!targetTab) return;
+      activeFactoryTab = targetTab;
+      const card = navBtn.closest(".factory-risk-dashboard-card");
+      if (!card) return;
+      card.querySelectorAll(".factory-nav-pill").forEach((btn) => {
+        btn.classList.toggle("is-active", btn === navBtn);
+      });
+      card.querySelectorAll(".factory-tab-pane").forEach((pane) => {
+        if (targetTab === "all") {
+          pane.classList.remove("is-hidden");
+        } else {
+          pane.classList.toggle("is-hidden", pane.dataset.factoryPane !== targetTab);
+        }
+      });
+      return;
+    }
+
+    const viewBtn = event.target.closest(".view-toggle-btn");
+    if (viewBtn) {
+      const viewMode = viewBtn.dataset.chartView;
+      if (!viewMode) return;
+      activeDepartmentChartView = viewMode;
+      const sectionCard = viewBtn.closest(".factory-section-card");
+      if (!sectionCard) return;
+      sectionCard.querySelectorAll(".view-toggle-btn").forEach((btn) => {
+        btn.classList.toggle("is-active", btn === viewBtn);
+      });
+      const stackedBox = sectionCard.querySelector(".chart-box-stacked");
+      const clusteredBox = sectionCard.querySelector(".chart-box-clustered");
+      if (stackedBox && clusteredBox) {
+        if (viewMode === "stacked") {
+          stackedBox.classList.remove("is-hidden");
+          clusteredBox.classList.add("is-hidden");
+        } else {
+          stackedBox.classList.add("is-hidden");
+          clusteredBox.classList.remove("is-hidden");
+        }
+      }
+      return;
+    }
+
+    const exportBtn = event.target.closest('[data-action="export-safety-excel"]');
+    if (exportBtn) {
+      document.getElementById("export-safety-excel-button")?.click();
+      return;
+    }
+  });
 
   window.SafetyPage = {
     setDetailPage(type, page) {

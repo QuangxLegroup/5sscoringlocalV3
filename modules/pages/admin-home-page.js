@@ -495,23 +495,30 @@
               <!-- Quick Action Bar Inside Terminal -->
               <div class="cyber-terminal-footer-actions">
                 ${canScoreFiveS ? `
-                  <button class="cyber-term-btn assessor-only" type="button" data-go-tab="assessor" title="Vào chấm điểm 5S">
+                  <button class="cyber-term-btn assessor-only" type="button" data-mobile-open="5s" data-go-tab="assessor" title="Mở Mobile Chấm Điểm 5S">
                     <span>📝</span> Chấm Điểm 5S
                   </button>
                 ` : ""}
-                <button class="cyber-term-btn five-s-access-only" type="button" data-go-tab="summary" title="Xem tổng hợp điểm 5S">
+                <button class="cyber-term-btn five-s-access-only" type="button" data-mobile-open="5s" data-go-tab="summary" title="Mở Mobile Bảng Điểm 5S">
                   <span>📊</span> Bảng Điểm 5S
                 </button>
-                <button class="cyber-term-btn safety-access-only" type="button" data-go-safety-report="assessment" title="Đánh giá an toàn">
+                <button class="cyber-term-btn safety-access-only" type="button" data-mobile-open="safety" data-go-safety-report="assessment" title="Mở Mobile Báo Cáo An Toàn">
                   <span>🛡️</span> Báo Cáo AT
                 </button>
               </div>
             </div>
 
-            <!-- Explore Interactive Guide CTA Button -->
+            <!-- Switch to Mobile CTA Button with Glowing Mobile Icon and Dynamic Transition Effect -->
             <div class="cyber-cta-wrap">
-              <button class="cyber-guide-button" type="button" id="cyberGuideBtn">
-                Explore Interactive Guide
+              <button class="cyber-guide-button cyber-mobile-switch-btn" type="button" id="cyberMobileBtn" title="Chuyển sang giao diện Mobile Prototype">
+                <span class="mobile-glow-icon">
+                  <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <rect x="5" y="2" width="14" height="20" rx="2" ry="2"></rect>
+                    <line x1="12" y1="18" x2="12.01" y2="18"></line>
+                  </svg>
+                </span>
+                <span class="mobile-btn-text">Chuyển sang Mobile</span>
+                <span class="mobile-btn-pulse"></span>
               </button>
             </div>
           </div>
@@ -650,7 +657,40 @@
       </div>
     `;
 
-    // Bind Guide buttons and step clicks
+    // Bind Mobile Prototype CTA Button
+    const mobileBtn = elements.adminHomeCards.querySelector("#cyberMobileBtn");
+    if (mobileBtn) {
+      mobileBtn.addEventListener("click", () => {
+        if (typeof window.openMobilePrototype === "function") {
+          window.openMobilePrototype("5s", context);
+        }
+      });
+    }
+
+    // Bind Terminal Card Pill Buttons to instantly open Mobile prototype
+    const termFiveSBtn = elements.adminHomeCards.querySelector('.cyber-terminal-footer-actions [data-mobile-open="5s"]');
+    if (termFiveSBtn) {
+      termFiveSBtn.addEventListener("click", (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        if (typeof window.openMobilePrototype === "function") {
+          window.openMobilePrototype("5s", context);
+        }
+      });
+    }
+
+    const termSafetyBtn = elements.adminHomeCards.querySelector('.cyber-terminal-footer-actions [data-mobile-open="safety"]');
+    if (termSafetyBtn) {
+      termSafetyBtn.addEventListener("click", (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        if (typeof window.openMobilePrototype === "function") {
+          window.openMobilePrototype("safety", context);
+        }
+      });
+    }
+
+    // Keep guide modal fallback if ever invoked
     const guideBtn = elements.adminHomeCards.querySelector("#cyberGuideBtn");
     if (guideBtn) {
       guideBtn.addEventListener("click", () => openGuideModal(undefined, canScoreFiveS));
