@@ -1366,6 +1366,27 @@
     await dbRef(`safetyRecords/${recordId}`).remove();
   }
 
+  async function deleteSafetyRecordDirect(recordId) {
+    const record = state.safetyRecords.find((item) => item.id === recordId);
+    if (!record) return false;
+    const deletedMarker = getDeletedSafetyRecordMarker(record);
+    const keepDeletedMarker = shouldKeepDeletedSafetyRecordMarker(record);
+    state.safetyRecords = state.safetyRecords.filter((item) => item.id !== record.id);
+    state.deletedSafetyRecords = keepDeletedMarker
+      ? [
+          ...(state.deletedSafetyRecords || []).filter((item) => item.id !== deletedMarker.id),
+          deletedMarker,
+        ]
+      : (state.deletedSafetyRecords || []).filter((item) => item.id !== deletedMarker.id);
+    const updates = {
+      [`safetyRecords/${record.id}`]: null,
+      [`deletedSafetyRecords/${deletedMarker.id}`]: keepDeletedMarker ? deletedMarker : null,
+    };
+    await updateRootWithOptionalRenderSuppression(updates, { suppressRender: true });
+    await deleteSafetyRecordFromDb(record.id);
+    return true;
+  }
+
   function getDeletedSafetyRecordMarker(record) {
     const id = String(record?.id || "");
     return {
@@ -4683,6 +4704,8 @@
       getScoreRecord,
       saveSafetyRecord,
       deleteSafetyRecord,
+      deleteSafetyRecordDirect,
+      deleteSafetyRecordFromDb,
       showToast,
       prepareScorePhoto,
       normalizeSafetyRecord,

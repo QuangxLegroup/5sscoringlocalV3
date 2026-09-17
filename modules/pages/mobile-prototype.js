@@ -71,6 +71,207 @@
     modal.querySelector("#closeMobileImageModalBtn").addEventListener("click", close);
   }
 
+  function formatIsoToVnDate(isoStr) {
+    if (!isoStr) return "";
+    const clean = String(isoStr).split("T")[0];
+    const parts = clean.split("-");
+    if (parts.length === 3) {
+      const [y, m, d] = parts;
+      if (y && m && d) {
+        return `${String(d).padStart(2, "0")}/${String(m).padStart(2, "0")}/${y}`;
+      }
+    }
+    return clean;
+  }
+
+  function openSafetyDetailModal(item, overlay, context) {
+    if (!item) return;
+    const existing = document.getElementById("mobileSafetyDetailModal");
+    if (existing) existing.remove();
+
+    const fiveSPeriodId = context?.getActivePeriodId?.(context.SAFETY_PERIOD_TYPE) || "";
+    const allAreas = context ? context.getAreasForPeriod(fiveSPeriodId) : [];
+    const itemArea = allAreas.find((a) => a.id === item.areaId);
+    const zoneLabel = itemArea ? `Zone ${itemArea.code} · ${itemArea.departmentHead || itemArea.responsibleName || ''}` : (item.issueLocation || "Zone");
+    const statusText = item.issueStatus === "closed" ? "Đã khắc phục" : item.issueStatus === "in_progress" ? "Đang xử lý" : "Chờ xử lý";
+    const statusClass = item.issueStatus === "closed" ? "status-closed" : item.issueStatus === "in_progress" ? "status-progress" : "status-open";
+    
+    const issueLevel = String(item.issueLevel || item.level || item.riskLevel || "").trim().toUpperCase();
+    const issueType = String(item.issueType || item.stop6 || item.stop_6 || item.issue_type || "").trim();
+    const foundChannelText = item.foundChannel === "head" ? "Trưởng bộ phận" : item.foundChannel === "assessor" ? "Assessor" : "Công nhân";
+    const itemDate = item.issueDay && item.issueMonth ? `${String(item.issueDay).padStart(2, '0')}/${String(item.issueMonth).padStart(2, '0')}` : (item.updatedAt ? new Date(item.updatedAt).toLocaleDateString("vi-VN") : "");
+
+    const modal = document.createElement("div");
+    modal.id = "mobileSafetyDetailModal";
+    modal.className = "mobile-safety-detail-modal";
+    modal.innerHTML = `
+      <div class="detail-modal-backdrop"></div>
+      <div class="detail-modal-content">
+        
+        <div class="detail-modal-header">
+          <div class="detail-header-title">
+            <i class="fa-solid fa-shield-halved text-brand-400"></i>
+            <span>Chi tiết báo cáo mối nguy</span>
+          </div>
+          <button type="button" class="btn-close-modal" id="closeDetailModalBtn">
+            <i class="fa-solid fa-xmark"></i>
+          </button>
+        </div>
+
+        <div class="detail-modal-body">
+          <!-- Status Banner -->
+          <div class="detail-meta-top">
+            <span class="detail-zone-chip">${escapeHtml(zoneLabel)}</span>
+            <span class="history-status-badge ${statusClass}">${statusText}</span>
+          </div>
+
+          <!-- Prominent Tags: Level & STOP 6 -->
+          <div class="detail-tags-row">
+            <div class="detail-tag-item">
+              <span class="detail-tag-label">Cấp bậc:</span>
+              <span class="history-pill ${issueLevel === 'A' ? 'pill-level-a' : issueLevel === 'B' ? 'pill-level-b' : issueLevel === 'C' ? 'pill-level-c' : 'pill-level-none'} font-bold">
+                ${issueLevel ? `Cấp độ ${escapeHtml(issueLevel)}` : 'Chưa phân loại'}
+              </span>
+            </div>
+            <div class="detail-tag-item">
+              <span class="detail-tag-label">STOP 6:</span>
+              <span class="history-pill pill-stop6 font-bold">
+                <i class="fa-solid fa-triangle-exclamation"></i> ${escapeHtml(issueType || 'Chưa phân loại')}
+              </span>
+            </div>
+          </div>
+
+          <!-- Description -->
+          <div class="detail-section">
+            <span class="detail-section-label">Mô tả mối nguy hiểm:</span>
+            <p class="detail-description-text">${escapeHtml(item.note || 'Không có mô tả')}</p>
+          </div>
+
+          <!-- Info Grid -->
+          <div class="detail-info-grid">
+            <div class="detail-info-cell">
+              <span class="cell-label">Ngày phát hiện</span>
+              <span class="cell-val font-mono">${escapeHtml(itemDate || '—')}</span>
+            </div>
+            <div class="detail-info-cell">
+              <span class="cell-label">Phát hiện bởi (Kênh)</span>
+              <span class="cell-val">${escapeHtml(foundChannelText)}</span>
+            </div>
+            <div class="detail-info-cell">
+              <span class="cell-label">Tên người phát hiện</span>
+              <span class="cell-val">${escapeHtml(item.issueFoundBy || '—')}</span>
+            </div>
+            <div class="detail-info-cell">
+              <span class="cell-label">Mã nhân viên</span>
+              <span class="cell-val font-mono">${escapeHtml(item.employeeCode || '—')}</span>
+            </div>
+          </div>
+
+          <!-- Countermeasure Details (if any) -->
+          ${item.improvementContent || item.actionOwner || item.actionPlan || item.completionDate ? `
+            <div class="detail-section detail-countermeasure-box">
+              <span class="detail-section-label text-emerald-400"><i class="fa-solid fa-wrench"></i> Đối sách cải tiến:</span>
+              ${item.improvementContent ? `<p class="detail-countermeasure-text">${escapeHtml(item.improvementContent)}</p>` : ''}
+              <div class="detail-info-grid" style="margin-top: 6px;">
+                ${item.actionOwner ? `<div class="detail-info-cell"><span class="cell-label">Đảm nhiệm</span><span class="cell-val">${escapeHtml(item.actionOwner)}</span></div>` : ''}
+                ${item.actionPlan ? `<div class="detail-info-cell"><span class="cell-label">Kế hoạch</span><span class="cell-val">${escapeHtml(item.actionPlan)}</span></div>` : ''}
+                ${item.completionDate ? `<div class="detail-info-cell"><span class="cell-label">Ngày hoàn thành</span><span class="cell-val font-mono">${escapeHtml(formatIsoToVnDate(item.completionDate))}</span></div>` : ''}
+              </div>
+            </div>
+          ` : ''}
+
+          <!-- Photos -->
+          ${item.photoDataUrl || item.afterPhotoDataUrl ? `
+            <div class="detail-photos-row">
+              ${item.photoDataUrl ? `
+                <div class="detail-photo-card" data-preview-img="${item.photoDataUrl}">
+                  <img src="${item.photoDataUrl}" alt="Ảnh hiện trường">
+                  <span>Ảnh hiện trường (Chạm xem)</span>
+                </div>
+              ` : ''}
+              ${item.afterPhotoDataUrl ? `
+                <div class="detail-photo-card" data-preview-img="${item.afterPhotoDataUrl}">
+                  <img src="${item.afterPhotoDataUrl}" alt="Ảnh sau cải tiến">
+                  <span>Ảnh sau cải tiến (Chạm xem)</span>
+                </div>
+              ` : ''}
+            </div>
+          ` : ''}
+
+        </div>
+
+        <!-- Action Buttons Footer -->
+        <div class="detail-modal-footer">
+          <button type="button" class="btn-detail-edit" id="btnDetailEdit">
+            <i class="fa-solid fa-pen-to-square"></i> SỬA BÁO CÁO
+          </button>
+          <button type="button" class="btn-detail-delete" id="btnDetailDelete">
+            <i class="fa-solid fa-trash-can"></i> XÓA BÁO CÁO
+          </button>
+        </div>
+
+      </div>
+    `;
+
+    document.body.appendChild(modal);
+
+    const closeModal = () => modal.remove();
+    modal.querySelector(".detail-modal-backdrop").addEventListener("click", closeModal);
+    modal.querySelector("#closeDetailModalBtn").addEventListener("click", closeModal);
+
+    // Lightbox for photos in detail modal
+    modal.querySelectorAll("[data-preview-img]").forEach((el) => {
+      el.addEventListener("click", (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        openMobileImageModal(el.dataset.previewImg, "Ảnh báo cáo");
+      });
+    });
+
+    // Edit button click inside detail modal
+    modal.querySelector("#btnDetailEdit")?.addEventListener("click", () => {
+      editingSafetyRecordId = item.id;
+      uploadedSafetyPhotoData = item.photoDataUrl || "";
+      uploadedSafetyAfterPhotoData = item.afterPhotoDataUrl || "";
+      closeModal();
+      renderSafetyScreen(overlay, context);
+      const formEl = overlay.querySelector("#mobileSafetyForm");
+      formEl?.scrollIntoView({ behavior: "smooth", block: "start" });
+      overlay.querySelector("#mobileSafetyDescription")?.focus();
+    });
+
+    // Delete button click inside detail modal
+    modal.querySelector("#btnDetailDelete")?.addEventListener("click", async () => {
+      if (!confirm("Bạn có chắc chắn muốn xóa báo cáo mối nguy này không?")) {
+        return;
+      }
+      try {
+        let deleted = false;
+        if (typeof context?.deleteSafetyRecordDirect === "function") {
+          deleted = await context.deleteSafetyRecordDirect(item.id);
+        }
+        if (!deleted && typeof context?.deleteSafetyRecordFromDb === "function") {
+          await context.deleteSafetyRecordFromDb(item.id);
+          deleted = true;
+        }
+        if (context?.state?.safetyRecords) {
+          context.state.safetyRecords = context.state.safetyRecords.filter((r) => r.id !== item.id);
+        }
+        if (editingSafetyRecordId === item.id) {
+          editingSafetyRecordId = "";
+          uploadedSafetyPhotoData = "";
+          uploadedSafetyAfterPhotoData = "";
+        }
+        closeModal();
+        showMobileToast("Đã xóa báo cáo mối nguy thành công!");
+        renderSafetyScreen(overlay, context);
+      } catch (err) {
+        console.error("Lỗi khi xóa:", err);
+        showMobileToast("Lỗi khi xóa: " + (err.message || err), true);
+      }
+    });
+  }
+
   function getAppContext() {
     if (currentAppContext) return currentAppContext;
     if (typeof window.__GET_APP_CONTEXT__ === "function") {
@@ -344,9 +545,7 @@
           <!-- Row 1: Zone & Ngày phát hiện -->
           <div class="form-grid-2">
             <div class="form-group">
-              <label class="form-label">
-                Khu Vực (Zone) <span class="required-star">*</span>
-              </label>
+              <label class="form-label">Khu vực (Zone)<span class="required-star">*</span></label>
               <div class="select-wrapper">
                 <select id="mobileSafetyZoneSelect" required class="form-control form-select">
                   <option value="">-- Chọn Zone --</option>
@@ -362,7 +561,13 @@
 
             <div class="form-group">
               <label class="form-label">Ngày phát hiện</label>
-              <input type="date" id="mobileSafetyIssueDate" class="form-control" value="${escapeHtml(defaultIssueDate)}">
+              <div class="date-input-container">
+                <input type="text" id="mobileSafetyIssueDateDisplay" class="form-control date-custom-input" placeholder="dd/mm/yyyy" value="${formatIsoToVnDate(defaultIssueDate)}" readonly>
+                <input type="date" id="mobileSafetyIssueDate" class="native-hidden-date-input" value="${escapeHtml(defaultIssueDate)}">
+                <button type="button" class="btn-calendar-trigger" tabindex="-1">
+                  <i class="fa-solid fa-calendar-days text-white"></i>
+                </button>
+              </div>
             </div>
           </div>
 
@@ -541,7 +746,13 @@
           <!-- Row 11: Ngày hoàn thành -->
           <div class="form-group">
             <label class="form-label">Ngày hoàn thành</label>
-            <input type="date" id="mobileSafetyCompletionDate" class="form-control" value="${escapeHtml(editingRecord?.completionDate ? editingRecord.completionDate.split('T')[0] : '')}">
+            <div class="date-input-container">
+              <input type="text" id="mobileSafetyCompletionDateDisplay" class="form-control date-custom-input" placeholder="dd/mm/yyyy" value="${formatIsoToVnDate(editingRecord?.completionDate ? editingRecord.completionDate.split('T')[0] : '')}" readonly>
+              <input type="date" id="mobileSafetyCompletionDate" class="native-hidden-date-input" value="${escapeHtml(editingRecord?.completionDate ? editingRecord.completionDate.split('T')[0] : '')}">
+              <button type="button" class="btn-calendar-trigger" tabindex="-1">
+                <i class="fa-solid fa-calendar-days text-white"></i>
+              </button>
+            </div>
           </div>
 
           <!-- Submit Button -->
@@ -574,10 +785,20 @@
               const photoThumb = item.photoDataUrl || "images/Logo.jpg";
               const hasPhoto = Boolean(item.photoDataUrl);
               const hasAfterPhoto = Boolean(item.afterPhotoDataUrl);
-              const itemDate = item.updatedAt ? new Date(item.updatedAt).toLocaleDateString("vi-VN") : dateStr;
+              const rawLevel = item.issueLevel || item.level || item.riskLevel || "";
+              const issueLevel = String(rawLevel).trim().toUpperCase();
+              const levelBadgeClass = issueLevel === "A" ? "pill-level-a" : issueLevel === "B" ? "pill-level-b" : issueLevel === "C" ? "pill-level-c" : "pill-level-none";
+              const levelBadgeText = issueLevel ? (issueLevel.startsWith("CẤP") ? issueLevel : `Cấp ${issueLevel}`) : "Chưa phân loại";
+
+              const rawStop6 = item.issueType || item.stop6 || item.stop_6 || item.issue_type || "";
+              const stop6Text = String(rawStop6).trim();
+
+              const itemDate = item.issueDay && item.issueMonth
+                ? `${String(item.issueDay).padStart(2, '0')}/${String(item.issueMonth).padStart(2, '0')}`
+                : (item.updatedAt ? new Date(item.updatedAt).toLocaleDateString("vi-VN") : dateStr);
 
               return `
-                <div class="history-card ${editingSafetyRecordId === item.id ? 'is-editing' : ''}">
+                <div class="history-card ${editingSafetyRecordId === item.id ? 'is-editing' : ''}" data-action="open-safety-card-detail" data-id="${item.id}" title="Chạm để xem chi tiết, sửa hoặc xóa">
                   <img src="${photoThumb}" alt="Thumb" class="history-card-thumb ${hasPhoto ? 'cursor-pointer' : ''}" ${hasPhoto ? `data-preview-img="${photoThumb}" title="Chạm 1 lần để xem ảnh lớn"` : ''} onerror="this.src='images/Logo.jpg'">
                   <div class="history-card-body">
                     <div class="history-card-top">
@@ -587,8 +808,8 @@
                     <p class="history-hazard-text">${escapeHtml(item.note || "Mối nguy không có mô tả")}</p>
                     <div class="history-meta-row">
                       <span class="history-date-text"><i class="fa-regular fa-clock"></i> ${escapeHtml(itemDate)}</span>
-                      ${item.issueLevel ? `<span class="history-level-pill">Cấp ${escapeHtml(item.issueLevel)}</span>` : ''}
-                      ${item.issueType ? `<span class="history-stop6-pill">${escapeHtml(item.issueType)}</span>` : ''}
+                      <span class="history-pill ${levelBadgeClass}">${escapeHtml(levelBadgeText)}</span>
+                      ${stop6Text ? `<span class="history-pill pill-stop6"><i class="fa-solid fa-triangle-exclamation"></i> ${escapeHtml(stop6Text)}</span>` : ''}
                     </div>
                     ${item.improvementContent ? `
                       <div class="history-countermeasure-note">
@@ -602,13 +823,8 @@
                       </div>
                     ` : ''}
                   </div>
-                  <div class="history-card-actions">
-                    <button type="button" class="btn-history-edit" data-action="edit-mobile-safety" data-id="${item.id}" title="Sửa mối nguy">
-                      <i class="fa-solid fa-pen-to-square"></i> Sửa
-                    </button>
-                    <button type="button" class="btn-history-delete" data-action="delete-mobile-safety" data-id="${item.id}" title="Xóa mối nguy">
-                      <i class="fa-solid fa-trash-can"></i> Xóa
-                    </button>
+                  <div class="history-card-chevron">
+                    <i class="fa-solid fa-chevron-right"></i>
                   </div>
                 </div>
               `;
@@ -727,6 +943,28 @@
       });
     }
 
+    // Wire date picker change sync to display inputs (dd/mm/yyyy)
+    screen.querySelectorAll(".date-input-container").forEach((wrap) => {
+      const nativeDate = wrap.querySelector(".native-hidden-date-input");
+      const displayInput = wrap.querySelector(".date-custom-input");
+      if (!nativeDate || !displayInput) return;
+
+      nativeDate.addEventListener("change", () => {
+        displayInput.value = formatIsoToVnDate(nativeDate.value);
+      });
+      nativeDate.addEventListener("input", () => {
+        displayInput.value = formatIsoToVnDate(nativeDate.value);
+      });
+
+      wrap.addEventListener("click", () => {
+        try {
+          if (typeof nativeDate.showPicker === "function") {
+            nativeDate.showPicker();
+          }
+        } catch (_) {}
+      });
+    });
+
     // Image 1-tap quick preview (lightbox)
     screen.querySelectorAll("[data-preview-img]").forEach((imgEl) => {
       imgEl.addEventListener("click", (e) => {
@@ -739,54 +977,18 @@
       });
     });
 
-    // Edit Safety Record Button click
-    screen.querySelectorAll('[data-action="edit-mobile-safety"]').forEach((btn) => {
-      btn.addEventListener("click", (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        const recordId = btn.dataset.id;
+    // Card click: open detail modal (where user can view full info, Edit, or Delete)
+    screen.querySelectorAll('.history-card[data-action="open-safety-card-detail"]').forEach((card) => {
+      card.addEventListener("click", (e) => {
+        // If user tapped directly on an image thumbnail, don't trigger modal (preview lightbox handles it)
+        if (e.target.closest("[data-preview-img]")) {
+          return;
+        }
+        const recordId = card.dataset.id;
         const allRecords = context?.state?.safetyRecords || [];
         const record = allRecords.find((r) => r.id === recordId);
         if (record) {
-          editingSafetyRecordId = record.id;
-          uploadedSafetyPhotoData = record.photoDataUrl || "";
-          uploadedSafetyAfterPhotoData = record.afterPhotoDataUrl || "";
-          renderSafetyScreen(overlay, context);
-          const formEl = overlay.querySelector("#mobileSafetyForm");
-          formEl?.scrollIntoView({ behavior: "smooth", block: "start" });
-          overlay.querySelector("#mobileSafetyDescription")?.focus();
-        }
-      });
-    });
-
-    // Delete Safety Record Button click
-    screen.querySelectorAll('[data-action="delete-mobile-safety"]').forEach((btn) => {
-      btn.addEventListener("click", async (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        const recordId = btn.dataset.id;
-        if (!confirm("Bạn có chắc chắn muốn xóa báo cáo mối nguy này không?")) {
-          return;
-        }
-        try {
-          if (typeof context?.deleteSafetyRecord === "function") {
-            await context.deleteSafetyRecord(recordId);
-          } else if (context?.state?.safetyRecords) {
-            context.state.safetyRecords = context.state.safetyRecords.filter((r) => r.id !== recordId);
-            if (typeof window.dbRef === "function") {
-              await window.dbRef(`safetyRecords/${recordId}`).remove();
-            }
-          }
-          if (editingSafetyRecordId === recordId) {
-            editingSafetyRecordId = "";
-            uploadedSafetyPhotoData = "";
-            uploadedSafetyAfterPhotoData = "";
-          }
-          showMobileToast("Đã xóa báo cáo mối nguy!");
-          renderSafetyScreen(overlay, context);
-        } catch (err) {
-          console.error("Lỗi khi xóa:", err);
-          showMobileToast("Lỗi khi xóa: " + (err.message || err), true);
+          openSafetyDetailModal(record, overlay, context);
         }
       });
     });
