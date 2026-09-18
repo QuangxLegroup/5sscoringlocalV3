@@ -11,7 +11,7 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
-    <link rel="stylesheet" href="styles.css?v=2026091725">
+    <link rel="stylesheet" href="styles.css?v=2026091820">
   </head>
   <body>
     <section class="loading-screen" id="loading-screen">
@@ -612,9 +612,9 @@
     <script src="modules/pages/catalog-page.js"></script>
     <script src="modules/pages/accounts-page.js"></script>
     <script src="modules/pages/data-page.js"></script>
-    <script src="modules/pages/mobile-prototype.js?v=2026091725"></script>
+    <script src="modules/pages/mobile-prototype.js?v=2026091821"></script>
     <script src="standards.js"></script>
-    <script src="app.js?v=2026091725"></script>
+    <script src="app.js?v=2026091818"></script>
   
     <script>
       (() => {
@@ -639,7 +639,12 @@
           e?.preventDefault?.();
           e?.stopPropagation?.();
           if (typeof window.openMobilePrototype === "function") {
-            window.openMobilePrototype("5s");
+            const ctx = typeof window.__GET_APP_CONTEXT__ === "function" ? window.__GET_APP_CONTEXT__() : window.__APP_CONTEXT__;
+            const user = ctx?.currentUser;
+            const can5S = typeof ctx?.isFiveSAssessor === "function" ? ctx.isFiveSAssessor(user) : true;
+            const canSafety = typeof ctx?.canUseSafety === "function" ? ctx.canUseSafety(user) : true;
+            const initialTab = can5S ? "5s" : canSafety ? "safety" : "5s";
+            window.openMobilePrototype(initialTab, ctx);
           }
         };
         document.getElementById("mobileSwitchHeaderBtn")?.addEventListener("click", openMobile);

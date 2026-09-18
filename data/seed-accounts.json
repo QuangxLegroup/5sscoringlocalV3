@@ -95,6 +95,35 @@
         "area-2"
       ],
       "passwordHash": "pbkdf2-sha256$210000$mhFw4NlwLCmKQhsP6lAxbQ$ylDcggWD7l7VUlh80WPWJ2kF3ddSVNKalpcC0tOTwl8"
+    },
+    "account-mu6abokl-t7ozhv": {
+      "id": "account-mu6abokl-t7ozhv",
+      "role": "zoneOwner",
+      "name": "Mr Ánh",
+      "accessTypes": [
+        "5s"
+      ],
+      "rolesByType": {
+        "5s": "zoneOwner"
+      },
+      "username": "mranh",
+      "createdAt": "2026-09-18T01:33:38.469Z",
+      "displayName": "mranh",
+      "fiveSScorerId": "scorer-25",
+      "scorerId": "scorer-25",
+      "fiveSAreaIds": [
+        "area-1",
+        "area-14",
+        "area-15",
+        "area-28"
+      ],
+      "areaIds": [
+        "area-1",
+        "area-14",
+        "area-15",
+        "area-28"
+      ],
+      "passwordHash": "pbkdf2-sha256$210000$1MI2oRxEeHbC1I2k-Ly50Q$JF20zIWk5Bju_1ipWcIRvIkzSW87J1l5LHOAgQEQ9Ig"
     }
   }
 }

@@ -492,20 +492,7 @@
                 `).join("")}
               </div>
 
-              <!-- Quick Action Bar Inside Terminal -->
-              <div class="cyber-terminal-footer-actions">
-                ${canScoreFiveS ? `
-                  <button class="cyber-term-btn assessor-only" type="button" data-mobile-open="5s" data-go-tab="assessor" title="Mở Mobile Chấm Điểm 5S">
-                    <span>📝</span> Chấm Điểm 5S
-                  </button>
-                ` : ""}
-                <button class="cyber-term-btn five-s-access-only" type="button" data-mobile-open="5s" data-go-tab="summary" title="Mở Mobile Bảng Điểm 5S">
-                  <span>📊</span> Bảng Điểm 5S
-                </button>
-                <button class="cyber-term-btn safety-access-only" type="button" data-mobile-open="safety" data-go-safety-report="assessment" title="Mở Mobile Báo Cáo An Toàn">
-                  <span>🛡️</span> Báo Cáo AT
-                </button>
-              </div>
+
             </div>
 
             <!-- Switch to Mobile CTA Button with Glowing Mobile Icon and Dynamic Transition Effect -->
@@ -644,15 +631,6 @@
               <small>Sẵn Sàng</small>
             </div>
           </div>
-
-          <div class="cyber-bottom-flow-actions">
-            <button class="cyber-learn-button" type="button" data-go-tab="summary" style="padding: 10px 22px; font-weight:700;">
-              📊 Bảng Điểm 5S (${escapeHtml(fiveSPeriodText)})
-            </button>
-            <button class="cyber-learn-button" type="button" data-go-safety-report="assessment" style="padding: 10px 22px; font-weight:700;">
-              🛡️ Đánh Giá An Toàn (${escapeHtml(safetyPeriodText)})
-            </button>
-          </div>
         </div>
       </div>
     `;
@@ -662,7 +640,11 @@
     if (mobileBtn) {
       mobileBtn.addEventListener("click", () => {
         if (typeof window.openMobilePrototype === "function") {
-          window.openMobilePrototype("5s", context);
+          const user = context?.currentUser;
+          const can5S = typeof context?.isFiveSAssessor === "function" ? context.isFiveSAssessor(user) : true;
+          const canSafety = typeof context?.canUseSafety === "function" ? context.canUseSafety(user) : true;
+          const initialTab = can5S ? "5s" : canSafety ? "safety" : "5s";
+          window.openMobilePrototype(initialTab, context);
         }
       });
     }

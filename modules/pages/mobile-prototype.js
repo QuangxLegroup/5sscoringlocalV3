@@ -43,32 +43,29 @@
   let editingSafetyRecordId = "";
   let currentAppContext = null;
 
-  function openMobileImageModal(imgSrc, title = "Xem ảnh") {
+  function openMobileImageModal(imgSrc) {
     if (!imgSrc || imgSrc === "images/Logo.jpg") return;
     const existing = document.getElementById("mobileImageModal");
     if (existing) existing.remove();
 
     const modal = document.createElement("div");
     modal.id = "mobileImageModal";
-    modal.className = "mobile-image-modal";
+    modal.className = "mobile-image-modal-fullscreen";
     modal.innerHTML = `
-      <div class="mobile-image-modal-backdrop"></div>
-      <div class="mobile-image-modal-content">
-        <div class="mobile-image-modal-header">
-          <span>${title}</span>
-          <button type="button" class="btn-close-modal" id="closeMobileImageModalBtn">
-            <i class="fa-solid fa-xmark"></i>
-          </button>
-        </div>
-        <div class="mobile-image-modal-body">
-          <img src="${imgSrc}" alt="${title}" class="mobile-modal-full-img">
-        </div>
+      <div class="mobile-image-fullscreen-backdrop"></div>
+      <button type="button" class="mobile-image-fullscreen-close" aria-label="Đóng">
+        <i class="fa-solid fa-xmark"></i>
+      </button>
+      <div class="mobile-image-fullscreen-container">
+        <img src="${imgSrc}" alt="Ảnh xem trước" class="mobile-image-fullscreen-img">
       </div>
     `;
     document.body.appendChild(modal);
-    const close = () => modal.remove();
-    modal.querySelector(".mobile-image-modal-backdrop").addEventListener("click", close);
-    modal.querySelector("#closeMobileImageModalBtn").addEventListener("click", close);
+
+    const closeModal = () => modal.remove();
+    modal.querySelector(".mobile-image-fullscreen-backdrop").addEventListener("click", closeModal);
+    modal.querySelector(".mobile-image-fullscreen-close").addEventListener("click", closeModal);
+    modal.querySelector(".mobile-image-fullscreen-container").addEventListener("click", closeModal);
   }
 
   function formatIsoToVnDate(isoStr) {
@@ -89,29 +86,33 @@
     const existing = document.getElementById("mobileSafetyDetailModal");
     if (existing) existing.remove();
 
+    const isLight = (typeof getMobileTheme === "function" && getMobileTheme() === "light") ||
+                    overlay?.classList?.contains("is-light-theme") ||
+                    document.querySelector(".mobile-responsive-overlay")?.classList?.contains("is-light-theme");
+
     const fiveSPeriodId = context?.getActivePeriodId?.(context.SAFETY_PERIOD_TYPE) || "";
     const allAreas = context ? context.getAreasForPeriod(fiveSPeriodId) : [];
     const itemArea = allAreas.find((a) => a.id === item.areaId);
     const zoneLabel = itemArea ? `Zone ${itemArea.code} · ${itemArea.departmentHead || itemArea.responsibleName || ''}` : (item.issueLocation || "Zone");
-    const statusText = item.issueStatus === "closed" ? "Đã khắc phục" : item.issueStatus === "in_progress" ? "Đang xử lý" : "Chờ xử lý";
-    const statusClass = item.issueStatus === "closed" ? "status-closed" : item.issueStatus === "in_progress" ? "status-progress" : "status-open";
-    
-    const issueLevel = String(item.issueLevel || item.level || item.riskLevel || "").trim().toUpperCase();
-    const issueType = String(item.issueType || item.stop6 || item.stop_6 || item.issue_type || "").trim();
-    const foundChannelText = item.foundChannel === "head" ? "Trưởng bộ phận" : item.foundChannel === "assessor" ? "Assessor" : "Công nhân";
-    const itemDate = item.issueDay && item.issueMonth ? `${String(item.issueDay).padStart(2, '0')}/${String(item.issueMonth).padStart(2, '0')}` : (item.updatedAt ? new Date(item.updatedAt).toLocaleDateString("vi-VN") : "");
+
+    const rawLevel = String(item.issueLevel || item.level || item.riskLevel || "").trim().toUpperCase();
+    const rawStop6 = String(item.issueType || item.stop6 || item.stop_6 || item.issue_type || "").trim();
+    const statusVal = item.issueStatus || "open";
+
+    let modalPhotoUrl = item.photoDataUrl || "";
+    let modalAfterPhotoUrl = item.afterPhotoDataUrl || "";
 
     const modal = document.createElement("div");
     modal.id = "mobileSafetyDetailModal";
-    modal.className = "mobile-safety-detail-modal";
+    modal.className = "mobile-safety-detail-modal" + (isLight ? " is-light-theme" : "");
     modal.innerHTML = `
       <div class="detail-modal-backdrop"></div>
       <div class="detail-modal-content">
         
         <div class="detail-modal-header">
           <div class="detail-header-title">
-            <i class="fa-solid fa-shield-halved text-brand-400"></i>
-            <span>Chi tiết báo cáo mối nguy</span>
+            <i class="fa-solid fa-pen-to-square text-brand-400"></i>
+            <span>Sửa Báo Cáo Mối Nguy</span>
           </div>
           <button type="button" class="btn-close-modal" id="closeDetailModalBtn">
             <i class="fa-solid fa-xmark"></i>
@@ -119,91 +120,171 @@
         </div>
 
         <div class="detail-modal-body">
-          <!-- Status Banner -->
+          <!-- Zone & Status Bar -->
           <div class="detail-meta-top">
-            <span class="detail-zone-chip">${escapeHtml(zoneLabel)}</span>
-            <span class="history-status-badge ${statusClass}">${statusText}</span>
-          </div>
-
-          <!-- Prominent Tags: Level & STOP 6 -->
-          <div class="detail-tags-row">
-            <div class="detail-tag-item">
-              <span class="detail-tag-label">Cấp bậc:</span>
-              <span class="history-pill ${issueLevel === 'A' ? 'pill-level-a' : issueLevel === 'B' ? 'pill-level-b' : issueLevel === 'C' ? 'pill-level-c' : 'pill-level-none'} font-bold">
-                ${issueLevel ? `Cấp độ ${escapeHtml(issueLevel)}` : 'Chưa phân loại'}
-              </span>
-            </div>
-            <div class="detail-tag-item">
-              <span class="detail-tag-label">STOP 6:</span>
-              <span class="history-pill pill-stop6 font-bold">
-                <i class="fa-solid fa-triangle-exclamation"></i> ${escapeHtml(issueType || 'Chưa phân loại')}
-              </span>
+            <span class="detail-zone-chip"><i class="fa-solid fa-location-dot"></i> ${escapeHtml(zoneLabel)}</span>
+            <div class="modal-status-select-wrap">
+              <select id="modalDetailStatus" class="modal-status-select ${statusVal}">
+                <option value="open" ${statusVal === 'open' ? 'selected' : ''}>Chưa xử lý</option>
+                <option value="in_progress" ${statusVal === 'in_progress' ? 'selected' : ''}>Đang xử lý</option>
+                <option value="overdue" ${statusVal === 'overdue' ? 'selected' : ''}>Quá hạn</option>
+                <option value="closed" ${statusVal === 'closed' ? 'selected' : ''}>Đã khắc phục</option>
+              </select>
             </div>
           </div>
 
-          <!-- Description -->
-          <div class="detail-section">
-            <span class="detail-section-label">Mô tả mối nguy hiểm:</span>
-            <p class="detail-description-text">${escapeHtml(item.note || 'Không có mô tả')}</p>
+          <!-- STOP 6 & Level Selection Grid -->
+          <div class="modal-form-grid-2">
+            <div class="modal-form-group">
+              <label class="modal-form-label">Cấp bậc nguy cơ</label>
+              <select id="modalDetailLevel" class="modal-form-select">
+                <option value="" ${!rawLevel ? 'selected' : ''}>Chưa phân loại</option>
+                <option value="A" ${rawLevel === 'A' ? 'selected' : ''}>Cấp độ A (Nghiêm trọng)</option>
+                <option value="B" ${rawLevel === 'B' ? 'selected' : ''}>Cấp độ B</option>
+                <option value="C" ${rawLevel === 'C' ? 'selected' : ''}>Cấp độ C (Nhẹ)</option>
+              </select>
+            </div>
+            <div class="modal-form-group">
+              <label class="modal-form-label">Phân loại STOP 6</label>
+              <select id="modalDetailStop6" class="modal-form-select">
+                <option value="" ${!rawStop6 ? 'selected' : ''}>Chưa phân loại</option>
+                <option value="1-Kẹp,kẹt" ${rawStop6 === '1-Kẹp,kẹt' ? 'selected' : ''}>1-Kẹp, kẹt</option>
+                <option value="2-Vật nặng" ${rawStop6 === '2-Vật nặng' ? 'selected' : ''}>2-Vật nặng</option>
+                <option value="3-Xe cộ" ${rawStop6 === '3-Xe cộ' ? 'selected' : ''}>3-Xe cộ</option>
+                <option value="4-Rơi,ngã" ${rawStop6 === '4-Rơi,ngã' ? 'selected' : ''}>4-Rơi, ngã</option>
+                <option value="5-Điện giật" ${rawStop6 === '5-Điện giật' ? 'selected' : ''}>5-Điện giật</option>
+                <option value="6-Cháy nổ" ${rawStop6 === '6-Cháy nổ' ? 'selected' : ''}>6-Cháy nổ</option>
+                <option value="7-Loại khác" ${rawStop6 === '7-Loại khác' ? 'selected' : ''}>7-Loại khác</option>
+              </select>
+            </div>
           </div>
 
-          <!-- Info Grid -->
-          <div class="detail-info-grid">
-            <div class="detail-info-cell">
-              <span class="cell-label">Ngày phát hiện</span>
-              <span class="cell-val font-mono">${escapeHtml(itemDate || '—')}</span>
-            </div>
-            <div class="detail-info-cell">
-              <span class="cell-label">Phát hiện bởi (Kênh)</span>
-              <span class="cell-val">${escapeHtml(foundChannelText)}</span>
-            </div>
-            <div class="detail-info-cell">
-              <span class="cell-label">Tên người phát hiện</span>
-              <span class="cell-val">${escapeHtml(item.issueFoundBy || '—')}</span>
-            </div>
-            <div class="detail-info-cell">
-              <span class="cell-label">Mã nhân viên</span>
-              <span class="cell-val font-mono">${escapeHtml(item.employeeCode || '—')}</span>
-            </div>
+          <!-- Description (Mô tả mối nguy hiểm) -->
+          <div class="modal-form-group">
+            <label class="modal-form-label">Mô tả mối nguy hiểm</label>
+            <textarea id="modalDetailNote" class="modal-form-textarea" rows="2" placeholder="Nhập mô tả chi tiết mối nguy...">${escapeHtml(item.note || '')}</textarea>
           </div>
 
-          <!-- Countermeasure Details (if any) -->
-          ${item.improvementContent || item.actionOwner || item.actionPlan || item.completionDate ? `
-            <div class="detail-section detail-countermeasure-box">
-              <span class="detail-section-label text-emerald-400"><i class="fa-solid fa-wrench"></i> Đối sách cải tiến:</span>
-              ${item.improvementContent ? `<p class="detail-countermeasure-text">${escapeHtml(item.improvementContent)}</p>` : ''}
-              <div class="detail-info-grid" style="margin-top: 6px;">
-                ${item.actionOwner ? `<div class="detail-info-cell"><span class="cell-label">Đảm nhiệm</span><span class="cell-val">${escapeHtml(item.actionOwner)}</span></div>` : ''}
-                ${item.actionPlan ? `<div class="detail-info-cell"><span class="cell-label">Kế hoạch</span><span class="cell-val">${escapeHtml(item.actionPlan)}</span></div>` : ''}
-                ${item.completionDate ? `<div class="detail-info-cell"><span class="cell-label">Ngày hoàn thành</span><span class="cell-val font-mono">${escapeHtml(formatIsoToVnDate(item.completionDate))}</span></div>` : ''}
+          <!-- Photo 1: Ảnh hiện trường (Edit, Add & Delete) -->
+          <div class="modal-form-group">
+            <label class="modal-form-label"><i class="fa-solid fa-camera"></i> Ảnh hiện trường</label>
+            <div class="modal-photo-upload-box" id="modalPhotoBox1">
+              <input type="file" id="modalPhotoInput1" accept="image/*" capture="environment" class="photo-file-input ${modalPhotoUrl ? 'is-hidden' : ''}">
+              
+              <div id="modalPhotoPlaceholder1" class="photo-placeholder ${modalPhotoUrl ? 'is-hidden' : ''}">
+                <div class="photo-icon-circle">
+                  <i class="fa-solid fa-image"></i>
+                </div>
+                <p class="photo-primary-prompt">Chụp / Đính kèm ảnh hiện trường</p>
+                <div class="photo-action-chip">
+                  <i class="fa-solid fa-plus"></i> Thêm / Tải ảnh mới
+                </div>
+              </div>
+
+              <div id="modalPhotoWrap1" class="photo-preview-wrap ${modalPhotoUrl ? '' : 'is-hidden'}">
+                <img id="modalPhotoImg1" src="${modalPhotoUrl || ''}" alt="Ảnh hiện trường" class="photo-preview-img cursor-pointer" data-preview-img="${modalPhotoUrl || ''}" title="Chạm để xem phóng to">
+                <div class="photo-preview-actions">
+                  <button type="button" id="modalRetakePhotoBtn1" class="photo-btn retake-btn" title="Đổi / Chụp lại ảnh khác">
+                    <i class="fa-solid fa-arrows-rotate"></i>
+                    <span>Đổi ảnh</span>
+                  </button>
+                  <button type="button" id="modalRemovePhotoBtn1" class="photo-btn delete-btn" title="Xóa ảnh này">
+                    <i class="fa-solid fa-trash-can"></i>
+                    <span>Xóa ảnh</span>
+                  </button>
+                </div>
+                <div class="photo-attached-badge">
+                  <i class="fa-solid fa-circle-check"></i> Ảnh hiện trường (Chạm xem)
+                </div>
               </div>
             </div>
-          ` : ''}
+          </div>
 
-          <!-- Photos -->
-          ${item.photoDataUrl || item.afterPhotoDataUrl ? `
-            <div class="detail-photos-row">
-              ${item.photoDataUrl ? `
-                <div class="detail-photo-card" data-preview-img="${item.photoDataUrl}">
-                  <img src="${item.photoDataUrl}" alt="Ảnh hiện trường">
-                  <span>Ảnh hiện trường (Chạm xem)</span>
-                </div>
-              ` : ''}
-              ${item.afterPhotoDataUrl ? `
-                <div class="detail-photo-card" data-preview-img="${item.afterPhotoDataUrl}">
-                  <img src="${item.afterPhotoDataUrl}" alt="Ảnh sau cải tiến">
-                  <span>Ảnh sau cải tiến (Chạm xem)</span>
-                </div>
-              ` : ''}
+          <!-- Info Grid (Finder & Channel) -->
+          <div class="modal-form-grid-2">
+            <div class="modal-form-group">
+              <label class="modal-form-label">Phát hiện bởi (kênh)</label>
+              <select id="modalDetailFoundChannel" class="modal-form-select">
+                <option value="worker" ${item.foundChannel === 'worker' ? 'selected' : ''}>Công nhân</option>
+                <option value="head" ${item.foundChannel === 'head' ? 'selected' : ''}>Trưởng bộ phận</option>
+                <option value="assessor" ${item.foundChannel === 'assessor' ? 'selected' : ''}>Assessor</option>
+              </select>
             </div>
-          ` : ''}
+            <div class="modal-form-group">
+              <label class="modal-form-label">Tên người phát hiện</label>
+              <input type="text" id="modalDetailFoundBy" class="modal-form-input" value="${escapeHtml(item.issueFoundBy || '')}" placeholder="Tên người phát hiện...">
+            </div>
+          </div>
+
+          <div class="modal-form-grid-2">
+            <div class="modal-form-group">
+              <label class="modal-form-label">Mã nhân viên</label>
+              <input type="text" id="modalDetailEmployeeCode" class="modal-form-input" value="${escapeHtml(item.employeeCode || '')}" placeholder="Mã NV...">
+            </div>
+            <div class="modal-form-group">
+              <label class="modal-form-label">Ngày hoàn thành</label>
+              <input type="date" id="modalDetailCompletionDate" class="modal-form-input" value="${escapeHtml(item.completionDate ? item.completionDate.split('T')[0] : '')}">
+            </div>
+          </div>
+
+          <!-- Improvement / Countermeasure Details -->
+          <div class="modal-form-group">
+            <label class="modal-form-label text-emerald-400"><i class="fa-solid fa-wrench"></i> Đối sách cải tiến, xử lý</label>
+            <textarea id="modalDetailImprovement" class="modal-form-textarea" rows="2" placeholder="Nội dung phương án cải tiến / xử lý...">${escapeHtml(item.improvementContent || '')}</textarea>
+          </div>
+
+          <!-- Photo 2: Ảnh sau cải tiến (Edit, Add & Delete) -->
+          <div class="modal-form-group">
+            <label class="modal-form-label text-emerald-400"><i class="fa-solid fa-camera"></i> Ảnh sau cải tiến (nếu có)</label>
+            <div class="modal-photo-upload-box" id="modalPhotoBox2">
+              <input type="file" id="modalPhotoInput2" accept="image/*" capture="environment" class="photo-file-input ${modalAfterPhotoUrl ? 'is-hidden' : ''}">
+              
+              <div id="modalPhotoPlaceholder2" class="photo-placeholder ${modalAfterPhotoUrl ? 'is-hidden' : ''}">
+                <div class="photo-icon-circle">
+                  <i class="fa-solid fa-image"></i>
+                </div>
+                <p class="photo-primary-prompt">Chụp / Đính kèm ảnh sau cải tiến</p>
+                <div class="photo-action-chip">
+                  <i class="fa-solid fa-plus"></i> Thêm ảnh đối sách
+                </div>
+              </div>
+
+              <div id="modalPhotoWrap2" class="photo-preview-wrap ${modalAfterPhotoUrl ? '' : 'is-hidden'}">
+                <img id="modalPhotoImg2" src="${modalAfterPhotoUrl || ''}" alt="Ảnh sau cải tiến" class="photo-preview-img cursor-pointer" data-preview-img="${modalAfterPhotoUrl || ''}" title="Chạm để xem phóng to">
+                <div class="photo-preview-actions">
+                  <button type="button" id="modalRetakePhotoBtn2" class="photo-btn retake-btn" title="Đổi / Chụp lại ảnh khác">
+                    <i class="fa-solid fa-arrows-rotate"></i>
+                    <span>Đổi ảnh</span>
+                  </button>
+                  <button type="button" id="modalRemovePhotoBtn2" class="photo-btn delete-btn" title="Xóa ảnh này">
+                    <i class="fa-solid fa-trash-can"></i>
+                    <span>Xóa ảnh</span>
+                  </button>
+                </div>
+                <div class="photo-attached-badge">
+                  <i class="fa-solid fa-circle-check"></i> Ảnh sau cải tiến (Chạm xem)
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="modal-form-grid-2">
+            <div class="modal-form-group">
+              <label class="modal-form-label">Đảm nhiệm (PIC)</label>
+              <input type="text" id="modalDetailActionOwner" class="modal-form-input" value="${escapeHtml(item.actionOwner || '')}" placeholder="Người đảm nhiệm...">
+            </div>
+            <div class="modal-form-group">
+              <label class="modal-form-label">Kế hoạch</label>
+              <input type="text" id="modalDetailActionPlan" class="modal-form-input" value="${escapeHtml(item.actionPlan || '')}" placeholder="Kế hoạch xử lý...">
+            </div>
+          </div>
 
         </div>
 
         <!-- Action Buttons Footer -->
         <div class="detail-modal-footer">
-          <button type="button" class="btn-detail-edit" id="btnDetailEdit">
-            <i class="fa-solid fa-pen-to-square"></i> SỬA BÁO CÁO
+          <button type="button" class="btn-detail-save" id="btnDetailSave">
+            <i class="fa-solid fa-floppy-disk"></i> LƯU THAY ĐỔI
           </button>
           <button type="button" class="btn-detail-delete" id="btnDetailDelete">
             <i class="fa-solid fa-trash-can"></i> XÓA BÁO CÁO
@@ -222,26 +303,203 @@
     // Lightbox for photos in detail modal
     modal.querySelectorAll("[data-preview-img]").forEach((el) => {
       el.addEventListener("click", (e) => {
+        // Only trigger lightbox if user tapped on the image itself, not on action buttons
+        if (e.target.closest(".photo-btn")) return;
         e.preventDefault();
         e.stopPropagation();
-        openMobileImageModal(el.dataset.previewImg, "Ảnh báo cáo");
+        const src = el.dataset.previewImg || el.src;
+        if (src) openMobileImageModal(src);
       });
     });
 
-    // Edit button click inside detail modal
-    modal.querySelector("#btnDetailEdit")?.addEventListener("click", () => {
-      editingSafetyRecordId = item.id;
-      uploadedSafetyPhotoData = item.photoDataUrl || "";
-      uploadedSafetyAfterPhotoData = item.afterPhotoDataUrl || "";
-      closeModal();
-      renderSafetyScreen(overlay, context);
-      const formEl = overlay.querySelector("#mobileSafetyForm");
-      formEl?.scrollIntoView({ behavior: "smooth", block: "start" });
-      overlay.querySelector("#mobileSafetyDescription")?.focus();
+    // Wire Photo 1 (Ảnh hiện trường) events
+    const fileInput1 = modal.querySelector("#modalPhotoInput1");
+    const placeholder1 = modal.querySelector("#modalPhotoPlaceholder1");
+    const wrap1 = modal.querySelector("#modalPhotoWrap1");
+    const img1 = modal.querySelector("#modalPhotoImg1");
+
+    if (fileInput1) {
+      fileInput1.addEventListener("change", (e) => {
+        const file = e.target.files?.[0];
+        if (file) {
+          const reader = new FileReader();
+          reader.onload = (ev) => {
+            modalPhotoUrl = ev.target.result;
+            if (img1) {
+              img1.src = modalPhotoUrl;
+              img1.dataset.previewImg = modalPhotoUrl;
+            }
+            placeholder1?.classList.add("is-hidden");
+            wrap1?.classList.remove("is-hidden");
+            fileInput1?.classList.add("is-hidden");
+          };
+          reader.readAsDataURL(file);
+        }
+      });
+    }
+
+    modal.querySelector("#modalRetakePhotoBtn1")?.addEventListener("click", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      fileInput1?.classList.remove("is-hidden");
+      fileInput1?.click();
+    });
+
+    modal.querySelector("#modalRemovePhotoBtn1")?.addEventListener("click", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      modalPhotoUrl = "";
+      if (fileInput1) fileInput1.value = "";
+      if (img1) {
+        img1.src = "";
+        img1.dataset.previewImg = "";
+      }
+      wrap1?.classList.add("is-hidden");
+      placeholder1?.classList.remove("is-hidden");
+      fileInput1?.classList.remove("is-hidden");
+    });
+
+    // Wire Photo 2 (Ảnh sau cải tiến) events
+    const fileInput2 = modal.querySelector("#modalPhotoInput2");
+    const placeholder2 = modal.querySelector("#modalPhotoPlaceholder2");
+    const wrap2 = modal.querySelector("#modalPhotoWrap2");
+    const img2 = modal.querySelector("#modalPhotoImg2");
+
+    if (fileInput2) {
+      fileInput2.addEventListener("change", (e) => {
+        const file = e.target.files?.[0];
+        if (file) {
+          const reader = new FileReader();
+          reader.onload = (ev) => {
+            modalAfterPhotoUrl = ev.target.result;
+            if (img2) {
+              img2.src = modalAfterPhotoUrl;
+              img2.dataset.previewImg = modalAfterPhotoUrl;
+            }
+            placeholder2?.classList.add("is-hidden");
+            wrap2?.classList.remove("is-hidden");
+            fileInput2?.classList.add("is-hidden");
+          };
+          reader.readAsDataURL(file);
+        }
+      });
+    }
+
+    modal.querySelector("#modalRetakePhotoBtn2")?.addEventListener("click", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      fileInput2?.classList.remove("is-hidden");
+      fileInput2?.click();
+    });
+
+    modal.querySelector("#modalRemovePhotoBtn2")?.addEventListener("click", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      modalAfterPhotoUrl = "";
+      if (fileInput2) fileInput2.value = "";
+      if (img2) {
+        img2.src = "";
+        img2.dataset.previewImg = "";
+      }
+      wrap2?.classList.add("is-hidden");
+      placeholder2?.classList.remove("is-hidden");
+      fileInput2?.classList.remove("is-hidden");
+    });
+
+    // Save button click inside direct edit modal
+    modal.querySelector("#btnDetailSave")?.addEventListener("click", async () => {
+      if (!checkSafetyPermission(context)) {
+        showMobileToast("Tài khoản của bạn không có quyền sửa báo cáo mối nguy!", true);
+        return;
+      }
+
+      const note = modal.querySelector("#modalDetailNote")?.value?.trim() || "";
+      const issueStatus = modal.querySelector("#modalDetailStatus")?.value || "open";
+      const issueLevel = modal.querySelector("#modalDetailLevel")?.value || "";
+      const issueType = modal.querySelector("#modalDetailStop6")?.value || "";
+      const foundChannel = modal.querySelector("#modalDetailFoundChannel")?.value || "worker";
+      const issueFoundBy = modal.querySelector("#modalDetailFoundBy")?.value?.trim() || "";
+      const employeeCode = modal.querySelector("#modalDetailEmployeeCode")?.value?.trim() || "";
+      const improvementContent = modal.querySelector("#modalDetailImprovement")?.value?.trim() || "";
+      const actionOwner = modal.querySelector("#modalDetailActionOwner")?.value?.trim() || "";
+      const actionPlan = modal.querySelector("#modalDetailActionPlan")?.value?.trim() || "";
+      const completionDate = modal.querySelector("#modalDetailCompletionDate")?.value || "";
+
+      if (!note) {
+        showMobileToast("Vui lòng nhập mô tả Mối nguy hiểm!", true);
+        return;
+      }
+
+      let finalPhotoDataUrl = modalPhotoUrl;
+      let finalPhotoName = item.photoName || "anh-moi-nguy.jpg";
+      const file1 = fileInput1?.files?.[0];
+      if (file1 && typeof context?.prepareScorePhoto === "function") {
+        try {
+          const prepared1 = await context.prepareScorePhoto(file1, null, false, fiveSPeriodId);
+          finalPhotoDataUrl = prepared1.photoDataUrl || finalPhotoDataUrl;
+          finalPhotoName = prepared1.photoName || finalPhotoName;
+        } catch (_) {}
+      }
+
+      let finalAfterPhotoDataUrl = modalAfterPhotoUrl;
+      let finalAfterPhotoName = item.afterPhotoName || "anh-sau-cai-tien.jpg";
+      const file2 = fileInput2?.files?.[0];
+      if (file2 && typeof context?.prepareScorePhoto === "function") {
+        try {
+          const prepared2 = await context.prepareScorePhoto(file2, null, false, fiveSPeriodId);
+          finalAfterPhotoDataUrl = prepared2.photoDataUrl || finalAfterPhotoDataUrl;
+          finalAfterPhotoName = prepared2.photoName || finalAfterPhotoName;
+        } catch (_) {}
+      }
+
+      const now = new Date();
+      const updatedRecord = {
+        ...item,
+        note,
+        issueStatus,
+        issueLevel,
+        issueType,
+        foundChannel,
+        issueFoundBy,
+        employeeCode,
+        improvementContent,
+        actionOwner,
+        actionPlan,
+        completionDate,
+        photoDataUrl: finalPhotoDataUrl,
+        photoName: finalPhotoName,
+        afterPhotoDataUrl: finalAfterPhotoDataUrl,
+        afterPhotoName: finalAfterPhotoName,
+        updatedAt: now.toISOString(),
+      };
+
+      try {
+        if (context?.state?.safetyRecords) {
+          const idx = context.state.safetyRecords.findIndex((r) => r.id === item.id);
+          if (idx >= 0) {
+            context.state.safetyRecords[idx] = updatedRecord;
+          }
+        }
+
+        if (typeof context?.saveSafetyRecord === "function") {
+          await context.saveSafetyRecord(updatedRecord);
+        }
+
+        closeModal();
+        showMobileToast("Đã lưu thay đổi báo cáo thành công!");
+        renderSafetyScreen(overlay, context);
+      } catch (err) {
+        console.error("Lỗi khi cập nhật báo cáo:", err);
+        showMobileToast("Lỗi khi lưu: " + (err.message || err), true);
+      }
     });
 
     // Delete button click inside detail modal
     modal.querySelector("#btnDetailDelete")?.addEventListener("click", async () => {
+      if (!checkSafetyPermission(context)) {
+        showMobileToast("Tài khoản của bạn không có quyền xóa báo cáo mối nguy!", true);
+        return;
+      }
       if (!confirm("Bạn có chắc chắn muốn xóa báo cáo mối nguy này không?")) {
         return;
       }
@@ -285,19 +543,80 @@
     return null;
   }
 
+  function checkFiveSPermission(context) {
+    const user = context?.currentUser;
+    if (!user) return false;
+    if (typeof context?.isFiveSAssessor === "function") {
+      return context.isFiveSAssessor(user);
+    }
+    return true;
+  }
+
+  function checkSafetyPermission(context) {
+    const user = context?.currentUser;
+    if (!user) return false;
+    if (typeof context?.canUseSafety === "function") {
+      return context.canUseSafety(user);
+    }
+    return true;
+  }
+
+  function getMobileTheme() {
+    return localStorage.getItem("mobile_theme") || "dark";
+  }
+
+  function applyMobileTheme(overlay, theme) {
+    if (!overlay) return;
+    const isLight = theme === "light";
+    overlay.classList.add("theme-toggling");
+    overlay.classList.toggle("is-light-theme", isLight);
+    const themeBtn = overlay.querySelector("#mobileThemeToggleBtn");
+    if (themeBtn) {
+      themeBtn.title = isLight ? "Chuyển sang giao diện Tối" : "Chuyển sang giao diện Sáng";
+      themeBtn.innerHTML = `<i class="fa-solid ${isLight ? 'fa-moon text-amber-500' : 'fa-sun text-amber-400'}"></i>`;
+    }
+    requestAnimationFrame(() => {
+      overlay.classList.remove("theme-toggling");
+    });
+  }
+
   // Open Mobile Prototype View
   function openMobilePrototype(initialTab = "safety", passedContext = null) {
     if (passedContext) {
       currentAppContext = passedContext;
     }
     const context = getAppContext();
-    activeTab = initialTab === "5s" ? "5s" : "safety";
+    const can5S = checkFiveSPermission(context);
+    const canSafety = checkSafetyPermission(context);
+
+    if (initialTab === "5s") {
+      if (can5S) {
+        activeTab = "5s";
+      } else if (canSafety) {
+        activeTab = "safety";
+        showMobileToast("Tài khoản không có quyền chấm 5S, đã chuyển sang Đánh Giá An Toàn.");
+      } else {
+        showMobileToast("Tài khoản của bạn không có quyền sử dụng giao diện Mobile.", true);
+        return;
+      }
+    } else {
+      if (canSafety) {
+        activeTab = "safety";
+      } else if (can5S) {
+        activeTab = "5s";
+        showMobileToast("Tài khoản không có quyền đánh giá An Toàn, đã chuyển sang Chấm Điểm 5S.");
+      } else {
+        showMobileToast("Tài khoản của bạn không có quyền sử dụng giao diện Mobile.", true);
+        return;
+      }
+    }
 
     // Close existing if open
     closeMobilePrototype();
 
+    const currentTheme = getMobileTheme();
     const overlay = document.createElement("div");
-    overlay.className = "mobile-responsive-overlay";
+    overlay.className = "mobile-responsive-overlay" + (currentTheme === "light" ? " is-light-theme" : "");
     overlay.id = "mobileProtoOverlay";
 
     // Render skeleton
@@ -307,18 +626,19 @@
 
     // Initialize zones & handlers
     initMobilePrototype(overlay, context);
+
+    // Update browser URL route
+    const targetRoute = activeTab === "5s" ? "/mobile/5s" : "/mobile/safety";
+    context?.pushRoute?.(targetRoute);
   }
 
   // Close Mobile Prototype
   function closeMobilePrototype() {
     const existing = document.getElementById("mobileProtoOverlay");
     if (existing) {
-      existing.classList.add("is-closing");
-      setTimeout(() => {
-        existing.remove();
-        document.body.classList.remove("mobile-proto-open");
-      }, 200);
+      existing.remove();
     }
+    document.body.classList.remove("mobile-proto-open");
   }
 
   // Build Skeleton HTML
@@ -328,6 +648,14 @@
     const fiveSPeriodId = context?.getActivePeriodId?.(context.FIVE_S_PERIOD_TYPE) || "";
     const fiveSPeriod = context?.getPeriod?.(fiveSPeriodId);
     const periodBadgeText = fiveSPeriod ? context.periodLabel(fiveSPeriod) : "Kỳ đang mở";
+
+    const can5S = checkFiveSPermission(context);
+    const canSafety = checkSafetyPermission(context);
+    const currentTheme = getMobileTheme();
+
+    const isAdmin = typeof context?.isAdminAccount === "function" && context.isAdminAccount(user);
+    const isZoneOwner = typeof context?.isZoneOwnerAccount === "function" && context.isZoneOwnerAccount(user);
+    const roleTitle = isZoneOwner ? "Quản lý zone" : isAdmin ? "Admin" : "Assessor";
 
     return `
       <!-- Desktop Top Control Bar (Hidden on small mobile screens) -->
@@ -355,17 +683,20 @@
         <div class="mobile-nav-header">
           <div class="nav-header-brand-row">
             <div class="nav-header-logo-group">
-              <div class="nav-header-avatar">LG</div>
+              <img src="images/Logo.jpg" alt="LeGroup Logo" class="nav-header-avatar-img">
               <div>
                 <h1 class="nav-header-title">LeGroup Factory</h1>
                 <p class="nav-header-assessor">
-                  <i class="fa-solid fa-user-check"></i>
-                  <span>Assessor: <strong id="mobileNavAssessorName">${escapeHtml(assessorName)}</strong></span>
+                  <i class="fa-solid ${isZoneOwner ? 'fa-user-gear text-emerald-400' : isAdmin ? 'fa-user-shield text-amber-400' : 'fa-user-check text-sky-400'}"></i>
+                  <span>${escapeHtml(roleTitle)}: <strong id="mobileNavAssessorName">${escapeHtml(assessorName)}</strong></span>
                 </p>
               </div>
             </div>
             <div class="nav-header-period-pill">
               <span class="period-pill-text">${escapeHtml(periodBadgeText)}</span>
+              <button type="button" id="mobileThemeToggleBtn" class="mobile-theme-toggle-btn" title="${currentTheme === 'light' ? 'Chuyển sang giao diện Tối' : 'Chuyển sang giao diện Sáng'}">
+                <i class="fa-solid ${currentTheme === 'light' ? 'fa-moon text-amber-500' : 'fa-sun text-amber-400'}"></i>
+              </button>
               <button type="button" id="mobileNavCloseBtn" class="mobile-nav-close-btn" title="Đóng">
                 <i class="fa-solid fa-xmark"></i>
               </button>
@@ -374,12 +705,12 @@
 
           <!-- Segmented Tab Switcher -->
           <div class="mobile-tab-switcher">
-            <button type="button" id="mobileTabBtnSafety" class="mobile-tab-btn ${activeTab === 'safety' ? 'is-active-safety' : ''}">
-              <i class="fa-solid fa-triangle-exclamation text-amber-400"></i>
+            <button type="button" id="mobileTabBtnSafety" class="mobile-tab-btn ${activeTab === 'safety' ? 'is-active-safety' : ''} ${!canSafety ? 'is-disabled-tab' : ''}" ${!canSafety ? 'title="Bạn không có quyền đánh giá An Toàn"' : ''}>
+              <i class="fa-solid ${canSafety ? 'fa-triangle-exclamation text-amber-400' : 'fa-lock text-slate-400'}"></i>
               <span>Báo Cáo An Toàn</span>
             </button>
-            <button type="button" id="mobileTabBtn5S" class="mobile-tab-btn ${activeTab === '5s' ? 'is-active-fives' : ''}">
-              <i class="fa-solid fa-clipboard-check text-emerald-400"></i>
+            <button type="button" id="mobileTabBtn5S" class="mobile-tab-btn ${activeTab === '5s' ? 'is-active-fives' : ''} ${!can5S ? 'is-disabled-tab' : ''}" ${!can5S ? 'title="Bạn không có quyền chấm 5S"' : ''}>
+              <i class="fa-solid ${can5S ? 'fa-clipboard-check text-emerald-400' : 'fa-lock text-slate-400'}"></i>
               <span>Chấm Điểm 5S</span>
             </button>
           </div>
@@ -409,9 +740,28 @@
   function initMobilePrototype(overlay, context) {
     // Return button
     const returnBtn = overlay.querySelector("#mobileReturnDashboardBtn");
-    if (returnBtn) returnBtn.addEventListener("click", closeMobilePrototype);
     const closeBtn = overlay.querySelector("#mobileNavCloseBtn");
-    if (closeBtn) closeBtn.addEventListener("click", closeMobilePrototype);
+    const handleClose = () => {
+      closeMobilePrototype();
+      if (typeof context?.setActiveTab === "function") {
+        context.setActiveTab("home");
+      } else if (typeof context?.pushRoute === "function") {
+        context.pushRoute("/home");
+      }
+    };
+    if (returnBtn) returnBtn.addEventListener("click", handleClose);
+    if (closeBtn) closeBtn.addEventListener("click", handleClose);
+
+    // Theme toggle button
+    const themeBtn = overlay.querySelector("#mobileThemeToggleBtn");
+    if (themeBtn) {
+      themeBtn.addEventListener("click", () => {
+        const activeTheme = getMobileTheme();
+        const nextTheme = activeTheme === "light" ? "dark" : "light";
+        localStorage.setItem("mobile_theme", nextTheme);
+        applyMobileTheme(overlay, nextTheme);
+      });
+    }
 
     // Full width toggle
     const toggleWidthBtn = overlay.querySelector("#mobileToggleWidthBtn");
@@ -434,19 +784,30 @@
     const screen5S = overlay.querySelector("#mobileScreen5S");
 
     function switchMobileTab(tab) {
-      activeTab = tab;
       if (tab === "safety") {
+        if (!checkSafetyPermission(context)) {
+          showMobileToast("Tài khoản của bạn không có quyền đánh giá An Toàn!", true);
+          return;
+        }
+        activeTab = "safety";
         tabBtnSafety.className = "mobile-tab-btn is-active-safety";
-        tabBtn5S.className = "mobile-tab-btn";
+        tabBtn5S.className = "mobile-tab-btn" + (!checkFiveSPermission(context) ? " is-disabled-tab" : "");
         screenSafety.classList.remove("is-hidden");
         screen5S.classList.add("is-hidden");
         renderSafetyScreen(overlay, getAppContext());
+        context?.pushRoute?.("/mobile/safety");
       } else {
+        if (!checkFiveSPermission(context)) {
+          showMobileToast("Tài khoản của bạn không có quyền chấm 5S!", true);
+          return;
+        }
+        activeTab = "5s";
         tabBtn5S.className = "mobile-tab-btn is-active-fives";
-        tabBtnSafety.className = "mobile-tab-btn";
+        tabBtnSafety.className = "mobile-tab-btn" + (!checkSafetyPermission(context) ? " is-disabled-tab" : "");
         screen5S.classList.remove("is-hidden");
         screenSafety.classList.add("is-hidden");
         renderFiveSScreen(overlay, getAppContext());
+        context?.pushRoute?.("/mobile/5s");
       }
     }
 
@@ -663,8 +1024,9 @@
               <label class="form-label">Tình trạng</label>
               <div class="select-wrapper">
                 <select id="mobileSafetyIssueStatus" class="form-control form-select">
-                  <option value="open" ${editingRecord?.issueStatus === 'open' || (!editingRecord && true) ? 'selected' : ''}>Chờ xử lý</option>
+                  <option value="open" ${editingRecord?.issueStatus === 'open' || (!editingRecord && true) ? 'selected' : ''}>Chưa xử lý</option>
                   <option value="in_progress" ${editingRecord?.issueStatus === 'in_progress' ? 'selected' : ''}>Đang xử lý</option>
+                  <option value="overdue" ${editingRecord?.issueStatus === 'overdue' ? 'selected' : ''}>Quá hạn</option>
                   <option value="closed" ${editingRecord?.issueStatus === 'closed' ? 'selected' : ''}>Đã khắc phục</option>
                 </select>
                 <i class="fa-solid fa-chevron-down select-chevron"></i>
@@ -780,8 +1142,8 @@
             ` : recentRecords.map((item) => {
               const itemArea = reportableAreas.find((a) => a.id === item.areaId) || allSafetyAreas.find((a) => a.id === item.areaId);
               const zoneLabel = itemArea ? `Zone ${itemArea.code}` : (item.issueLocation || "Zone");
-              const statusText = item.issueStatus === "closed" ? "Đã khắc phục" : item.issueStatus === "in_progress" ? "Đang xử lý" : "Chờ xử lý";
-              const statusClass = item.issueStatus === "closed" ? "status-closed" : item.issueStatus === "in_progress" ? "status-progress" : "status-open";
+              const statusText = item.issueStatus === "closed" ? "Đã khắc phục" : item.issueStatus === "in_progress" ? "Đang xử lý" : item.issueStatus === "overdue" ? "Quá hạn" : "Chưa xử lý";
+              const statusClass = item.issueStatus === "closed" ? "status-closed" : item.issueStatus === "in_progress" ? "status-progress" : item.issueStatus === "overdue" ? "status-overdue" : "status-open";
               const photoThumb = item.photoDataUrl || "images/Logo.jpg";
               const hasPhoto = Boolean(item.photoDataUrl);
               const hasAfterPhoto = Boolean(item.afterPhotoDataUrl);
@@ -998,6 +1360,10 @@
     if (form) {
       form.addEventListener("submit", async (e) => {
         e.preventDefault();
+        if (!checkSafetyPermission(context)) {
+          showMobileToast("Tài khoản của bạn không có quyền đánh giá An toàn!", true);
+          return;
+        }
         const areaId = screen.querySelector("#mobileSafetyZoneSelect")?.value;
         const desc = screen.querySelector("#mobileSafetyDescription")?.value?.trim();
         const issueDate = screen.querySelector("#mobileSafetyIssueDate")?.value || "";
@@ -1130,15 +1496,37 @@
     const screen = overlay.querySelector("#mobileScreen5S");
     if (!screen) return;
 
+    const user = context?.currentUser;
+    const isAdmin = typeof context?.isAdminAccount === "function" && context.isAdminAccount(user);
     const fiveSPeriodId = context?.getActivePeriodId?.(context.FIVE_S_PERIOD_TYPE) || "";
+    const periodOpen = typeof context?.isPeriodOpen === "function"
+      ? context.isPeriodOpen(fiveSPeriodId, context.FIVE_S_PERIOD_TYPE)
+      : true;
+
     const allAreas = context ? context.getAreasForPeriod(fiveSPeriodId) : [];
-    
-    if (!currentFiveSZoneId && allAreas.length > 0) {
+    const allowedAreaIds = (user && !isAdmin && typeof context?.getAllowedAreaIds === "function")
+      ? context.getAllowedAreaIds(user, fiveSPeriodId)
+      : null;
+
+    // Filter assigned areas for non-admin user
+    const assignedAreas = allowedAreaIds ? allAreas.filter((a) => allowedAreaIds.has(a.id)) : allAreas;
+
+    // Default zone selection
+    if (assignedAreas.length > 0) {
+      if (!currentFiveSZoneId || (allowedAreaIds && !allowedAreaIds.has(currentFiveSZoneId))) {
+        currentFiveSZoneId = assignedAreas[0].id;
+      }
+    } else if (!currentFiveSZoneId && allAreas.length > 0) {
       currentFiveSZoneId = allAreas[0].id;
     }
 
-    const selectedArea = allAreas.find((a) => a.id === currentFiveSZoneId) || allAreas[0] || null;
-    const scoreSource = context ? context.SCORE_SOURCE_ASSESSOR : "assessor";
+    const selectedArea = allAreas.find((a) => a.id === currentFiveSZoneId) || assignedAreas[0] || allAreas[0] || null;
+    const isAreaAllowed = !allowedAreaIds || (selectedArea && allowedAreaIds.has(selectedArea.id));
+    const canEditScore = periodOpen && isAreaAllowed;
+
+    const scoreSource = typeof context?.getScoreSourceForAccount === "function"
+      ? context.getScoreSourceForAccount(user)
+      : (context?.SCORE_SOURCE_ASSESSOR || "assessor");
 
     // Build flattened items list
     const flattenedCriteria = buildFlattened5SCriteria(context);
@@ -1146,9 +1534,36 @@
     // Calculate score statistics for selected area
     const stat = calculateArea5SScoreStat(selectedArea, flattenedCriteria, context, fiveSPeriodId, scoreSource);
 
+    // Notice banner HTML
+    let noticeBannerHtml = "";
+    if (!periodOpen) {
+      noticeBannerHtml = `
+        <div class="fives-notice-banner warning">
+          <i class="fa-solid fa-lock"></i>
+          <span>Kỳ đánh giá 5S này hiện không mở. Bạn đang ở chế độ xem, không thể chấm điểm mới.</span>
+        </div>
+      `;
+    } else if (allowedAreaIds && assignedAreas.length === 0) {
+      noticeBannerHtml = `
+        <div class="fives-notice-banner warning">
+          <i class="fa-solid fa-triangle-exclamation"></i>
+          <span>Tài khoản của bạn chưa được phân quyền chấm điểm Zone nào trong kỳ này.</span>
+        </div>
+      `;
+    } else if (!isAreaAllowed && selectedArea) {
+      noticeBannerHtml = `
+        <div class="fives-notice-banner info">
+          <i class="fa-solid fa-eye"></i>
+          <span>Bạn đang xem Zone ${escapeHtml(selectedArea.code)} ở chế độ chỉ xem. Chọn Zone có nhãn (✓ Được chấm) để chấm điểm.</span>
+        </div>
+      `;
+    }
+
     screen.innerHTML = `
       <div class="mobile-fives-container">
         
+        ${noticeBannerHtml}
+
         <!-- Sticky Header: Zone Selector & Live Scoring Progress -->
         <div class="fives-sticky-header">
           <div class="fives-header-top">
@@ -1156,11 +1571,16 @@
               <span class="fives-zone-label">Khu vực kiểm tra</span>
               <div class="select-wrapper-inline">
                 <select id="mobileAuditZoneSelect" class="fives-zone-select">
-                  ${allAreas.map((area) => `
-                    <option value="${escapeHtml(area.id)}" ${area.id === currentFiveSZoneId ? 'selected' : ''}>
-                      Zone ${escapeHtml(area.code)} · ${escapeHtml(context?.getAreaResponsibleNameForPeriod?.(fiveSPeriodId, area) || "")}
-                    </option>
-                  `).join("")}
+                  ${allAreas.map((area) => {
+                    const isAllowed = !allowedAreaIds || allowedAreaIds.has(area.id);
+                    const tag = allowedAreaIds ? (isAllowed ? "✓ " : "🔒 ") : "";
+                    const resp = context?.getAreaResponsibleNameForPeriod?.(fiveSPeriodId, area) || "";
+                    return `
+                      <option value="${escapeHtml(area.id)}" ${area.id === currentFiveSZoneId ? 'selected' : ''}>
+                        ${tag}Zone ${escapeHtml(area.code)} · ${escapeHtml(resp)}
+                      </option>
+                    `;
+                  }).join("")}
                 </select>
                 <i class="fa-solid fa-chevron-down select-chevron-inline"></i>
               </div>
@@ -1185,8 +1605,8 @@
 
         <!-- Instruction Tip -->
         <div class="fives-instruction-tip">
-          <i class="fa-solid fa-hand-pointer text-brand-400 text-xs"></i>
-          <span>Chạm trực tiếp vào ô mô tả tiêu chí (Cấp 1 - Cấp 5) để chọn điểm đánh giá.</span>
+          <i class="fa-solid ${canEditScore ? 'fa-hand-pointer text-brand-400' : 'fa-lock text-amber-400'} text-xs"></i>
+          <span>${canEditScore ? 'Chạm trực tiếp vào ô mô tả tiêu chí (Cấp 1 - Cấp 5) để chọn điểm đánh giá.' : 'Khu vực này ở chế độ chỉ xem.'}</span>
         </div>
 
         <!-- Section Navigation Filter Pills -->
@@ -1473,6 +1893,137 @@
     };
   }
 
+  // Render Single 5S Category Card
+  function renderSingle5SCard(item, area, context, periodId, scoreSource) {
+    let record = null;
+    let currentScore = null;
+    let isNa = false;
+    if (context && typeof context.getScoreRecord === "function") {
+      record = context.getScoreRecord(periodId, area.id, item.itemId, item.criterionId, scoreSource);
+      if (record) {
+        if (record.status === "na") {
+          isNa = true;
+        } else if (Number.isFinite(record.score)) {
+          currentScore = record.score;
+        }
+      }
+    }
+
+    let scorePillClass = "text-slate-400";
+    let scorePillText = "Chưa chấm";
+    if (isNa) {
+      scorePillClass = "text-slate-400 font-semibold";
+      scorePillText = "Không cần chấm (✕)";
+    } else if (currentScore !== null) {
+      if (currentScore <= 2) {
+        scorePillClass = "text-rose-400 font-bold";
+        scorePillText = `Đã chọn: Cấp ${currentScore} (${LEVEL_NAMES[currentScore]})`;
+      } else if (currentScore === 3) {
+        scorePillClass = "text-amber-400 font-bold";
+        scorePillText = `Đã chọn: Cấp ${currentScore} (${LEVEL_NAMES[currentScore]})`;
+      } else {
+        scorePillClass = "text-emerald-400 font-bold";
+        scorePillText = `Đã chọn: Cấp ${currentScore} (${LEVEL_NAMES[currentScore]})`;
+      }
+    }
+
+    return `
+      <div class="fives-card" data-fives-item-id="${item.id}" data-item-raw-id="${item.itemId}" data-criterion-raw-id="${item.criterionId}">
+        
+        <!-- Card Header -->
+        <div class="fives-card-header">
+          <div>
+            <span class="fives-card-category-badge">${escapeHtml(item.category)}</span>
+            <h4 class="fives-card-title">${escapeHtml(item.title)}</h4>
+          </div>
+          <div class="fives-card-badges-right">
+            <span class="fives-phase-badge">${escapeHtml(item.phase)}</span>
+            <span class="fives-score-badge ${scorePillClass}">${scorePillText}</span>
+          </div>
+        </div>
+
+        <!-- All 5 Inline Level Criteria Rows + Không cần chấm option -->
+        <div class="fives-levels-stack">
+          <span class="fives-levels-stack-title">Tiêu chuẩn cấp độ (Chạm để chọn / Chạm lại để hủy chọn):</span>
+          
+          <div class="levels-options-group">
+            ${[1, 2, 3, 4, 5].map((lvl) => {
+              const isSelected = !isNa && currentScore === lvl;
+              const levelDesc = item.levels[lvl] || "Tiêu chuẩn Cấp " + lvl;
+              let levelBoxClass = "level-unselected";
+              let badgeClass = "badge-unselected";
+
+              if (isSelected) {
+                if (lvl <= 2) {
+                  levelBoxClass = "level-selected-low";
+                  badgeClass = "badge-selected-low";
+                } else if (lvl === 3) {
+                  levelBoxClass = "level-selected-mid";
+                  badgeClass = "badge-selected-mid";
+                } else {
+                  levelBoxClass = "level-selected-high";
+                  badgeClass = "badge-selected-high";
+                }
+              }
+
+              return `
+                <div class="fives-level-row ${levelBoxClass}" 
+                     data-action-score="${lvl}"
+                     data-item-id="${item.itemId}"
+                     data-criterion-id="${item.criterionId}"
+                     role="button"
+                     tabindex="0">
+                  
+                  <div class="level-badge-wrap">
+                    <span class="level-num-badge ${badgeClass}">${lvl}</span>
+                  </div>
+
+                  <div class="level-content-wrap">
+                    <div class="level-title-line">
+                      <span class="level-name-label">Cấp ${lvl} - ${LEVEL_NAMES[lvl]}</span>
+                      ${isSelected ? `
+                        <span class="level-chosen-tag ${lvl <= 2 ? 'tag-low' : lvl === 3 ? 'tag-mid' : 'tag-high'}">
+                          <i class="fa-solid fa-circle-check"></i> Đã chọn
+                        </span>
+                      ` : ''}
+                    </div>
+                    <p class="level-desc-text ${isSelected ? 'is-selected-text' : ''}">${escapeHtml(levelDesc)}</p>
+                  </div>
+
+                </div>
+              `;
+            }).join("")}
+
+            <!-- Không cần chấm (Gạch chéo) option -->
+            <div class="fives-level-row level-na-row ${isNa ? 'level-selected-na' : 'level-unselected'}"
+                 data-action-score="na"
+                 data-item-id="${item.itemId}"
+                 data-criterion-id="${item.criterionId}"
+                 role="button"
+                 tabindex="0">
+              <div class="level-badge-wrap">
+                <span class="level-num-badge ${isNa ? 'badge-selected-na' : 'badge-unselected'}">✕</span>
+              </div>
+              <div class="level-content-wrap">
+                <div class="level-title-line">
+                  <span class="level-name-label">Không cần chấm (Gạch chéo)</span>
+                  ${isNa ? `
+                    <span class="level-chosen-tag tag-na">
+                      <i class="fa-solid fa-xmark"></i> Đã gạch chéo
+                    </span>
+                  ` : ''}
+                </div>
+                <p class="level-desc-text ${isNa ? 'is-selected-text' : ''}">Hạng mục này không áp dụng hoặc không cần đánh giá tại khu vực này.</p>
+              </div>
+            </div>
+
+          </div>
+        </div>
+
+      </div>
+    `;
+  }
+
   // Render Category Item Cards
   function render5SItemCards(area, criteriaList, context, periodId, scoreSource) {
     if (!area) return '<div class="p-4 text-center text-slate-400 text-xs">Vui lòng chọn zone để đánh giá.</div>';
@@ -1481,135 +2032,7 @@
       ? criteriaList
       : criteriaList.filter((c) => c.section === activeSectionFilter);
 
-    return filtered.map((item) => {
-      let record = null;
-      let currentScore = null;
-      let isNa = false;
-      if (context && typeof context.getScoreRecord === "function") {
-        record = context.getScoreRecord(periodId, area.id, item.itemId, item.criterionId, scoreSource);
-        if (record) {
-          if (record.status === "na") {
-            isNa = true;
-          } else if (Number.isFinite(record.score)) {
-            currentScore = record.score;
-          }
-        }
-      }
-
-      let scorePillClass = "text-slate-400";
-      let scorePillText = "Chưa chấm";
-      if (isNa) {
-        scorePillClass = "text-slate-400 font-semibold";
-        scorePillText = "Không cần chấm (✕)";
-      } else if (currentScore !== null) {
-        if (currentScore <= 2) {
-          scorePillClass = "text-rose-400 font-bold";
-          scorePillText = `Đã chọn: Cấp ${currentScore} (${LEVEL_NAMES[currentScore]})`;
-        } else if (currentScore === 3) {
-          scorePillClass = "text-amber-400 font-bold";
-          scorePillText = `Đã chọn: Cấp ${currentScore} (${LEVEL_NAMES[currentScore]})`;
-        } else {
-          scorePillClass = "text-emerald-400 font-bold";
-          scorePillText = `Đã chọn: Cấp ${currentScore} (${LEVEL_NAMES[currentScore]})`;
-        }
-      }
-
-      return `
-        <div class="fives-card" data-fives-item-id="${item.id}" data-item-raw-id="${item.itemId}" data-criterion-raw-id="${item.criterionId}">
-          
-          <!-- Card Header -->
-          <div class="fives-card-header">
-            <div>
-              <span class="fives-card-category-badge">${escapeHtml(item.category)}</span>
-              <h4 class="fives-card-title">${escapeHtml(item.title)}</h4>
-            </div>
-            <div class="fives-card-badges-right">
-              <span class="fives-phase-badge">${escapeHtml(item.phase)}</span>
-              <span class="fives-score-badge ${scorePillClass}">${scorePillText}</span>
-            </div>
-          </div>
-
-          <!-- All 5 Inline Level Criteria Rows + Không cần chấm option -->
-          <div class="fives-levels-stack">
-            <span class="fives-levels-stack-title">Tiêu chuẩn cấp độ (Chạm để chọn / Chạm lại để hủy chọn):</span>
-            
-            <div class="levels-options-group">
-              ${[1, 2, 3, 4, 5].map((lvl) => {
-                const isSelected = !isNa && currentScore === lvl;
-                const levelDesc = item.levels[lvl] || "Tiêu chuẩn Cấp " + lvl;
-                let levelBoxClass = "level-unselected";
-                let badgeClass = "badge-unselected";
-
-                if (isSelected) {
-                  if (lvl <= 2) {
-                    levelBoxClass = "level-selected-low";
-                    badgeClass = "badge-selected-low";
-                  } else if (lvl === 3) {
-                    levelBoxClass = "level-selected-mid";
-                    badgeClass = "badge-selected-mid";
-                  } else {
-                    levelBoxClass = "level-selected-high";
-                    badgeClass = "badge-selected-high";
-                  }
-                }
-
-                return `
-                  <div class="fives-level-row ${levelBoxClass}" 
-                       data-action-score="${lvl}"
-                       data-item-id="${item.itemId}"
-                       data-criterion-id="${item.criterionId}"
-                       role="button"
-                       tabindex="0">
-                    
-                    <div class="level-badge-wrap">
-                      <span class="level-num-badge ${badgeClass}">${lvl}</span>
-                    </div>
-
-                    <div class="level-content-wrap">
-                      <div class="level-title-line">
-                        <span class="level-name-label">Cấp ${lvl} - ${LEVEL_NAMES[lvl]}</span>
-                        ${isSelected ? `
-                          <span class="level-chosen-tag ${lvl <= 2 ? 'tag-low' : lvl === 3 ? 'tag-mid' : 'tag-high'}">
-                            <i class="fa-solid fa-circle-check"></i> Đã chọn
-                          </span>
-                        ` : ''}
-                      </div>
-                      <p class="level-desc-text ${isSelected ? 'is-selected-text' : ''}">${escapeHtml(levelDesc)}</p>
-                    </div>
-
-                  </div>
-                `;
-              }).join("")}
-
-              <!-- Không cần chấm (Gạch chéo) option -->
-              <div class="fives-level-row level-na-row ${isNa ? 'level-selected-na' : 'level-unselected'}"
-                   data-action-score="na"
-                   data-item-id="${item.itemId}"
-                   data-criterion-id="${item.criterionId}"
-                   role="button"
-                   tabindex="0">
-                <div class="level-badge-wrap">
-                  <span class="level-num-badge ${isNa ? 'badge-selected-na' : 'badge-unselected'}">✕</span>
-                </div>
-                <div class="level-content-wrap">
-                  <div class="level-title-line">
-                    <span class="level-name-label">Không cần chấm (Gạch chéo)</span>
-                    ${isNa ? `
-                      <span class="level-chosen-tag tag-na">
-                        <i class="fa-solid fa-xmark"></i> Đã gạch chéo
-                      </span>
-                    ` : ''}
-                  </div>
-                  <p class="level-desc-text ${isNa ? 'is-selected-text' : ''}">Hạng mục này không áp dụng hoặc không cần đánh giá tại khu vực này.</p>
-                </div>
-              </div>
-
-            </div>
-          </div>
-
-        </div>
-      `;
-    }).join("");
+    return filtered.map((item) => renderSingle5SCard(item, area, context, periodId, scoreSource)).join("");
   }
 
   // Wire up 5S Events
@@ -1656,10 +2079,47 @@
     const selectedArea = context?.getAreasForPeriod?.(fiveSPeriodId)?.find((a) => a.id === currentFiveSZoneId);
     if (!selectedArea) return;
 
-    // Tap to score level row or N/A (Supports toggle unselect)
-    screen.querySelectorAll("[data-action-score]").forEach((row) => {
+    const flattenedCriteria = buildFlattened5SCriteria(context);
+    wireCardScoreClickHandlers(screen, overlay, context, fiveSPeriodId, scoreSource, selectedArea, flattenedCriteria);
+  }
+
+  // Attach score click handlers to a screen or individual card container
+  function wireCardScoreClickHandlers(container, overlay, context, fiveSPeriodId, scoreSource, selectedArea, flattenedCriteria) {
+    container.querySelectorAll("[data-action-score]").forEach((row) => {
       row.addEventListener("click", async (e) => {
         e.preventDefault();
+        e.stopPropagation();
+
+        const user = context?.currentUser;
+        const isAdmin = typeof context?.isAdminAccount === "function" && context.isAdminAccount(user);
+        const periodOpen = typeof context?.isPeriodOpen === "function"
+          ? context.isPeriodOpen(fiveSPeriodId, context.FIVE_S_PERIOD_TYPE)
+          : true;
+
+        if (!periodOpen) {
+          showMobileToast("Kỳ đánh giá 5S này hiện không mở, không thể chấm điểm!", true);
+          return;
+        }
+
+        const allowedAreaIds = (user && !isAdmin && typeof context?.getAllowedAreaIds === "function")
+          ? context.getAllowedAreaIds(user, fiveSPeriodId)
+          : null;
+
+        if (allowedAreaIds && selectedArea && !allowedAreaIds.has(selectedArea.id)) {
+          showMobileToast(`Bạn không có quyền chấm điểm cho Zone ${selectedArea.code}! Hãy chọn Zone được phân công.`, true);
+          return;
+        }
+
+        if (!checkFiveSPermission(context)) {
+          showMobileToast("Tài khoản của bạn không có quyền chấm điểm 5S!", true);
+          return;
+        }
+
+        if (typeof context?.canEditFiveSScoreSource === "function" && !context.canEditFiveSScoreSource(user, scoreSource)) {
+          showMobileToast("Tài khoản của bạn không có quyền chỉnh sửa nguồn điểm này!", true);
+          return;
+        }
+
         const rawAction = row.dataset.actionScore;
         const itemId = row.dataset.itemId;
         const criterionId = row.dataset.criterionId;
@@ -1674,7 +2134,6 @@
         let newStatus = "";
 
         if (rawAction === "na") {
-          // If already na, deselect!
           if (currentStatus === "na") {
             newScore = null;
             newStatus = "";
@@ -1684,7 +2143,6 @@
           }
         } else {
           const lvl = Number(rawAction);
-          // If already this score and not na, deselect!
           if (currentScore === lvl && currentStatus !== "na") {
             newScore = null;
             newStatus = "";
@@ -1707,15 +2165,33 @@
             });
           }
 
-          // Re-render
-          renderFiveSScreen(overlay, context);
-          if (newStatus === "na") {
-            showMobileToast(`Đã gạch chéo (Không cần chấm) cho ${item.code} (${criterion.label || criterionId})`);
-          } else if (newScore !== null) {
-            showMobileToast(`Đã chọn Cấp ${newScore} cho ${item.code} (${criterion.label || criterionId})`);
-          } else {
-            showMobileToast(`Đã bỏ chọn cho ${item.code} (${criterion.label || criterionId})`);
+          // In-place Header & Card update WITHOUT re-rendering full screen (NO DOM destruction = ZERO scroll jump)
+          const screen = overlay.querySelector("#mobileScreen5S");
+
+          // 1. Update top progress statistics
+          const stat = calculateArea5SScoreStat(selectedArea, flattenedCriteria, context, fiveSPeriodId, scoreSource);
+          const progressValEl = screen?.querySelector("#evaluatedProgressText");
+          if (progressValEl) progressValEl.textContent = `${stat.completed} / ${stat.total} Hạng mục`;
+
+          const avgValEl = screen?.querySelector("#overallAvgScoreText");
+          if (avgValEl) avgValEl.textContent = `${stat.avgText} / 5.0`;
+
+          const fillBarEl = screen?.querySelector("#scoreProgressBarFill");
+          if (fillBarEl) fillBarEl.style.width = `${stat.pct}%`;
+
+          // 2. Update ONLY the target card in DOM
+          const cardEl = row.closest(".fives-card");
+          const fivesItemId = cardEl?.dataset?.fivesItemId;
+          const targetCriteriaItem = flattenedCriteria.find((c) => c.id === fivesItemId);
+
+          if (cardEl && targetCriteriaItem) {
+            const temp = document.createElement("div");
+            temp.innerHTML = renderSingle5SCard(targetCriteriaItem, selectedArea, context, fiveSPeriodId, scoreSource);
+            const newCard = temp.firstElementChild;
+            cardEl.replaceWith(newCard);
+            wireCardScoreClickHandlers(newCard, overlay, context, fiveSPeriodId, scoreSource, selectedArea, flattenedCriteria);
           }
+
         } catch (err) {
           console.error("Lỗi khi lưu điểm:", err);
           showMobileToast("Lỗi khi lưu điểm: " + (err.message || err), true);
@@ -1764,4 +2240,5 @@
   // Expose methods globally
   window.openMobilePrototype = openMobilePrototype;
   window.closeMobilePrototype = closeMobilePrototype;
+  window.showMobileToast = showMobileToast;
 })();

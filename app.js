@@ -419,7 +419,8 @@
     "issue-stats": "/issue-stats",
     catalog: "/catalog",
     accounts: "/accounts",
-
+    "mobile-5s": "/mobile/5s",
+    "mobile-safety": "/mobile/safety",
   });
   const SAFETY_REPORT_OPTIONS = Object.freeze([
     { id: "assessment", route: "/safety/danh-gia-an-toan", title: "ĐÁNH GIÁ AN TOÀN" },
@@ -4273,6 +4274,9 @@
     } catch (error) {
       console.warn("Không xóa được phiên đăng nhập.", error);
     }
+    if (typeof window.closeMobilePrototype === "function") {
+      window.closeMobilePrototype();
+    }
     stopSessionHeartbeat();
     stopDataWatch();
     dataStore?.clearAuthToken?.();
@@ -4318,6 +4322,9 @@
     activeSafetyReport = "";
     closeModal();
     closeAccountMenu();
+    if (typeof window.closeMobilePrototype === "function") {
+      window.closeMobilePrototype();
+    }
     document.body.classList.add("login-mode");
     document.body.classList.remove("app-mode");
     elements.appShell.hidden = true;
@@ -4347,7 +4354,18 @@
     }
 
     if (routeTarget.type === "tab") {
-      activeTab = isTabAllowed(routeTarget.tab) ? routeTarget.tab : getFallbackTab();
+      if (routeTarget.tab === "mobile-5s" || routeTarget.tab === "mobile-safety") {
+        if (!isTabAllowed(routeTarget.tab)) {
+          const deniedMsg = routeTarget.tab === "mobile-5s" ? "Tài khoản của bạn không có quyền chấm 5S Mobile." : "Tài khoản của bạn không có quyền đánh giá An toàn Mobile.";
+          showToast(deniedMsg, true);
+          const fallbackTab = isFiveSAssessor(currentUser) ? "mobile-5s" : canUseSafety(currentUser) ? "mobile-safety" : getFallbackTab();
+          activeTab = fallbackTab;
+        } else {
+          activeTab = routeTarget.tab;
+        }
+      } else {
+        activeTab = isTabAllowed(routeTarget.tab) ? routeTarget.tab : getFallbackTab();
+      }
       activeSafetyReport = activeTab === "safety" ? (normalizeSafetyReportId(routeTarget.safetyReport) || "assessment") : "";
     } else {
       activeTab = getFallbackTab();
@@ -4355,10 +4373,21 @@
     }
 
     showAppScreen();
+    if (activeTab === "mobile-5s" || activeTab === "mobile-safety") {
+      const initialTab = activeTab === "mobile-5s" ? "5s" : "safety";
+      if (typeof window.openMobilePrototype === "function") {
+        window.openMobilePrototype(initialTab, createPageContext());
+      }
+    } else {
+      if (typeof window.closeMobilePrototype === "function") {
+        window.closeMobilePrototype();
+      }
+    }
     renderAll({ replaceRoute: true });
   }
+
   function getAppTitle() {
-    if (activeTab === "safety") {
+    if (activeTab === "safety" || activeTab === "mobile-safety") {
       const report = SAFETY_REPORT_BY_ID[activeSafetyReport];
       if (report?.id === "identification") {
         return "Tổng hợp nhận diện nguy cơ";
@@ -4377,7 +4406,7 @@
     if (activeTab === "accounts") {
       return normalizeCatalogType(activeAccountScope) === SAFETY_PERIOD_TYPE ? "Cấp tài khoản An toàn" : "Cấp tài khoản 5S";
     }
-    if (["assessor", "summary"].includes(activeTab)) {
+    if (["assessor", "summary", "mobile-5s"].includes(activeTab)) {
       return "Chấm điểm 5S";
     }
     return "Đánh giá 5S/An toàn";
@@ -4526,7 +4555,13 @@
     if (tab === "assessor" && isAdminAccount(currentUser)) {
       return false;
     }
-    return ["home", "assessor", "summary", "safety", "issue-stats", "catalog", "accounts"].includes(tab);
+    if (tab === "mobile-5s") {
+      return isFiveSAssessor(currentUser);
+    }
+    if (tab === "mobile-safety") {
+      return canUseSafety(currentUser);
+    }
+    return ["home", "assessor", "summary", "safety", "issue-stats", "catalog", "accounts", "mobile-5s", "mobile-safety"].includes(tab);
   }
 
   function getFallbackTab() {
@@ -4552,6 +4587,17 @@
       }
     } else {
       activeSafetyReport = "";
+    }
+
+    if (activeTab === "mobile-5s" || activeTab === "mobile-safety") {
+      const initialTab = activeTab === "mobile-5s" ? "5s" : "safety";
+      if (typeof window.openMobilePrototype === "function") {
+        window.openMobilePrototype(initialTab, createPageContext());
+      }
+    } else if (previousTab === "mobile-5s" || previousTab === "mobile-safety") {
+      if (typeof window.closeMobilePrototype === "function") {
+        window.closeMobilePrototype();
+      }
     }
 
     closeAccountMenu();
@@ -4642,6 +4688,13 @@
       areaAverage,
       buildMatrixTable,
       canUseSafety,
+      isFiveSAssessor,
+      isTabAllowed,
+      pushRoute,
+      replaceRoute,
+      setActiveTab,
+      showToast,
+      TAB_ROUTES,
       canManageSafetyRecord,
       elements,
       escapeHtml,
@@ -5646,9 +5699,6 @@
         const assessorSummary = assessorNames.length
           ? assessorNames.join(", ")
           : (configuredName || "chưa phân quyền");
-        const bottomLineNote = configuredName
-          ? `Dòng cuối: ${configuredName}`
-          : "Dòng cuối: theo assessor chấm gần nhất";
         const scorerName = getAreaResponsibleNameForPeriod(periodId, area) || "—";
         const deptHeadName = area.departmentHead || "—";
 
@@ -5665,7 +5715,7 @@
             <div class="area-meta-grid">
               <div class="area-meta-chip"><span class="meta-label">Trưởng phòng:</span> <strong>${escapeHtml(deptHeadName)}</strong></div>
               <div class="area-meta-chip"><span class="meta-label">Phụ trách:</span> <strong>${escapeHtml(scorerName)}</strong></div>
-              <div class="area-meta-chip area-meta-assessor full-span"><span class="meta-label">Assessor:</span> <span>${escapeHtml(assessorSummary)}</span> <span class="meta-subtext">(${escapeHtml(bottomLineNote)})</span></div>
+              <div class="area-meta-chip area-meta-assessor full-span"><span class="meta-label">Assessor:</span> <span>${escapeHtml(assessorSummary)}</span></div>
             </div>
           </div>
           <div class="compact-actions">
@@ -13840,12 +13890,17 @@
 
   function showToast(message, isError = false) {
     clearTimeout(toastTimer);
-    elements.toast.textContent = message;
-    elements.toast.classList.toggle("is-error", isError);
-    elements.toast.classList.add("is-visible");
-    toastTimer = window.setTimeout(() => {
-      elements.toast.classList.remove("is-visible");
-    }, 2600);
+    if (elements.toast) {
+      elements.toast.textContent = message;
+      elements.toast.classList.toggle("is-error", isError);
+      elements.toast.classList.add("is-visible");
+      toastTimer = window.setTimeout(() => {
+        elements.toast.classList.remove("is-visible");
+      }, 2600);
+    }
+    if (typeof window.showMobileToast === "function" && document.getElementById("mobileProtoOverlay")) {
+      window.showMobileToast(message, isError);
+    }
   }
 
   async function copyTextToClipboard(text, successMessage = "Đã copy.") {
