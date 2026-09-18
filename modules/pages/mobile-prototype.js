@@ -611,6 +611,28 @@
       }
     }
 
+    // If overlay is already open in DOM, do NOT tear down and recreate overlay!
+    const existingOverlay = document.getElementById("mobileProtoOverlay");
+    if (existingOverlay && document.body.contains(existingOverlay)) {
+      const tabBtnSafety = existingOverlay.querySelector("#mobileTabBtnSafety");
+      const tabBtn5S = existingOverlay.querySelector("#mobileTabBtn5S");
+      const screenSafety = existingOverlay.querySelector("#mobileScreenSafety");
+      const screen5S = existingOverlay.querySelector("#mobileScreen5S");
+
+      if (activeTab === "5s") {
+        if (tabBtn5S) tabBtn5S.className = "mobile-tab-btn is-active-fives";
+        if (tabBtnSafety) tabBtnSafety.className = "mobile-tab-btn" + (!checkSafetyPermission(context) ? " is-disabled-tab" : "");
+        if (screen5S) screen5S.classList.remove("is-hidden");
+        if (screenSafety) screenSafety.classList.add("is-hidden");
+      } else {
+        if (tabBtnSafety) tabBtnSafety.className = "mobile-tab-btn is-active-safety";
+        if (tabBtn5S) tabBtn5S.className = "mobile-tab-btn" + (!checkFiveSPermission(context) ? " is-disabled-tab" : "");
+        if (screenSafety) screenSafety.classList.remove("is-hidden");
+        if (screen5S) screen5S.classList.add("is-hidden");
+      }
+      return;
+    }
+
     // Close existing if open
     closeMobilePrototype();
 
@@ -683,7 +705,7 @@
         <div class="mobile-nav-header">
           <div class="nav-header-brand-row">
             <div class="nav-header-logo-group">
-              <img src="images/Logo.jpg" alt="LeGroup Logo" class="nav-header-avatar-img">
+              <img src="images/Logo.jpg" alt="LeGroup Logo" class="nav-header-avatar-img" style="width: 32px; height: 32px; max-width: 32px; max-height: 32px; object-fit: contain; border-radius: 6px; flex-shrink: 0; background: #ffffff; padding: 2px; box-sizing: border-box;">
               <div>
                 <h1 class="nav-header-title">LeGroup Factory</h1>
                 <p class="nav-header-assessor">
@@ -2153,6 +2175,13 @@
         }
 
         try {
+          // 1. INSTANT OPTIMISTIC UI UPDATE (0ms delay, ZERO layout reflow or frame jerk)
+          const cardEl = row.closest(".fives-card");
+          if (cardEl) {
+            updateCardDOMDirectly(cardEl, newScore, newStatus);
+          }
+
+          // 2. Async save to database
           if (typeof context?.setScore === "function") {
             await context.setScore({
               periodId: fiveSPeriodId,
@@ -2165,11 +2194,10 @@
             });
           }
 
-          // In-place Header & Card update WITHOUT re-rendering full screen (NO DOM destruction = ZERO scroll jump)
+          // 3. Update header statistics in-place
           const screen = overlay.querySelector("#mobileScreen5S");
-
-          // 1. Update top progress statistics
           const stat = calculateArea5SScoreStat(selectedArea, flattenedCriteria, context, fiveSPeriodId, scoreSource);
+
           const progressValEl = screen?.querySelector("#evaluatedProgressText");
           if (progressValEl) progressValEl.textContent = `${stat.completed} / ${stat.total} Hạng mục`;
 
@@ -2179,24 +2207,84 @@
           const fillBarEl = screen?.querySelector("#scoreProgressBarFill");
           if (fillBarEl) fillBarEl.style.width = `${stat.pct}%`;
 
-          // 2. Update ONLY the target card in DOM
-          const cardEl = row.closest(".fives-card");
-          const fivesItemId = cardEl?.dataset?.fivesItemId;
-          const targetCriteriaItem = flattenedCriteria.find((c) => c.id === fivesItemId);
-
-          if (cardEl && targetCriteriaItem) {
-            const temp = document.createElement("div");
-            temp.innerHTML = renderSingle5SCard(targetCriteriaItem, selectedArea, context, fiveSPeriodId, scoreSource);
-            const newCard = temp.firstElementChild;
-            cardEl.replaceWith(newCard);
-            wireCardScoreClickHandlers(newCard, overlay, context, fiveSPeriodId, scoreSource, selectedArea, flattenedCriteria);
-          }
-
         } catch (err) {
           console.error("Lỗi khi lưu điểm:", err);
           showMobileToast("Lỗi khi lưu điểm: " + (err.message || err), true);
         }
       });
+    });
+  }
+
+  // Direct Optimistic DOM Mutation for 5S Category Card (0ms latency, ZERO DOM replacement, ZERO frame jerk)
+  function updateCardDOMDirectly(cardEl, newScore, newStatus) {
+    if (!cardEl) return;
+
+    // 1. Update Score Badge at top right
+    const scoreBadge = cardEl.querySelector(".fives-score-badge");
+    if (scoreBadge) {
+      if (newStatus === "na") {
+        scoreBadge.className = "fives-score-badge text-slate-400 font-semibold";
+        scoreBadge.textContent = "Không cần chấm (✕)";
+      } else if (newScore !== null && Number.isFinite(newScore)) {
+        const lvl = newScore;
+        const levelName = LEVEL_NAMES[lvl] || ("Cấp " + lvl);
+        let pillColor = lvl <= 2 ? "text-rose-400 font-bold" : (lvl === 3 ? "text-amber-400 font-bold" : "text-emerald-400 font-bold");
+        scoreBadge.className = "fives-score-badge " + pillColor;
+        scoreBadge.textContent = `Đã chọn: Cấp ${lvl} (${levelName})`;
+      } else {
+        scoreBadge.className = "fives-score-badge text-slate-400";
+        scoreBadge.textContent = "Chưa chấm";
+      }
+    }
+
+    // 2. Update level rows inside card
+    cardEl.querySelectorAll(".fives-level-row").forEach((rowEl) => {
+      const actionScore = rowEl.dataset.actionScore;
+      const numBadge = rowEl.querySelector(".level-num-badge");
+      const titleLine = rowEl.querySelector(".level-title-line");
+      const descText = rowEl.querySelector(".level-desc-text");
+
+      const existingTag = titleLine ? titleLine.querySelector(".level-chosen-tag") : null;
+      if (existingTag) existingTag.remove();
+
+      if (actionScore === "na") {
+        const isNaSelected = newStatus === "na";
+        rowEl.className = "fives-level-row level-na-row " + (isNaSelected ? "level-selected-na" : "level-unselected");
+        if (numBadge) numBadge.className = "level-num-badge " + (isNaSelected ? "badge-selected-na" : "badge-unselected");
+        if (descText) descText.classList.toggle("is-selected-text", isNaSelected);
+        if (isNaSelected && titleLine) {
+          titleLine.insertAdjacentHTML("beforeend", '<span class="level-chosen-tag tag-na"><i class="fa-solid fa-xmark"></i> Đã gạch chéo</span>');
+        }
+      } else {
+        const lvlNum = Number(actionScore);
+        const isLvlSelected = newStatus !== "na" && newScore === lvlNum;
+        let boxClass = "level-unselected";
+        let badgeClass = "badge-unselected";
+        let tagClass = "tag-high";
+
+        if (isLvlSelected) {
+          if (lvlNum <= 2) {
+            boxClass = "level-selected-low";
+            badgeClass = "badge-selected-low";
+            tagClass = "tag-low";
+          } else if (lvlNum === 3) {
+            boxClass = "level-selected-mid";
+            badgeClass = "badge-selected-mid";
+            tagClass = "tag-mid";
+          } else {
+            boxClass = "level-selected-high";
+            badgeClass = "badge-selected-high";
+            tagClass = "tag-high";
+          }
+        }
+
+        rowEl.className = "fives-level-row " + boxClass;
+        if (numBadge) numBadge.className = "level-num-badge " + badgeClass;
+        if (descText) descText.classList.toggle("is-selected-text", isLvlSelected);
+        if (isLvlSelected && titleLine) {
+          titleLine.insertAdjacentHTML("beforeend", `<span class="level-chosen-tag ${tagClass}"><i class="fa-solid fa-circle-check"></i> Đã chọn</span>`);
+        }
+      }
     });
   }
 

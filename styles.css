@@ -10249,19 +10249,22 @@ body.mobile-proto-open {
   overflow: hidden;
 }
 
-.nav-header-avatar {
-  width: 32px;
-  height: 32px;
-  border-radius: 9px;
-  background: linear-gradient(135deg, #2563eb 0%, #4f46e5 100%);
-  color: #ffffff;
-  font-weight: 800;
-  font-size: 0.8rem;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  box-shadow: 0 2px 8px rgba(37, 99, 235, 0.4);
-  flex-shrink: 0;
+.nav-header-avatar-img {
+  width: 32px !important;
+  height: 32px !important;
+  max-width: 32px !important;
+  max-height: 32px !important;
+  object-fit: contain !important;
+  border-radius: 6px !important;
+  background: #ffffff !important;
+  padding: 2px !important;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.25) !important;
+  box-sizing: border-box !important;
+  flex-shrink: 0 !important;
+}
+
+.mobile-responsive-overlay.is-light-theme .nav-header-avatar-img {
+  border: 1px solid rgba(0, 0, 0, 0.1) !important;
 }
 
 .nav-header-title {
@@ -10292,7 +10295,8 @@ body.mobile-proto-open {
   display: flex;
   align-items: center;
   gap: 5px;
-  flex-shrink: 0;
+  flex-shrink: 0 !important;
+  margin-left: auto;
 }
 
 .period-pill-text {
@@ -10344,11 +10348,13 @@ body.mobile-proto-open {
   }
   .nav-header-logo-group {
     gap: 6px;
+    max-width: calc(100% - 70px);
   }
-  .nav-header-avatar {
-    width: 28px;
-    height: 28px;
-    font-size: 0.72rem;
+  .nav-header-avatar-img {
+    width: 26px !important;
+    height: 26px !important;
+    max-width: 26px !important;
+    max-height: 26px !important;
   }
   .nav-header-title {
     font-size: 0.7rem;
@@ -10357,8 +10363,31 @@ body.mobile-proto-open {
     font-size: 0.6rem;
   }
   .period-pill-text {
-    font-size: 0.6rem;
-    padding: 2px 5px;
+    font-size: 0.58rem;
+    padding: 1px 4px;
+    max-width: 75px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+}
+
+@media (max-width: 360px) {
+  .period-pill-text {
+    display: none !important;
+  }
+  .nav-header-brand-row {
+    gap: 4px;
+  }
+  .nav-header-logo-group {
+    max-width: calc(100% - 64px);
+  }
+  .mobile-theme-toggle-btn,
+  .mobile-nav-close-btn {
+    width: 26px !important;
+    height: 26px !important;
+    min-width: 26px !important;
+    min-height: 26px !important;
+    font-size: 0.75rem;
   }
 }
 
@@ -11874,7 +11903,6 @@ input[type="date"]::-webkit-calendar-picker-indicator {
 .fives-level-row:hover {
   border-color: #38bdf8;
   background: rgba(15, 23, 42, 0.8);
-  transform: translateX(2px);
 }
 
 .level-badge-wrap {
@@ -11929,19 +11957,19 @@ input[type="date"]::-webkit-calendar-picker-indicator {
 
 .tag-low {
   background: rgba(239, 68, 68, 0.2);
-  color: #f87171;
+  color: #863333;
   border: 1px solid rgba(239, 68, 68, 0.4);
 }
 
 .tag-mid {
   background: rgba(245, 158, 11, 0.2);
-  color: #fbbf24;
+  color: #726132;
   border: 1px solid rgba(245, 158, 11, 0.4);
 }
 
 .tag-high {
   background: rgba(16, 185, 129, 0.2);
-  color: #34d399;
+  color: #165740;
   border: 1px solid rgba(16, 185, 129, 0.4);
 }
 
