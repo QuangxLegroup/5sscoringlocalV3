@@ -1029,16 +1029,14 @@
       return '<g><line x1="' + left + '" y1="' + y + '" x2="' + (left + plotWidth) + '" y2="' + y + '" class="excel-grid-line"></line><text x="6" y="' + (y + 4) + '" class="excel-axis-label">' + formatPercent(value) + '</text></g>';
     }).join("");
     const bars = MONTHS.map((month, index) => {
-      const hasData = month <= (lastDataMonth || 12);
-      const rate = hasData ? (cumulativeRates[index] || 0) : null;
+      const rate = cumulativeRates[index] || 0;
       const x = left + index * step + step / 2;
-      const barHeight = rate !== null && rate > 0 ? Math.max(3, (Math.min(rate, max) / max) * plotHeight) : 0;
+      const barHeight = rate > 0 ? Math.max(3, (Math.min(rate, max) / max) * plotHeight) : 0;
       const fill = index % 2 === 0 ? "#0284c7" : "#38bdf8";
 
-      const barElement = rate !== null
-        ? '<rect x="' + (x - barWidth / 2) + '" y="' + (top + plotHeight - barHeight) + '" width="' + barWidth + '" height="' + barHeight + '" class="rate-actual" rx="2" style="fill:' + fill + '"><title>T' + month + ': ' + formatPercent(rate) + '</title></rect>' +
-          '<text x="' + x + '" y="' + (top + plotHeight - Math.max(barHeight, 3) - 7) + '" class="excel-bar-label font-bold">' + formatPercent(rate) + '</text>'
-        : '';
+      const barElement =
+        (rate > 0 ? '<rect x="' + (x - barWidth / 2) + '" y="' + (top + plotHeight - barHeight) + '" width="' + barWidth + '" height="' + barHeight + '" class="rate-actual" rx="2" style="fill:' + fill + '"><title>T' + month + ': ' + formatPercent(rate) + '</title></rect>' : '') +
+        '<text x="' + x + '" y="' + (top + plotHeight - Math.max(barHeight, 3) - 7) + '" class="excel-bar-label font-bold">' + formatPercent(rate) + '</text>';
 
       return '<g>' +
         barElement +
