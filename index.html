@@ -7,6 +7,8 @@
     <title>LeGroup 5S & Safety</title>
     <link rel="icon" href="images/Logo.jpg">
     <link rel="apple-touch-icon" href="images/Logo.jpg">
+    <link rel="manifest" href="/manifest.json">
+    <meta name="theme-color" content="#0b7f87">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
@@ -650,6 +652,11 @@
         document.getElementById("mobileSwitchHeaderBtn")?.addEventListener("click", openMobile);
         document.getElementById("sidebarMobileBtn")?.addEventListener("click", openMobile);
       })();
+    </script>
+    <script>
+      if ("serviceWorker" in navigator) {
+        navigator.serviceWorker.register("/service-worker.js").catch(function() {});
+      }
     </script>
   </body>
 </html>

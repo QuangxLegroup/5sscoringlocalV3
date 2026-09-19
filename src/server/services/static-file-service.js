@@ -15,7 +15,7 @@ const MIME_TYPES = {
   ".svg": "image/svg+xml",
   ".webp": "image/webp",
 };
-const PUBLIC_ROOT_FILES = new Set(["404.html", "app.js", "index.html", "standards.js", "styles.css"]);
+const PUBLIC_ROOT_FILES = new Set(["404.html", "app.js", "index.html", "manifest.json", "service-worker.js", "standards.js", "styles.css"]);
 const PUBLIC_DIRECTORIES = new Set(["images", "modules"]);
 const APP_ROUTES = new Set([
   "/",

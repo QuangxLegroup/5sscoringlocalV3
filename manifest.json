@@ -1,0 +1,23 @@
+{
+  "name": "LeGroup 5S & Safety",
+  "short_name": "5S LeGroup",
+  "description": "Hệ thống đánh giá 5S & An toàn - LeGroup",
+  "start_url": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#eef2f5",
+  "theme_color": "#0b7f87",
+  "lang": "vi",
+  "icons": [
+    {
+      "src": "/images/Logo.jpg",
+      "sizes": "192x192",
+      "type": "image/jpeg"
+    },
+    {
+      "src": "/images/Logo.jpg",
+      "sizes": "512x512",
+      "type": "image/jpeg"
+    }
+  ]
+}
