@@ -14,7 +14,7 @@ RUN npm install --omit=dev --ignore-scripts && mkdir -p node_modules
 COPY server.js ./
 COPY src ./src
 COPY scripts ./scripts
-COPY index.html 404.html styles.css standards.js app.js ./
+COPY index.html 404.html styles.css standards.js app.js manifest.json service-worker.js ./
 COPY modules ./modules
 COPY images ./images
 
@@ -39,7 +39,7 @@ COPY --from=build /app/package*.json ./
 COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/server.js ./server.js
 COPY --from=build /app/src ./src
-COPY --from=build /app/index.html /app/404.html /app/styles.css /app/standards.js /app/app.js ./
+COPY --from=build /app/index.html /app/404.html /app/styles.css /app/standards.js /app/app.js /app/manifest.json /app/service-worker.js ./
 COPY --from=build /app/modules ./modules
 COPY --from=build /app/images ./images
 

@@ -52,6 +52,8 @@ services:
       - ./styles.css:/usr/share/nginx/html/styles.css
       - ./app.js:/usr/share/nginx/html/app.js
       - ./standards.js:/usr/share/nginx/html/standards.js
+      - ./manifest.json:/usr/share/nginx/html/manifest.json
+      - ./service-worker.js:/usr/share/nginx/html/service-worker.js
       - ./modules:/usr/share/nginx/html/modules
       - ./images:/usr/share/nginx/html/images
     restart: unless-stopped
