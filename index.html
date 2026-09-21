@@ -270,7 +270,7 @@
                 <select id="summary-score-source"></select>
               </label>
 
-              <button class="btn-export-excel-gradient admin-only" id="export-excel-button" type="button"><i class="fa-solid fa-file-excel"></i> <span>Xuất Excel</span></button>
+              <button class="btn-export-excel-gradient" id="export-excel-button" type="button"><i class="fa-solid fa-file-excel"></i> <span>Xuất Excel</span></button>
               <button class="secondary-button admin-only" type="button" data-action="import-page-json" data-page="five-s">Import</button>
               <button class="secondary-button admin-only" type="button" data-action="export-page-json" data-page="five-s">Export</button>
             </div>
@@ -314,7 +314,7 @@
               <div class="safety-actions">
                 <button class="primary-button safety-access-only" id="add-safety-record-button" type="button">Thêm ĐG AT</button>
                 <button class="secondary-button admin-only" id="edit-safety-meta-button" type="button">Thiết lập báo cáo</button>
-                <button class="btn-export-excel-gradient admin-only" id="export-safety-excel-button" type="button"><i class="fa-solid fa-file-excel"></i> <span>Xuất ĐG AT</span></button>
+                <button class="btn-export-excel-gradient" id="export-safety-excel-button" type="button"><i class="fa-solid fa-file-excel"></i> <span>Xuất ĐG AT</span></button>
                 <button class="secondary-button admin-only" type="button" data-action="import-page-json">Import</button>
                 <button class="secondary-button admin-only" type="button" data-action="export-page-json">Export</button>
                 <button class="primary-button admin-only" id="send-safety-mail-button" type="button">Gửi báo cáo</button>
@@ -582,6 +582,45 @@
                       <h2>Danh sách tài khoản</h2>
                     </div>
                     <div class="account-list" id="account-list"></div>
+                  </section>
+                </div>
+              </section>
+              <section class="scope-detail-card" id="viewer-account-detail" aria-label="Cấp tài khoản người xem" hidden>
+                <div class="accounts-grid viewer-accounts-grid">
+                  <section class="panel viewer-account-panel">
+                    <div class="section-heading">
+                      <h2>Tạo tài khoản người xem</h2>
+                    </div>
+                    <form class="stacked-form" id="viewer-account-form">
+                      <label>
+                        <span>Tên người xem</span>
+                        <input id="viewer-account-name" type="text" autocomplete="off" required>
+                      </label>
+                      <label>
+                        <span>Chức vụ</span>
+                        <input id="viewer-account-position" type="text" autocomplete="off" required>
+                      </label>
+                      <label>
+                        <span>Tài khoản</span>
+                        <input id="viewer-account-username" type="text" autocomplete="off" required>
+                      </label>
+                      <label>
+                        <span>Tên hiển thị</span>
+                        <input id="viewer-account-display-name" type="text" autocomplete="off" placeholder="Mặc định theo tên người xem">
+                      </label>
+                      <label>
+                        <span>Mật khẩu</span>
+                        <input id="viewer-account-password" type="password" autocomplete="new-password" required minlength="4">
+                      </label>
+                      <button class="primary-button" type="submit">Thêm người xem</button>
+                    </form>
+                  </section>
+
+                  <section class="panel viewer-account-list-panel">
+                    <div class="section-heading">
+                      <h2>Danh sách người xem</h2>
+                    </div>
+                    <div class="account-list" id="viewer-account-list"></div>
                   </section>
                 </div>
               </section>

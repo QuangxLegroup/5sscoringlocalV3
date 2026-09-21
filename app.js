@@ -108,6 +108,8 @@
   const ROLE_ASSESSOR_5S = "assessor5s";
   const ROLE_ASSESSOR_SAFETY = "assessorSafety";
   const ROLE_ZONE_OWNER = "zoneOwner";
+  const ROLE_VIEWER = "viewer";
+  const ACCOUNT_VIEWER_SCOPE = "viewer";
   const FIVE_S_PERIOD_TYPE = "5s";
   const SAFETY_PERIOD_TYPE = "safety";
   const LEGACY_PERIOD_TYPE = "both";
@@ -343,6 +345,7 @@
     itemList: document.getElementById("item-list"),
     accountForm: document.getElementById("account-form"),
     accountRole: document.getElementById("account-role"),
+    viewerAccountDetail: document.getElementById("viewer-account-detail"),
     accountAssessorField: document.getElementById("account-assessor-field"),
     accountManagerField: document.getElementById("account-manager-field"),
     accountAssessor: document.getElementById("account-assessor"),
@@ -354,6 +357,13 @@
     accountDisplayName: document.getElementById("account-display-name"),
     accountPassword: document.getElementById("account-password"),
     accountList: document.getElementById("account-list"),
+    viewerAccountForm: document.getElementById("viewer-account-form"),
+    viewerAccountName: document.getElementById("viewer-account-name"),
+    viewerAccountPosition: document.getElementById("viewer-account-position"),
+    viewerAccountUsername: document.getElementById("viewer-account-username"),
+    viewerAccountDisplayName: document.getElementById("viewer-account-display-name"),
+    viewerAccountPassword: document.getElementById("viewer-account-password"),
+    viewerAccountList: document.getElementById("viewer-account-list"),
     modalBackdrop: document.getElementById("modal-backdrop"),
     modalTitle: document.getElementById("modal-title"),
     modalBody: document.getElementById("modal-body"),
@@ -589,7 +599,7 @@
 
   function normalizeAccountAccessTypes(accessTypes, role = "") {
     const normalizedRole = normalizeAccountRole(role);
-    if (normalizedRole === ROLE_ADMIN) {
+    if (normalizedRole === ROLE_ADMIN || normalizedRole === ROLE_VIEWER) {
       return [FIVE_S_PERIOD_TYPE, SAFETY_PERIOD_TYPE];
     }
 
@@ -610,6 +620,9 @@
 
   function normalizeScopedAccountRole(role, type = FIVE_S_PERIOD_TYPE) {
     const normalizedRole = normalizeAccountRole(role);
+    if (normalizedRole === ROLE_VIEWER) {
+      return ROLE_VIEWER;
+    }
     if (normalizedRole === ROLE_ZONE_OWNER) {
       return ROLE_ZONE_OWNER;
     }
@@ -677,6 +690,9 @@
   }
 
   function getAccountPersonId(account, type = FIVE_S_PERIOD_TYPE) {
+    if (normalizeAccountRole(account?.role) === ROLE_VIEWER) {
+      return "";
+    }
     const normalizedType = normalizeCatalogType(type);
     const role = getAccountRoleForType(account, normalizedType);
     if (role === ROLE_ZONE_OWNER) {
@@ -691,6 +707,15 @@
     const rolesByType = { ...(account.rolesByType || {}) };
     rolesByType[normalizedType] = scopedRole;
     account.rolesByType = rolesByType;
+    if (scopedRole === ROLE_VIEWER) {
+      delete account.fiveSScorerId;
+      delete account.fiveSAssessorId;
+      delete account.safetyScorerId;
+      delete account.safetyAssessorId;
+      delete account.scorerId;
+      delete account.assessorId;
+      return;
+    }
     if (scopedRole === ROLE_ZONE_OWNER) {
       if (normalizedType === SAFETY_PERIOD_TYPE) {
         account.safetyScorerId = personId;
@@ -713,6 +738,7 @@
   function normalizeAccountRole(role) {
     const value = String(role || "").trim();
     if (value === ROLE_ADMIN) return ROLE_ADMIN;
+    if (["viewer", ROLE_VIEWER].includes(value)) return ROLE_VIEWER;
     if (["safetyAssessor", ROLE_ASSESSOR_SAFETY].includes(value)) return ROLE_ASSESSOR_SAFETY;
     if (["manager", "scorer", ROLE_ZONE_OWNER].includes(value)) return ROLE_ZONE_OWNER;
     return ROLE_ASSESSOR_5S;
@@ -2610,20 +2636,24 @@
     return normalizeAccountRole(account?.role) === ROLE_ADMIN;
   }
 
+  function isViewerAccount(account) {
+    return normalizeAccountRole(account?.role) === ROLE_VIEWER;
+  }
+
   function isZoneOwnerAccount(account, type = FIVE_S_PERIOD_TYPE) {
     return getAccountRoleForType(account, type) === ROLE_ZONE_OWNER;
   }
 
   function isFiveSAssessor(account) {
-    return isAdminAccount(account) || hasAccountAccessType(account, FIVE_S_PERIOD_TYPE);
+    return !isViewerAccount(account) && (isAdminAccount(account) || hasAccountAccessType(account, FIVE_S_PERIOD_TYPE));
   }
 
   function isSafetyAssessor(account) {
-    return hasAccountAccessType(account, SAFETY_PERIOD_TYPE);
+    return !isViewerAccount(account) && hasAccountAccessType(account, SAFETY_PERIOD_TYPE);
   }
 
   function canUseSafety(account) {
-    return isAdminAccount(account) || hasAccountAccessType(account, SAFETY_PERIOD_TYPE);
+    return !isViewerAccount(account) && (isAdminAccount(account) || hasAccountAccessType(account, SAFETY_PERIOD_TYPE));
   }
 
   function sameNormalizedText(left, right) {
@@ -2718,6 +2748,7 @@
   function getRoleLabel(role) {
     const normalizedRole = normalizeAccountRole(role);
     if (normalizedRole === ROLE_ADMIN) return "Admin hệ thống";
+    if (normalizedRole === ROLE_VIEWER) return "Người xem";
     if (normalizedRole === ROLE_ASSESSOR_SAFETY) return "Assessor an toàn";
     if (normalizedRole === ROLE_ZONE_OWNER) return "Người phụ trách zone";
     return "Assessor 5S";
@@ -2725,12 +2756,14 @@
 
   function getScopedRoleLabel(role, type = FIVE_S_PERIOD_TYPE) {
     const scopedRole = normalizeScopedAccountRole(role, type);
+    if (scopedRole === ROLE_VIEWER) return "Người xem";
     if (scopedRole === ROLE_ZONE_OWNER) return "Người phụ trách zone";
     return normalizeCatalogType(type) === SAFETY_PERIOD_TYPE ? "Assessor AT" : "Assessor 5S";
   }
 
   function getAccountAccessLabel(account, type = "") {
     if (isAdminAccount(account)) return "Admin hệ thống";
+    if (isViewerAccount(account)) return "Người xem";
     const accessTypes = type ? [normalizeCatalogType(type)] : normalizeAccountAccessTypes(account?.accessTypes, account?.role);
     return accessTypes
       .filter((accessType) => hasAccountAccessType(account, accessType))
@@ -2745,6 +2778,9 @@
 
     if (isAdminAccount(account)) {
       return account.name || account.username;
+    }
+    if (isViewerAccount(account)) {
+      return account.name || account.displayName || account.username;
     }
 
     const catalogType = type ? normalizeCatalogType(type) : normalizeAccountRole(account.role) === ROLE_ASSESSOR_SAFETY ? SAFETY_PERIOD_TYPE : FIVE_S_PERIOD_TYPE;
@@ -2764,6 +2800,9 @@
 
     if (isAdminAccount(account)) {
       return account.displayName || account.name || account.username || "";
+    }
+    if (isViewerAccount(account)) {
+      return account.name || account.displayName || account.username || "";
     }
 
     return account.displayName || account.username || "";
@@ -3007,7 +3046,7 @@
 
     const periodAreas = getAreasForPeriod(periodId);
     const catalogType = getCatalogTypeForPeriod(periodId);
-    if (isAdminAccount(account)) {
+    if (isAdminAccount(account) || isViewerAccount(account)) {
       return new Set(periodAreas.map((area) => area.id));
     }
     if (!hasAccountAccessType(account, catalogType)) {
@@ -4492,6 +4531,7 @@
   }
   function renderRoleVisibility() {
     const isAdmin = isAdminAccount(currentUser);
+    const isViewer = isViewerAccount(currentUser);
     const hasFiveSAccess = !isAdmin && Boolean(hasAccountAccessType(currentUser, FIVE_S_PERIOD_TYPE));
     const hasSafetyAccess = !isAdmin && Boolean(hasAccountAccessType(currentUser, SAFETY_PERIOD_TYPE));
     const isReadOnlyPageAccess = (element) => element.matches(".tab-button, .tab-panel, .nav-group, .account-menu-divider") ||
@@ -4515,7 +4555,7 @@
 
     // 3. Phiếu chấm 5S: mở điều hướng xem, giữ quyền chấm theo role.
     document.querySelectorAll(".assessor-only").forEach((element) => {
-      element.hidden = isAdmin || (!isReadOnlyPageAccess(element) && !hasFiveSAccess);
+      element.hidden = isAdmin || isViewer || (!isReadOnlyPageAccess(element) && !hasFiveSAccess);
     });
 
     // 4. An toàn lao động: mở điều hướng xem, giữ quyền đánh giá theo role.
@@ -4524,8 +4564,18 @@
         element.hidden = true;
         return;
       }
-      element.hidden = !isReadOnlyPageAccess(element) && !isAdmin && !hasSafetyAccess;
+      element.hidden = !isReadOnlyPageAccess(element) && !isAdmin && (isViewer || !hasSafetyAccess);
     });
+
+    document.querySelectorAll(".mobile-launch-tab-btn, #mobileSwitchHeaderBtn").forEach((element) => {
+      element.hidden = isViewer;
+    });
+
+    if (isViewer) {
+      document.querySelectorAll("[data-tab='catalog'], [data-tab='accounts'], [data-go-tab='catalog'], [data-go-tab='accounts'], #tab-catalog, #tab-accounts").forEach((element) => {
+        element.hidden = true;
+      });
+    }
 
     // 5. Non-admin cũng được xem các nhóm trang.
     const navGroup5S = document.querySelector(".nav-group-5s");
@@ -4552,6 +4602,10 @@
   function isTabAllowed(tab) {
     if (!currentUser) {
       return false;
+    }
+
+    if (isViewerAccount(currentUser)) {
+      return ["home", "summary", "safety", "issue-stats"].includes(tab);
     }
 
     if (tab === "assessor" && isAdminAccount(currentUser)) {
@@ -4808,11 +4862,12 @@
     const fiveSActive = getActivePeriodId(FIVE_S_PERIOD_TYPE);
     const safetyActive = getActivePeriodId(SAFETY_PERIOD_TYPE);
     const isAdmin = isAdminAccount(currentUser);
+    const canViewAllPeriods = isAdmin || isViewerAccount(currentUser);
 
-    const visibleFiveSPeriods = isAdmin
+    const visibleFiveSPeriods = canViewAllPeriods
       ? fiveSPeriods
       : fiveSPeriods.filter((period) => period.id === fiveSActive);
-    const visibleSafetyPeriods = isAdmin
+    const visibleSafetyPeriods = canViewAllPeriods
       ? safetyPeriods
       : safetyPeriods.filter((period) => period.id === safetyActive);
     const currentSafetyPeriods = safetyPeriods.filter((period) => period.id === safetyActive);
@@ -4823,14 +4878,17 @@
       select.value = visibleFiveSPeriods.some((period) => period.id === fiveSActive) ? fiveSActive : visibleFiveSPeriods[0]?.id || "";
     });
     if (elements.safetyPeriodSelect) {
-      elements.safetyPeriodSelect.innerHTML = currentSafetyPeriods.length
-        ? makeOptions(currentSafetyPeriods)
+      const safetySelectPeriods = canViewAllPeriods ? visibleSafetyPeriods : currentSafetyPeriods;
+      elements.safetyPeriodSelect.innerHTML = safetySelectPeriods.length
+        ? makeOptions(safetySelectPeriods)
         : "<option value=\"\">" + escapeHtml(currentDateDisplay()) + "</option>";
-      elements.safetyPeriodSelect.value = currentSafetyPeriods[0]?.id || "";
-      elements.safetyPeriodSelect.disabled = true;
-      elements.safetyPeriodSelect.title = currentSafetyPeriods[0]
-        ? "Kỳ đánh giá an toàn đang mở hiện tại"
-        : "Chưa có kỳ đánh giá an toàn đang mở";
+      elements.safetyPeriodSelect.value = safetySelectPeriods.some((period) => period.id === safetyActive) ? safetyActive : safetySelectPeriods[0]?.id || "";
+      elements.safetyPeriodSelect.disabled = !canViewAllPeriods;
+      elements.safetyPeriodSelect.title = canViewAllPeriods
+        ? "Chọn kỳ đánh giá an toàn để xem"
+        : currentSafetyPeriods[0]
+          ? "Kỳ đánh giá an toàn đang mở hiện tại"
+          : "Chưa có kỳ đánh giá an toàn đang mở";
     }
     if (elements.issueStatsPeriodSelect) {
       elements.issueStatsPeriodSelect.innerHTML = makeOptions(visibleSafetyPeriods);
@@ -4978,8 +5036,13 @@
     const catalogType = normalizeCatalogType(scope);
     const role = normalizeScopedAccountRole(roleValue, catalogType);
     const isZoneOwnerRole = role === ROLE_ZONE_OWNER;
+    const isViewerRole = role === ROLE_VIEWER;
     const assessorField = root?.querySelector?.("#account-assessor-field, [data-account-assessor-field]");
     const managerField = root?.querySelector?.("#account-manager-field, [data-account-manager-field]");
+    const viewerNameField = root?.querySelector?.("#account-viewer-name-field, [data-account-viewer-name-field]");
+    const viewerPositionField = root?.querySelector?.("#account-viewer-position-field, [data-account-viewer-position-field]");
+    const viewerNameInput = root?.querySelector?.("#account-viewer-name, input[name='viewerName']");
+    const viewerPositionInput = root?.querySelector?.("#account-viewer-position, input[name='viewerPosition']");
     const assessorSelect = root?.querySelector?.("#account-assessor, select[name='assessorId']");
     const managerSelect = root?.querySelector?.("#account-manager, select[name='scorerId']");
     const zoneField = root?.querySelector?.("#account-zone-field, [data-account-zone-field]");
@@ -4987,24 +5050,36 @@
     const zoneList = root?.querySelector?.("#account-zone-list, .zone-check-list");
 
     if (assessorField) {
-      assessorField.hidden = isZoneOwnerRole;
+      assessorField.hidden = isZoneOwnerRole || isViewerRole;
     }
     if (managerField) {
-      managerField.hidden = !isZoneOwnerRole;
+      managerField.hidden = !isZoneOwnerRole || isViewerRole;
+    }
+    if (viewerNameField) {
+      viewerNameField.hidden = !isViewerRole;
+    }
+    if (viewerPositionField) {
+      viewerPositionField.hidden = !isViewerRole;
+    }
+    if (viewerNameInput) {
+      viewerNameInput.required = isViewerRole;
+    }
+    if (viewerPositionInput) {
+      viewerPositionInput.required = isViewerRole;
     }
     if (assessorSelect) {
-      assessorSelect.required = !isZoneOwnerRole;
-      assessorSelect.disabled = isZoneOwnerRole;
+      assessorSelect.required = !isZoneOwnerRole && !isViewerRole;
+      assessorSelect.disabled = isZoneOwnerRole || isViewerRole;
     }
     if (managerSelect) {
-      managerSelect.required = isZoneOwnerRole;
-      managerSelect.disabled = !isZoneOwnerRole;
+      managerSelect.required = isZoneOwnerRole && !isViewerRole;
+      managerSelect.disabled = !isZoneOwnerRole || isViewerRole;
     }
     if (zoneField) {
-      zoneField.hidden = !isZoneOwnerRole;
+      zoneField.hidden = !isZoneOwnerRole || isViewerRole;
     } else {
-      if (zoneLabel) zoneLabel.hidden = !isZoneOwnerRole;
-      if (zoneList) zoneList.hidden = !isZoneOwnerRole;
+      if (zoneLabel) zoneLabel.hidden = !isZoneOwnerRole || isViewerRole;
+      if (zoneList) zoneList.hidden = !isZoneOwnerRole || isViewerRole;
     }
     if (zoneLabel) {
       zoneLabel.textContent = "Zone người được cấp tài khoản phụ trách";
@@ -5023,6 +5098,13 @@
     const periodId = getActivePeriodId(scope);
     const roleSelect = form.querySelector("#account-role, select[name='role']");
     const role = normalizeScopedAccountRole(roleSelect?.value, scope);
+    if (role === ROLE_VIEWER) {
+      zoneList.querySelectorAll("input[type='checkbox']").forEach((checkbox) => {
+        checkbox.checked = false;
+      });
+      refreshSelectAllStates(zoneList);
+      return;
+    }
     const isZoneOwnerRole = role === ROLE_ZONE_OWNER;
     const areas = getAreasForPeriod(periodId);
 
@@ -5375,25 +5457,32 @@
     </section>`;
   }
 
-  function scopeCardHtml(activeScope, action, titlePrefix) {
-    const normalizedActiveScope = activeScope ? normalizeCatalogType(activeScope) : "";
+  function normalizeScopeCardValue(scope) {
+    return scope === ACCOUNT_VIEWER_SCOPE ? ACCOUNT_VIEWER_SCOPE : normalizeCatalogType(scope);
+  }
+
+  function scopeCardHtml(activeScope, action, titlePrefix, scopeOptions = ACCOUNT_SCOPE_OPTIONS) {
+    const normalizedActiveScope = activeScope ? normalizeScopeCardValue(activeScope) : "";
     const options = normalizedActiveScope
       ? [
-          ...ACCOUNT_SCOPE_OPTIONS.filter((option) => normalizeCatalogType(option.value) === normalizedActiveScope),
-          ...ACCOUNT_SCOPE_OPTIONS.filter((option) => normalizeCatalogType(option.value) !== normalizedActiveScope),
+          ...scopeOptions.filter((option) => normalizeScopeCardValue(option.value) === normalizedActiveScope),
+          ...scopeOptions.filter((option) => normalizeScopeCardValue(option.value) !== normalizedActiveScope),
         ]
-      : ACCOUNT_SCOPE_OPTIONS;
+      : scopeOptions;
 
     return options.map((option) => {
-      const scope = normalizeCatalogType(option.value);
-      const period = getPeriod(getActivePeriodId(scope));
+      const scope = normalizeScopeCardValue(option.value);
+      const isViewerScope = scope === ACCOUNT_VIEWER_SCOPE;
+      const period = isViewerScope ? null : getPeriod(getActivePeriodId(scope));
       const isActive = scope === normalizedActiveScope;
       const activeClass = isActive ? " is-active" : "";
       const title = titlePrefix + " " + option.label;
-      const periodText = period ? periodLabel(period) : currentDateDisplay();
-      return `<article class="admin-home-card dashboard-home-card simple-home-card scope-card ${scope === SAFETY_PERIOD_TYPE ? "safety-card" : "score-card"}${activeClass}">
+      const periodText = isViewerScope ? "Toàn bộ bảng biểu" : period ? periodLabel(period) : currentDateDisplay();
+      const iconText = option.icon || option.label;
+      const cardClass = isViewerScope ? "viewer-card" : scope === SAFETY_PERIOD_TYPE ? "safety-card" : "score-card";
+      return `<article class="admin-home-card dashboard-home-card simple-home-card scope-card ${cardClass}${activeClass}">
         <button class="scope-card-toggle" type="button" data-action="${escapeHtml(action)}" data-id="${escapeHtml(scope)}" aria-label="${escapeHtml(title)}" aria-expanded="${isActive ? "true" : "false"}">
-          <span class="admin-home-card-icon">${escapeHtml(option.label)}</span>
+          <span class="admin-home-card-icon">${escapeHtml(iconText)}</span>
           <span class="scope-card-copy"><span class="scope-card-kicker">${escapeHtml(titlePrefix)}</span><strong>${escapeHtml(option.label)}</strong></span>
           <span class="scope-card-period">${escapeHtml(periodText)}</span>
         </button>
@@ -5415,7 +5504,7 @@
       return;
     }
 
-    const scope = normalizeCatalogType(activeScope);
+    const scope = normalizeScopeCardValue(activeScope);
     const slot = container.querySelector(`[data-scope-detail-slot="${scope}"]`);
     if (!slot) {
       if (container.contains(detailCard)) {
@@ -5429,7 +5518,7 @@
     detailCard.hidden = false;
   }
 
-  function renderScopeSwitch(container, activeScope, action, titlePrefix, detailCard = null) {
+  function renderScopeSwitch(container, activeScope, action, titlePrefix, detailCard = null, scopeOptions = ACCOUNT_SCOPE_OPTIONS) {
     if (!container) {
       return;
     }
@@ -5437,7 +5526,7 @@
       container.after(detailCard);
       detailCard.hidden = true;
     }
-    container.innerHTML = scopeCardHtml(activeScope, action, titlePrefix);
+    container.innerHTML = scopeCardHtml(activeScope, action, titlePrefix, scopeOptions);
   }
 
   function setCatalogScope(scope) {
@@ -5448,9 +5537,11 @@
   }
 
   function setAccountScope(scope) {
-    const nextScope = normalizeCatalogType(scope);
+    const nextScope = normalizeScopeCardValue(scope);
     expandedAccountScope = expandedAccountScope === nextScope ? "" : nextScope;
-    activeAccountScope = nextScope;
+    if (nextScope !== ACCOUNT_VIEWER_SCOPE) {
+      activeAccountScope = nextScope;
+    }
     renderAll();
   }
 
@@ -5778,24 +5869,31 @@
     return normalizeCatalogType(type) === SAFETY_PERIOD_TYPE ? ROLE_ASSESSOR_SAFETY : ROLE_ASSESSOR_5S;
   }
 
-  function accountRoleOptionsHtml(selectedRole = "", type = activeAccountScope) {
+  function accountRoleOptionsHtml(selectedRole = "", type = activeAccountScope, options = {}) {
     const assessorRole = getAssessorRoleForScope(type);
     const normalizedRole = normalizeScopedAccountRole(selectedRole || assessorRole, type);
-    return [
+    const choices = [
       { value: assessorRole, label: "Assessor" },
       { value: ROLE_ZONE_OWNER, label: "Người phụ trách zone" },
-    ].map((option) => `<option value="${escapeHtml(option.value)}" ${normalizeScopedAccountRole(option.value, type) === normalizedRole ? "selected" : ""}>${escapeHtml(option.label)}</option>`).join("");
+    ];
+    if (options.includeViewer !== false) {
+      choices.push({ value: ROLE_VIEWER, label: "Người xem" });
+    }
+    return choices.map((option) => `<option value="${escapeHtml(option.value)}" ${normalizeScopedAccountRole(option.value, type) === normalizedRole ? "selected" : ""}>${escapeHtml(option.label)}</option>`).join("");
   }
 
   function populateAccountRoleOptions(selectedRole = elements.accountRole?.value || "") {
     if (!elements.accountRole) {
       return;
     }
-    elements.accountRole.innerHTML = accountRoleOptionsHtml(selectedRole, activeAccountScope);
+    elements.accountRole.innerHTML = accountRoleOptionsHtml(selectedRole, activeAccountScope, { includeViewer: false });
   }
 
 
   function accountZoneCodesForScope(account, type = activeAccountScope) {
+    if (isViewerAccount(account)) {
+      return ["Toàn bộ bảng biểu"];
+    }
     const periodId = getActivePeriodId(type);
     const catalogType = normalizeCatalogType(type);
     return getAreasForPeriod(periodId)
@@ -5807,6 +5905,9 @@
   function describeAccountForScope(account, type = activeAccountScope) {
     if (isAdminAccount(account)) {
       return `${account.username} · Admin hệ thống · Toàn quyền`;
+    }
+    if (isViewerAccount(account)) {
+      return `${account.username} · Người xem · ${account.name || account.displayName || account.username}${account.position ? ` · ${account.position}` : ""}`;
     }
     const zones = accountZoneCodesForScope(account, type).join(", ") || "chưa có zone";
     return `${account.username} · ${getAccountAccessLabel(account, type)} · ${getAccountDisplayName(account, type) || account.username} · Zone ${zones}`;
@@ -5833,7 +5934,7 @@
   }
 
   function missingAccountAccessTypes(account) {
-    if (!account || isAdminAccount(account)) {
+    if (!account || isAdminAccount(account) || isViewerAccount(account)) {
       return [];
     }
 
@@ -5848,6 +5949,9 @@
     if (isAdminAccount(account)) {
       return [FIVE_S_PERIOD_TYPE, SAFETY_PERIOD_TYPE];
     }
+    if (isViewerAccount(account)) {
+      return [];
+    }
 
     return normalizeAccountAccessTypes(account.accessTypes, account.role)
       .filter((type) => [FIVE_S_PERIOD_TYPE, SAFETY_PERIOD_TYPE].includes(type));
@@ -5859,19 +5963,57 @@
     if (isAdminAccount(account)) {
       return "Quyền hiện có: " + labels.join(", ") + " · Admin hệ thống";
     }
+    if (isViewerAccount(account)) {
+      return "Quyền hiện có: Người xem · toàn bộ bảng biểu";
+    }
 
     return "Quyền hiện có: " + (labels.join(", ") || "chưa có") + " · " + accessTypes.length + " quyền";
   }
 
+  function viewerAccountCardHtml(account) {
+    return `<article class="account-card">
+      <div>
+        <strong>${escapeHtml(account.username)}</strong>
+        <span>Tên: ${escapeHtml(account.name || account.displayName || account.username)}</span>
+        <span>Chức vụ: ${escapeHtml(account.position || "Chưa có")}</span>
+        <span>Quyền hiện có: Người xem · toàn bộ bảng biểu</span>
+      </div>
+      <div class="account-actions">
+        <button class="tiny-button" type="button" data-action="edit-account" data-id="${escapeHtml(account.id)}">Sửa</button>
+        <button class="tiny-button danger-text-button" type="button" data-action="delete-viewer-account" data-id="${escapeHtml(account.id)}">Xóa</button>
+      </div>
+    </article>`;
+  }
+
   function renderAccountsTab() {
-    renderScopeSwitch(elements.accountScopeSwitch, expandedAccountScope, "set-account-scope", "Cấp tài khoản", elements.accountScopeDetail);
-    mountScopeDetail(elements.accountScopeSwitch, elements.accountScopeDetail, expandedAccountScope);
+    const accountScopeOptions = [
+      ...ACCOUNT_SCOPE_OPTIONS,
+      { value: ACCOUNT_VIEWER_SCOPE, label: "Người xem", icon: "Xem" },
+    ];
+    renderScopeSwitch(elements.accountScopeSwitch, expandedAccountScope, "set-account-scope", "Cấp tài khoản", null, accountScopeOptions);
+    if (expandedAccountScope === ACCOUNT_VIEWER_SCOPE) {
+      if (elements.accountScopeDetail) {
+        if (elements.accountScopeSwitch?.contains(elements.accountScopeDetail)) {
+          elements.accountScopeSwitch.after(elements.accountScopeDetail);
+        }
+        elements.accountScopeDetail.hidden = true;
+      }
+      mountScopeDetail(elements.accountScopeSwitch, elements.viewerAccountDetail, ACCOUNT_VIEWER_SCOPE);
+    } else {
+      if (elements.viewerAccountDetail) {
+        if (elements.accountScopeSwitch?.contains(elements.viewerAccountDetail)) {
+          elements.accountScopeSwitch.after(elements.viewerAccountDetail);
+        }
+        elements.viewerAccountDetail.hidden = true;
+      }
+      mountScopeDetail(elements.accountScopeSwitch, elements.accountScopeDetail, expandedAccountScope);
+    }
     populateAccountRoleOptions();
     populateAssessorSelects();
     populateManagerSelects();
     renderAccountZoneList();
     syncAccountAssignedZones();
-    const scopedAccounts = state.accounts.filter((account) => isAdminAccount(account) || hasAccountAccessType(account, activeAccountScope));
+    const scopedAccounts = state.accounts.filter((account) => !isViewerAccount(account) && (isAdminAccount(account) || hasAccountAccessType(account, activeAccountScope)));
     elements.accountList.innerHTML = scopedAccounts
       .map((account) => {
         const isAdmin = isAdminAccount(account);
@@ -5887,6 +6029,7 @@
           <div>
             <strong>${escapeHtml(account.username)}</strong>
             <span>Hiển thị: ${escapeHtml(getAccountProfileName(account) || account.username)}</span>
+            ${account.position ? `<span>Chức vụ: ${escapeHtml(account.position)}</span>` : ""}
             <span>${escapeHtml(getAccountAccessLabel(account, activeAccountScope))} · ${escapeHtml(getAccountDisplayName(account, activeAccountScope) || account.username)} · ${escapeHtml(zones)}</span>
             <span>${escapeHtml(accountAccessSummary(account))}</span>
           </div>
@@ -5902,6 +6045,13 @@
         </article>`;
       })
       .join("") || `<article class="account-card"><strong>Chưa có tài khoản ${escapeHtml(getAccountScopeLabel(activeAccountScope))}</strong><span>Tạo tài khoản assessor hoặc người phụ trách zone cho luồng này.</span></article>`;
+
+    if (elements.viewerAccountList) {
+      const viewerAccounts = state.accounts.filter(isViewerAccount);
+      elements.viewerAccountList.innerHTML = viewerAccounts
+        .map(viewerAccountCardHtml)
+        .join("") || `<article class="account-card"><strong>Chưa có tài khoản người xem</strong><span>Tạo tài khoản người xem để theo dõi toàn bộ bảng biểu.</span></article>`;
+    }
   }
 
   let isLoggingIn = false;
@@ -8304,13 +8454,14 @@
       account.rolesByType = { ...normalizeAccountRolesByType(account), [scope]: role };
       account.name = name || account.name || username;
       account.displayName = displayName || username;
-      if (password) {
-        account.password = password;
-      }
       setAccountPersonForType(account, scope, role, personId);
       setAccountAreaIds(account, scope, areaIds);
       if (!account.role || !normalizeAccountAccessTypes(account.accessTypes, account.role).includes(FIVE_S_PERIOD_TYPE)) {
         account.role = role;
+      }
+      delete account.position;
+      if (password) {
+        account.password = password;
       }
       delete account.email;
       delete account.senderEmail;
@@ -8319,6 +8470,10 @@
     if (existing) {
       if (isAdminAccount(existing)) {
         showToast("Không thể cấp thêm quyền bằng tài khoản admin cố định.", true);
+        return;
+      }
+      if (isViewerAccount(existing)) {
+        showToast("Tài khoản người xem được quản lý ở khu riêng bên dưới.", true);
         return;
       }
       if (hasAccountAccessType(existing, scope)) {
@@ -8373,6 +8528,64 @@
     showToast("Đã thêm tài khoản.");
     renderAll();
   }
+
+  async function handleViewerAccountSubmit(event) {
+    event.preventDefault();
+    if (!requireAdminAction()) {
+      return;
+    }
+
+    const name = (elements.viewerAccountName?.value || "").trim();
+    const position = (elements.viewerAccountPosition?.value || "").trim();
+    const username = (elements.viewerAccountUsername?.value || "").trim();
+    const displayName = (elements.viewerAccountDisplayName?.value || "").trim();
+    const password = elements.viewerAccountPassword?.value || "";
+
+    if (!name || !position || !username || !password) {
+      showToast("Vui lòng nhập đủ thông tin người xem.", true);
+      return;
+    }
+    if (password.length < 4) {
+      showToast("Mật khẩu phải có ít nhất 4 ký tự.", true);
+      return;
+    }
+    if (state.accounts.some((account) => account.username === username)) {
+      showToast("Tên tài khoản đã tồn tại.", true);
+      return;
+    }
+
+    const account = {
+      id: makeId("account"),
+      role: ROLE_VIEWER,
+      accessTypes: [FIVE_S_PERIOD_TYPE, SAFETY_PERIOD_TYPE],
+      rolesByType: { [FIVE_S_PERIOD_TYPE]: ROLE_VIEWER, [SAFETY_PERIOD_TYPE]: ROLE_VIEWER },
+      name,
+      position,
+      displayName: displayName || name,
+      username,
+      password,
+      areaIds: [],
+      fiveSAreaIds: [],
+      safetyAreaIds: [],
+      createdAt: new Date().toISOString(),
+    };
+
+    state.accounts.push(account);
+    await Promise.all([
+      dbRef(`accounts/${account.id}`).set(account),
+      logAdminChange({
+        subjectLabel: "Tài khoản người xem",
+        afterLabel: describeAccountForScope(account, activeAccountScope),
+        changeLabel: `Thêm tài khoản người xem ${username}`,
+        scope: "",
+      }),
+    ]);
+
+    elements.viewerAccountForm?.reset();
+    showToast("Đã thêm tài khoản người xem.");
+    renderAll();
+  }
+
   function editScorer(id) {
     if (!requireAdminAction()) {
       return;
@@ -9716,6 +9929,95 @@
       return;
     }
 
+    if (isViewerAccount(account)) {
+      openFormModal({
+        title: "Sửa tài khoản người xem",
+        html: `
+          <label>
+            <span>Tên người xem</span>
+            <input name="viewerName" type="text" value="${escapeHtml(account.name || account.displayName || "")}" required>
+          </label>
+          <label>
+            <span>Chức vụ</span>
+            <input name="viewerPosition" type="text" value="${escapeHtml(account.position || "")}" required>
+          </label>
+          <label>
+            <span>Tài khoản</span>
+            <input name="username" type="text" value="${escapeHtml(account.username)}" required>
+          </label>
+          <label>
+            <span>Tên hiển thị</span>
+            <input name="displayName" type="text" value="${escapeHtml(account.displayName || "")}" placeholder="Mặc định theo tên người xem">
+          </label>
+          <label>
+            <span>Mật khẩu</span>
+            <input name="password" type="password" value="" minlength="4" placeholder="Để trống nếu không đổi">
+          </label>
+        `,
+        async onSubmit(formData) {
+          if (!requireAdminAction()) {
+            return false;
+          }
+
+          const name = String(formData.get("viewerName") || "").trim();
+          const position = String(formData.get("viewerPosition") || "").trim();
+          const username = String(formData.get("username") || "").trim();
+          const displayName = String(formData.get("displayName") || "").trim();
+          const password = String(formData.get("password") || "");
+
+          if (!name || !position || !username) {
+            showToast("Vui lòng nhập đủ thông tin người xem.", true);
+            return false;
+          }
+          if (password && password.length < 4) {
+            showToast("Mật khẩu mới phải có ít nhất 4 ký tự.", true);
+            return false;
+          }
+          if (state.accounts.some((item) => item.id !== id && item.username === username)) {
+            showToast("Tên tài khoản đã tồn tại.", true);
+            return false;
+          }
+
+          const beforeLabel = describeAccountForScope(account, scope);
+          account.role = ROLE_VIEWER;
+          account.accessTypes = [FIVE_S_PERIOD_TYPE, SAFETY_PERIOD_TYPE];
+          account.rolesByType = { [FIVE_S_PERIOD_TYPE]: ROLE_VIEWER, [SAFETY_PERIOD_TYPE]: ROLE_VIEWER };
+          account.name = name;
+          account.position = position;
+          account.displayName = displayName || name;
+          account.username = username;
+          account.areaIds = [];
+          account.fiveSAreaIds = [];
+          account.safetyAreaIds = [];
+          setAccountPersonForType(account, FIVE_S_PERIOD_TYPE, ROLE_VIEWER, "");
+          setAccountPersonForType(account, SAFETY_PERIOD_TYPE, ROLE_VIEWER, "");
+          if (password) {
+            account.password = password;
+          } else {
+            delete account.password;
+          }
+          delete account.email;
+          delete account.senderEmail;
+
+          await Promise.all([
+            dbRef(`accounts/${account.id}`).set(account),
+            logAdminChange({
+              subjectLabel: "Tài khoản người xem",
+              beforeLabel,
+              afterLabel: describeAccountForScope(account, scope),
+              changeLabel: `Sửa tài khoản người xem ${account.username}`,
+              scope: "",
+            }),
+          ]);
+
+          showToast("Đã cập nhật tài khoản người xem.");
+          renderAll();
+          return true;
+        },
+      });
+      return;
+    }
+
     if (!hasAccountAccessType(account, scope)) {
       return;
     }
@@ -9728,7 +10030,7 @@
         <label>
           <span>Loại quyền</span>
           <select name="role" required>
-            ${accountRoleOptionsHtml(selectedRole, scope)}
+            ${accountRoleOptionsHtml(selectedRole, scope, { includeViewer: false })}
           </select>
         </label>
         <label data-account-assessor-field>
@@ -9814,18 +10116,19 @@
         account.rolesByType = { ...normalizeAccountRolesByType(account), [scope]: role };
         account.name = name || account.name || username;
         account.displayName = displayName || username;
-        account.username = username;
-        if (password) {
-          account.password = password;
-        } else {
-          delete account.password;
-        }
         setAccountPersonForType(account, scope, role, personId);
         setAccountAreaIds(account, scope, areaIds);
         if (!hasAccountAccessType(account, FIVE_S_PERIOD_TYPE)) {
           account.role = getAccountRoleForType(account, SAFETY_PERIOD_TYPE) || role;
         } else if (scope === FIVE_S_PERIOD_TYPE) {
           account.role = role;
+        }
+        delete account.position;
+        account.username = username;
+        if (password) {
+          account.password = password;
+        } else {
+          delete account.password;
         }
         delete account.email;
         delete account.senderEmail;
@@ -9884,7 +10187,7 @@
         <label>
           <span>Loại quyền</span>
           <select name="role" required>
-            ${accountRoleOptionsHtml(selectedRole, scope)}
+            ${accountRoleOptionsHtml(selectedRole, scope, { includeViewer: false })}
           </select>
         </label>
         <label data-account-assessor-field ${selectedRole === ROLE_ZONE_OWNER ? "hidden" : ""}>
@@ -10039,6 +10342,41 @@
     removeAccountAccess(id, activeAccountScope);
   }
 
+  function deleteViewerAccount(id) {
+    if (!requireAdminAction()) {
+      return;
+    }
+
+    const account = state.accounts.find((item) => item.id === id && isViewerAccount(item));
+    if (!account) {
+      return;
+    }
+
+    openConfirmModal({
+      title: "Xóa tài khoản người xem",
+      message: `Xóa tài khoản người xem ${account.username}?`,
+      confirmText: "Xóa tài khoản",
+      danger: true,
+      onConfirm() {
+        const beforeLabel = describeAccountForScope(account, activeAccountScope);
+        state.accounts = state.accounts.filter((item) => item.id !== id);
+        Promise.all([
+          dbRef(`accounts/${id}`).remove(),
+          logAdminChange({
+            subjectLabel: "Tài khoản người xem",
+            beforeLabel,
+            afterLabel: "Đã xóa",
+            changeLabel: `Xóa tài khoản người xem ${account.username}`,
+            scope: "",
+          }),
+        ]).then(() => {
+          showToast("Đã xóa tài khoản người xem.");
+          renderAll();
+        }).catch(() => showToast("Lỗi khi xóa tài khoản người xem.", true));
+      },
+    });
+  }
+
   function managerOptions(selectedId, includeBlank = true, type = activeCatalogScope, periodId = getActivePeriodId(type)) {
     const options = getPeriodCatalogManagers(type, periodId)
       .map((manager) => `<option value="${escapeHtml(manager.id)}" ${manager.id === selectedId ? "selected" : ""}>${escapeHtml(manager.name)}</option>`)
@@ -10068,7 +10406,7 @@
 
     const periodType = normalizePeriodType(type || period.type) === SAFETY_PERIOD_TYPE ? SAFETY_PERIOD_TYPE : FIVE_S_PERIOD_TYPE;
     if (!isAdminAccount(currentUser)) {
-      if (id !== getActivePeriodId(periodType)) {
+      if (!isViewerAccount(currentUser) && id !== getActivePeriodId(periodType)) {
         showToast("Kỳ đánh giá này hiện không mở. Bạn chỉ có thể xem kỳ đang mở.", true);
         return;
       }
@@ -14804,6 +15142,7 @@
       "edit-account",
       "add-account-access",
       "remove-account-access",
+      "delete-viewer-account",
       "delete-account",
     ]);
     const safetyActions = new Set(["add-safety-record", "edit-safety-record", "delete-safety-record"]);
@@ -14872,6 +15211,7 @@
       "edit-account": () => editAccount(id),
       "add-account-access": () => addAccountAccess(id, sourceElement?.dataset.accountScope || ""),
       "remove-account-access": () => removeAccountAccess(id, sourceElement?.dataset.accountScope || activeAccountScope),
+      "delete-viewer-account": () => deleteViewerAccount(id),
       "delete-account": () => deleteAccount(id),
       "edit-safety-record": () => editSafetyRecord(id),
       "modal-cancel": () => closeModal(),
@@ -14979,6 +15319,7 @@
     };
     bindPeriodSelect(elements.assessorPeriodSelect, FIVE_S_PERIOD_TYPE);
     bindPeriodSelect(elements.summaryPeriodSelect, FIVE_S_PERIOD_TYPE);
+    bindPeriodSelect(elements.safetyPeriodSelect, SAFETY_PERIOD_TYPE);
     bindPeriodSelect(elements.issueStatsPeriodSelect, SAFETY_PERIOD_TYPE);
 
     elements.assessorAreaSelect?.addEventListener("change", renderAssessorTab);
@@ -15013,6 +15354,7 @@
     elements.accountAssessor?.addEventListener("change", () => syncAccountAssignedZones());
     elements.accountManager?.addEventListener("change", () => syncAccountAssignedZones());
     elements.accountForm.addEventListener("submit", handleAccountSubmit);
+    elements.viewerAccountForm?.addEventListener("submit", handleViewerAccountSubmit);
 
     elements.modalCloseButton.addEventListener("click", closeModal);
     elements.modalBackdrop.addEventListener("click", (event) => {

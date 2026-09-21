@@ -3054,6 +3054,19 @@ body.is-drag-scrolling-active .assessor-4m-wrap .assessor-score-select {
   gap: 14px;
 }
 
+.viewer-accounts-grid {
+  margin-top: 0;
+}
+
+.simple-home-card.scope-card.viewer-card {
+  background: linear-gradient(135deg, #fff7ed 0%, #ffffff 52%, #fef3c7 100%) !important;
+  border-color: rgba(245, 158, 11, 0.24) !important;
+}
+
+.simple-home-card.scope-card.viewer-card .admin-home-card-icon {
+  background: linear-gradient(135deg, #f59e0b, #d97706) !important;
+}
+
 .danger-panel {
   background: var(--danger-soft);
 }
@@ -4327,6 +4340,11 @@ button.safety-sheet-tab.is-active {
   align-items: start;
 }
 
+#account-scope-switch {
+  grid-template-columns: repeat(3, minmax(250px, 1fr));
+  gap: 14px;
+}
+
 .simple-home-card.scope-card {
   min-height: 0;
   grid-template-columns: 1fr;
@@ -5242,6 +5260,10 @@ body {
 }
 
 @media (max-width: 1180px) {
+  #account-scope-switch {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
   .scope-card-row {
     grid-template-columns: 1fr;
   }
@@ -5277,6 +5299,10 @@ body {
     grid-template-columns: 64px minmax(0, 1fr);
     gap: 12px;
     padding-right: 12px;
+  }
+
+  #account-scope-switch {
+    grid-template-columns: 1fr;
   }
 
   .simple-home-card.scope-card .admin-home-card-icon {

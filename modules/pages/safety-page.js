@@ -204,9 +204,9 @@
     setButtonVisible(elements.addSafetyRecordButton, isAssessment, context);
     setButtonVisible(elements.editSafetyMetaButton, isAssessment && isAdmin, context);
     setButtonVisible(elements.sendSafetyMailButton, isAssessment && isAdmin, context);
-    const canShowExport = Boolean(reportId) && (isAdmin || isIdentification || isFactory);
+    const canShowExport = Boolean(reportId);
     if (elements.exportSafetyExcelButton) {
-      elements.exportSafetyExcelButton.classList.toggle("admin-only", !(isIdentification || isFactory));
+      elements.exportSafetyExcelButton.classList.remove("admin-only");
     }
     setButtonVisible(elements.exportSafetyExcelButton, canShowExport, context);
     const safetyToolbar = elements.safetyPeriodSelect?.closest?.(".safety-toolbar");

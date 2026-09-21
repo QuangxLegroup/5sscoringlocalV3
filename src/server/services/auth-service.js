@@ -6,6 +6,7 @@ const ROLE_ADMIN = "admin";
 const ROLE_ASSESSOR_5S = "assessor5s";
 const ROLE_ASSESSOR_SAFETY = "assessorSafety";
 const ROLE_ZONE_OWNER = "zoneOwner";
+const ROLE_VIEWER = "viewer";
 const FIVE_S_PERIOD_TYPE = "5s";
 const SAFETY_PERIOD_TYPE = "safety";
 const LEGACY_PERIOD_TYPE = "both";
@@ -108,6 +109,7 @@ function valueAtPath(root, targetPath) {
 function normalizeAccountRole(role) {
   const value = String(role || "").trim();
   if (value === ROLE_ADMIN) return ROLE_ADMIN;
+  if (["viewer", ROLE_VIEWER].includes(value)) return ROLE_VIEWER;
   if (["safetyAssessor", ROLE_ASSESSOR_SAFETY].includes(value)) return ROLE_ASSESSOR_SAFETY;
   if (["manager", "scorer", ROLE_ZONE_OWNER].includes(value)) return ROLE_ZONE_OWNER;
   return ROLE_ASSESSOR_5S;
@@ -129,7 +131,7 @@ function normalizeScoreSource(source) {
 
 function normalizeAccountAccessTypes(accessTypes, role = "") {
   const normalizedRole = normalizeAccountRole(role);
-  if (normalizedRole === ROLE_ADMIN) {
+  if (normalizedRole === ROLE_ADMIN || normalizedRole === ROLE_VIEWER) {
     return [FIVE_S_PERIOD_TYPE, SAFETY_PERIOD_TYPE];
   }
 
@@ -150,6 +152,9 @@ function normalizeAccountAccessTypes(accessTypes, role = "") {
 
 function normalizeScopedAccountRole(role, type = FIVE_S_PERIOD_TYPE) {
   const normalizedRole = normalizeAccountRole(role);
+  if (normalizedRole === ROLE_VIEWER) {
+    return ROLE_VIEWER;
+  }
   if (normalizedRole === ROLE_ZONE_OWNER) {
     return ROLE_ZONE_OWNER;
   }
@@ -213,6 +218,10 @@ function getAccountPersonId(account, type = FIVE_S_PERIOD_TYPE) {
 
 function isAdminAccount(account) {
   return normalizeAccountRole(account?.role) === ROLE_ADMIN;
+}
+
+function isViewerAccount(account) {
+  return normalizeAccountRole(account?.role) === ROLE_VIEWER;
 }
 
 function sameNormalizedText(left, right) {
@@ -576,7 +585,7 @@ class AuthService {
   getAllowedAreaIds(root, account, periodId, explicitType = "") {
     const type = explicitType ? normalizeCatalogType(explicitType) : this.getPeriodType(root, periodId);
     const areas = this.getAreasForPeriod(root, periodId, type);
-    if (isAdminAccount(account)) {
+    if (isAdminAccount(account) || isViewerAccount(account)) {
       return new Set(areas.map((area) => area.id).filter(Boolean));
     }
     if (!hasAccountAccessType(account, type)) {
@@ -789,6 +798,9 @@ class AuthService {
     if (isAdminAccount(account)) {
       return;
     }
+    if (isViewerAccount(account)) {
+      throw createHttpError("Tài khoản người xem không có quyền thay đổi dữ liệu.", 403);
+    }
 
     const parts = pathParts(command.path);
     if (!parts.length && String(command.operation || "") === "update") {
@@ -828,7 +840,7 @@ class AuthService {
 
   assertPhotoAllowed(authContext) {
     const account = authContext?.rawAccount || authContext?.account;
-    if (!account || !accountHasAnyAccess(account)) {
+    if (!account || isViewerAccount(account) || !accountHasAnyAccess(account)) {
       throw createHttpError("Bạn không có quyền tải ảnh.", 403);
     }
   }
