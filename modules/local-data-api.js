@@ -4,6 +4,13 @@
   const API_ROOT = window.LOCAL_DATA_API_ROOT || "";
   const POLL_INTERVAL_MS = 5000;
   const DEMO_STORAGE_KEY = "legroup-5s-demo-data";
+  const OFFLINE_DB_NAME = "legroup-5s-offline";
+  const OFFLINE_DB_VERSION = 1;
+  const OFFLINE_QUEUE_STORE = "queue";
+  const OFFLINE_META_STORE = "meta";
+  const OFFLINE_PHOTO_STORE = "photoMap";
+  const OFFLINE_ROOT_KEY = "root";
+  const OFFLINE_SYNC_INTERVAL_MS = 12000;
   const VOLATILE_ACCOUNT_FIELDS = new Set([
     "activeSessionId",
     "activeSessionAt",
@@ -18,6 +25,10 @@
   let stream = null;
   let streamRetryTimer = 0;
   let polling = false;
+  let offlineSyncing = false;
+  let offlineSyncTimer = 0;
+  let lastOfflineStatus = null;
+  let offlineDbPromise = null;
   let demoMode = window.location.protocol === "file:";
   let authToken = "";
   const listeners = new Set();
@@ -191,6 +202,32 @@
     return rootCache;
   }
 
+  async function applyOfflineWrite(operation, path, value) {
+    const currentRoot = clone(rootCache) || await readOfflineRoot() || {};
+    let nextRoot;
+
+    if (operation === "set") {
+      nextRoot = setAtPath(currentRoot, path, value);
+    } else if (operation === "update") {
+      nextRoot = updateAtPath(currentRoot, path, value);
+    } else if (operation === "remove") {
+      nextRoot = removeAtPath(currentRoot, path);
+    } else {
+      throw new Error(`LocalDataStore không hỗ trợ thao tác "${operation}".`);
+    }
+
+    rememberRoot(nextRoot);
+    await persistOfflineRoot(rootCache);
+    await enqueueOfflineCommand({
+      type: "data-write",
+      operation,
+      path: path || "",
+      value: clone(value),
+    });
+    notifyAll();
+    return rootCache;
+  }
+
   function getPhotoPeriodFolder(photo) {
     const month = Number(photo?.month);
     const year = Number(photo?.year);
@@ -240,6 +277,228 @@
     )));
   }
 
+  function isIndexedDbAvailable() {
+    return typeof window.indexedDB !== "undefined";
+  }
+
+  function openOfflineDb() {
+    if (!isIndexedDbAvailable()) {
+      return Promise.resolve(null);
+    }
+
+    if (!offlineDbPromise) {
+      offlineDbPromise = new Promise((resolve, reject) => {
+        const request = window.indexedDB.open(OFFLINE_DB_NAME, OFFLINE_DB_VERSION);
+        request.onupgradeneeded = () => {
+          const db = request.result;
+          if (!db.objectStoreNames.contains(OFFLINE_QUEUE_STORE)) {
+            db.createObjectStore(OFFLINE_QUEUE_STORE, { keyPath: "id" });
+          }
+          if (!db.objectStoreNames.contains(OFFLINE_META_STORE)) {
+            db.createObjectStore(OFFLINE_META_STORE, { keyPath: "key" });
+          }
+          if (!db.objectStoreNames.contains(OFFLINE_PHOTO_STORE)) {
+            db.createObjectStore(OFFLINE_PHOTO_STORE, { keyPath: "signature" });
+          }
+        };
+        request.onsuccess = () => resolve(request.result);
+        request.onerror = () => reject(request.error || new Error("Không mở được bộ nhớ offline."));
+        request.onblocked = () => reject(new Error("Bộ nhớ offline đang bị khóa bởi tab khác."));
+      }).catch((error) => {
+        offlineDbPromise = null;
+        console.warn("Không mở được IndexedDB để lưu offline:", error);
+        return null;
+      });
+    }
+
+    return offlineDbPromise;
+  }
+
+  async function withOfflineStore(storeName, mode, callback) {
+    const db = await openOfflineDb();
+    if (!db) {
+      return null;
+    }
+
+    return new Promise((resolve, reject) => {
+      const transaction = db.transaction(storeName, mode);
+      const store = transaction.objectStore(storeName);
+      let result;
+      transaction.oncomplete = () => resolve(result);
+      transaction.onerror = () => reject(transaction.error || new Error("Không truy cập được bộ nhớ offline."));
+      transaction.onabort = () => reject(transaction.error || new Error("Thao tác bộ nhớ offline bị hủy."));
+      try {
+        result = callback(store);
+      } catch (error) {
+        transaction.abort();
+        reject(error);
+      }
+    });
+  }
+
+  function idbRequest(request) {
+    return new Promise((resolve, reject) => {
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error || new Error("Thao tác IndexedDB thất bại."));
+    });
+  }
+
+  async function persistOfflineRoot(root) {
+    if (!isPlainObject(root)) {
+      return;
+    }
+
+    await withOfflineStore(OFFLINE_META_STORE, "readwrite", (store) => {
+      store.put({ key: OFFLINE_ROOT_KEY, value: clone(root), savedAt: new Date().toISOString() });
+    });
+  }
+
+  async function readOfflineRoot() {
+    const entry = await withOfflineStore(OFFLINE_META_STORE, "readonly", (store) => idbRequest(store.get(OFFLINE_ROOT_KEY)));
+    return isPlainObject(entry?.value) ? entry.value : null;
+  }
+
+  async function getQueuedCommands() {
+    const entries = await withOfflineStore(OFFLINE_QUEUE_STORE, "readonly", (store) => idbRequest(store.getAll()));
+    return (Array.isArray(entries) ? entries : []).sort((a, b) => {
+      const left = String(a?.createdAt || "");
+      const right = String(b?.createdAt || "");
+      return left.localeCompare(right) || String(a?.id || "").localeCompare(String(b?.id || ""));
+    });
+  }
+
+  async function getOfflineQueueCount() {
+    const entries = await getQueuedCommands();
+    return entries.length;
+  }
+
+  async function enqueueOfflineCommand(command) {
+    const entry = {
+      ...command,
+      id: command.id || `offline-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
+      createdAt: command.createdAt || new Date().toISOString(),
+    };
+    const stored = await withOfflineStore(OFFLINE_QUEUE_STORE, "readwrite", (store) => {
+      store.put(entry);
+    });
+    if (stored === null) {
+      throw new Error("Trình duyệt không hỗ trợ bộ nhớ offline. Vui lòng dùng Chrome/Edge và thử lại.");
+    }
+    await dispatchOfflineStatus({ pending: await getOfflineQueueCount(), online: false });
+    scheduleOfflineSync();
+    return entry;
+  }
+
+  async function deleteQueuedCommand(id) {
+    await withOfflineStore(OFFLINE_QUEUE_STORE, "readwrite", (store) => {
+      store.delete(id);
+    });
+  }
+
+  async function getPhotoMappings() {
+    const entries = await withOfflineStore(OFFLINE_PHOTO_STORE, "readonly", (store) => idbRequest(store.getAll()));
+    const map = new Map();
+    (Array.isArray(entries) ? entries : []).forEach((entry) => {
+      if (entry?.signature && entry?.remote?.url) {
+        map.set(entry.signature, entry.remote);
+      }
+    });
+    return map;
+  }
+
+  async function savePhotoMapping(signature, remote) {
+    if (!signature || !remote?.url) {
+      return;
+    }
+    await withOfflineStore(OFFLINE_PHOTO_STORE, "readwrite", (store) => {
+      store.put({ signature, remote, savedAt: new Date().toISOString() });
+    });
+  }
+
+  function isNetworkLikeError(error) {
+    if (!error) {
+      return true;
+    }
+    if (!navigator.onLine) {
+      return true;
+    }
+    if (!error.status) {
+      return true;
+    }
+    return [502, 503, 504].includes(Number(error.status));
+  }
+
+  async function dispatchOfflineStatus(overrides = {}) {
+    const pending = Number.isFinite(overrides.pending) ? overrides.pending : await getOfflineQueueCount();
+    const detail = {
+      pending,
+      syncing: offlineSyncing,
+      online: navigator.onLine,
+      lastError: "",
+      ...(lastOfflineStatus || {}),
+      ...overrides,
+      pending,
+      syncing: overrides.syncing ?? offlineSyncing,
+    };
+    lastOfflineStatus = detail;
+    try {
+      window.dispatchEvent(new CustomEvent("local-data-sync-status", { detail }));
+    } catch (error) {
+      console.warn("Không phát được trạng thái đồng bộ offline:", error);
+    }
+    return detail;
+  }
+
+  function scheduleOfflineSync(delayMs = 0) {
+    if (demoMode || offlineSyncing || !authToken) {
+      return;
+    }
+    if (offlineSyncTimer) {
+      window.clearTimeout(offlineSyncTimer);
+    }
+    offlineSyncTimer = window.setTimeout(() => {
+      offlineSyncTimer = 0;
+      flushOfflineQueue().catch((error) => {
+        console.warn("Không đồng bộ được dữ liệu lưu tạm:", error);
+      });
+    }, delayMs);
+  }
+
+  function transformOfflinePhotoRefs(value, photoMap) {
+    if (!photoMap?.size) {
+      return value;
+    }
+
+    if (typeof value === "string") {
+      const mapped = value.startsWith("data:image/") ? photoMap.get(signatureForText(value)) : null;
+      return mapped?.url || value;
+    }
+
+    if (Array.isArray(value)) {
+      return value.map((item) => transformOfflinePhotoRefs(item, photoMap));
+    }
+
+    if (!isPlainObject(value)) {
+      return value;
+    }
+
+    const next = {};
+    const photoSignature = typeof value.photoDataUrl === "string" && value.photoDataUrl.startsWith("data:image/")
+      ? signatureForText(value.photoDataUrl)
+      : "";
+    const mappedPhoto = photoSignature ? photoMap.get(photoSignature) : null;
+    Object.entries(value).forEach(([key, itemValue]) => {
+      if (key === "photoDataUrl" && mappedPhoto?.url) {
+        next[key] = mappedPhoto.url;
+      } else if (key === "photoName" && mappedPhoto?.fileName) {
+        next[key] = mappedPhoto.fileName;
+      } else {
+        next[key] = transformOfflinePhotoRefs(itemValue, photoMap);
+      }
+    });
+    return next;
+  }
+
   async function readJsonResponse(response) {
     const text = await response.text();
     lastResponseSignature = signatureForText(text);
@@ -280,8 +539,124 @@
     return error?.status === 401 || error?.status === 403;
   }
 
+  function readTokenPayload(token = authToken) {
+    const encodedPayload = String(token || "").split(".")[0] || "";
+    if (!encodedPayload) {
+      return {};
+    }
+
+    try {
+      const padded = encodedPayload.replace(/-/g, "+").replace(/_/g, "/").padEnd(Math.ceil(encodedPayload.length / 4) * 4, "=");
+      return JSON.parse(window.atob(padded));
+    } catch (error) {
+      console.warn("Không đọc được payload phiên đăng nhập offline:", error);
+      return {};
+    }
+  }
+
+  function buildOfflineAuthPayload(root) {
+    const payload = readTokenPayload();
+    return {
+      token: authToken,
+      root,
+      offline: true,
+      accountId: payload.sub || "",
+      username: payload.username || "",
+      sessionId: payload.sid || "",
+    };
+  }
+
+  async function flushOfflineQueue() {
+    if (demoMode || offlineSyncing || !authToken) {
+      return false;
+    }
+
+    let entries = await getQueuedCommands();
+    if (!entries.length) {
+      await dispatchOfflineStatus({ pending: 0, online: navigator.onLine, syncing: false });
+      return true;
+    }
+
+    offlineSyncing = true;
+    await dispatchOfflineStatus({ pending: entries.length, syncing: true, online: navigator.onLine, lastError: "" });
+
+    try {
+      await request("/api/health");
+      let photoMap = await getPhotoMappings();
+
+      for (const entry of entries) {
+        if (entry.type === "photo-save") {
+          const signature = entry.localSignature || signatureForText(entry.photo?.dataUrl || "");
+          if (!photoMap.has(signature)) {
+            const savedPhoto = await request("/api/photos", {
+              method: "POST",
+              body: JSON.stringify(entry.photo || {}),
+            });
+            await savePhotoMapping(signature, savedPhoto);
+            photoMap = await getPhotoMappings();
+          }
+        } else if (entry.type === "photo-delete") {
+          await request("/api/photos/delete", {
+            method: "POST",
+            body: JSON.stringify(entry.photo || {}),
+          });
+        } else if (entry.type === "data-write") {
+          const value = transformOfflinePhotoRefs(entry.value, photoMap);
+          const root = await request("/api/data/write", {
+            method: "POST",
+            body: JSON.stringify({
+              operation: entry.operation,
+              path: entry.path || "",
+              value,
+            }),
+          });
+          rememberRoot(root);
+        }
+
+        await deleteQueuedCommand(entry.id);
+        await dispatchOfflineStatus({ pending: await getOfflineQueueCount(), syncing: true, online: true, lastError: "" });
+      }
+
+      entries = await getQueuedCommands();
+      if (!entries.length) {
+        try {
+          const root = await request("/api/data");
+          rememberRoot(root);
+          notifyAll();
+        } catch (error) {
+          if (isAuthError(error)) {
+            throw error;
+          }
+          console.warn("Không tải lại được dữ liệu sau khi đồng bộ offline:", error);
+        }
+      }
+
+      return true;
+    } catch (error) {
+      if (isAuthError(error)) {
+        clearAuthToken();
+        notifyAuthRevoked(error.message);
+      }
+      await dispatchOfflineStatus({
+        pending: await getOfflineQueueCount(),
+        syncing: false,
+        online: false,
+        lastError: error?.message || "Không đồng bộ được dữ liệu lưu tạm.",
+      });
+      return false;
+    } finally {
+      offlineSyncing = false;
+      const pending = await getOfflineQueueCount();
+      await dispatchOfflineStatus({ pending, syncing: false, online: navigator.onLine });
+      if (pending && authToken && !demoMode) {
+        scheduleOfflineSync(OFFLINE_SYNC_INTERVAL_MS);
+      }
+    }
+  }
+
   function setAuthToken(token = "") {
     authToken = String(token || "");
+    scheduleOfflineSync(500);
   }
 
   function clearAuthToken() {
@@ -369,6 +744,14 @@
     try {
       return applyAuthPayload(await request("/api/auth/session"));
     } catch (error) {
+      if (!isAuthError(error) && isNetworkLikeError(error)) {
+        const root = await readOfflineRoot();
+        if (root) {
+          rememberRoot(root);
+          await dispatchOfflineStatus({ pending: await getOfflineQueueCount(), online: false, lastError: error?.message || "" });
+          return buildOfflineAuthPayload(root);
+        }
+      }
       clearAuthToken();
       throw error;
     }
@@ -382,7 +765,16 @@
       };
     }
 
-    return applyAuthPayload(await request("/api/auth/session/touch", { method: "POST" }));
+    try {
+      return applyAuthPayload(await request("/api/auth/session/touch", { method: "POST" }));
+    } catch (error) {
+      if (!isAuthError(error) && isNetworkLikeError(error)) {
+        const root = rootCache || await readOfflineRoot();
+        await dispatchOfflineStatus({ pending: await getOfflineQueueCount(), online: false, lastError: error?.message || "" });
+        return buildOfflineAuthPayload(root);
+      }
+      throw error;
+    }
   }
 
   async function logout() {
@@ -398,6 +790,9 @@
   function rememberRoot(root) {
     rootCache = root && typeof root === "object" ? root : null;
     rootSignature = signatureForRoot(rootCache);
+    persistOfflineRoot(rootCache).catch((error) => {
+      console.warn("Không lưu được cache offline:", error);
+    });
   }
 
   async function loadRoot() {
@@ -406,11 +801,30 @@
     }
 
     try {
+      if (authToken && await getOfflineQueueCount()) {
+        await flushOfflineQueue();
+      }
+      if (authToken && await getOfflineQueueCount()) {
+        const cachedRoot = rootCache || await readOfflineRoot();
+        if (cachedRoot) {
+          rememberRoot(cachedRoot);
+          return rootCache;
+        }
+      }
       const root = await request("/api/data");
       rememberRoot(root);
     } catch (error) {
       if (isAuthError(error)) {
         throw error;
+      }
+      if (isNetworkLikeError(error)) {
+        const cachedRoot = await readOfflineRoot();
+        if (cachedRoot) {
+          rememberRoot(cachedRoot);
+          await dispatchOfflineStatus({ pending: await getOfflineQueueCount(), online: false, lastError: error?.message || "" });
+          scheduleOfflineSync(OFFLINE_SYNC_INTERVAL_MS);
+          return rootCache;
+        }
       }
       enterDemoMode(error);
       return loadDemoRoot();
@@ -434,16 +848,25 @@
 
     polling = true;
     try {
+      if (!demoMode && authToken && await getOfflineQueueCount()) {
+        await flushOfflineQueue();
+        if (await getOfflineQueueCount()) {
+          return;
+        }
+      }
       const root = demoMode ? readDemoRoot() : await request("/api/data");
       const signature = signatureForRoot(root);
       if (signature !== rootSignature) {
         rememberRoot(root);
         notifyAll();
       }
+      scheduleOfflineSync(500);
     } catch (error) {
       if (isAuthError(error)) {
         clearAuthToken();
         notifyAuthRevoked(error.message);
+      } else if (isNetworkLikeError(error)) {
+        await dispatchOfflineStatus({ pending: await getOfflineQueueCount(), online: false, lastError: error?.message || "" });
       }
       console.warn("Không đồng bộ được dữ liệu nội bộ:", error);
     } finally {
@@ -524,6 +947,9 @@
       if (isAuthError(error)) {
         throw error;
       }
+      if (isNetworkLikeError(error)) {
+        return applyOfflineWrite(operation, path, value);
+      }
       enterDemoMode(error);
       return applyDemoWrite(operation, path, value);
     }
@@ -546,6 +972,18 @@
       if (isAuthError(error)) {
         throw error;
       }
+      if (isNetworkLikeError(error)) {
+        const savedPhoto = saveDemoPhoto(photo);
+        await enqueueOfflineCommand({
+          type: "photo-save",
+          photo: clone(photo || {}),
+          localSignature: signatureForText(savedPhoto.url || ""),
+        });
+        return {
+          ...savedPhoto,
+          offline: true,
+        };
+      }
       enterDemoMode(error);
       return saveDemoPhoto(photo);
     }
@@ -564,6 +1002,16 @@
     } catch (error) {
       if (isAuthError(error)) {
         throw error;
+      }
+      if (isNetworkLikeError(error)) {
+        const rawPath = String(photo?.path || photo?.url || "");
+        if (rawPath.startsWith("/api/photos/") || rawPath.includes("/api/photos/")) {
+          await enqueueOfflineCommand({
+            type: "photo-delete",
+            photo: clone(photo || {}),
+          });
+        }
+        return { ok: true, offline: true };
       }
       enterDemoMode(error);
       return { ok: true };
@@ -619,6 +1067,23 @@
     };
   }
 
+  function startOfflineSyncWatch() {
+    window.addEventListener("online", () => {
+      scheduleOfflineSync(500);
+    });
+    window.addEventListener("focus", () => {
+      scheduleOfflineSync(500);
+    });
+    window.setInterval(() => {
+      scheduleOfflineSync();
+    }, OFFLINE_SYNC_INTERVAL_MS);
+    getOfflineQueueCount()
+      .then((pending) => dispatchOfflineStatus({ pending, syncing: false, online: navigator.onLine }))
+      .catch((error) => console.warn("Không đọc được số lệnh offline:", error));
+  }
+
+  startOfflineSyncWatch();
+
   window.LocalDataStore = {
     ref,
     loadRoot,
@@ -630,6 +1095,8 @@
     clearAuthToken,
     savePhoto,
     deletePhoto,
+    flushOfflineQueue,
+    getOfflineQueueCount,
     isDemoMode() {
       return demoMode;
     },

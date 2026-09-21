@@ -369,6 +369,8 @@
   let activeSafetyReport = "";
   let pendingSafetyReport = "";
   let toastTimer = 0;
+  let lastOfflinePending = 0;
+  let lastOfflineSyncing = false;
   let modalPreviewDirty = false;
   let modalSubmitSucceeded = false;
   let snapshotSeedPromise = null;
@@ -13903,6 +13905,43 @@
     }
   }
 
+  function handleLocalDataSyncStatus(event) {
+    const detail = event?.detail || {};
+    const pending = Number(detail.pending || 0);
+    const syncing = Boolean(detail.syncing);
+    const hasError = Boolean(detail.lastError);
+    const indicator = document.querySelector(".status-indicator");
+    const label = indicator?.querySelector("span:not(.status-dot)");
+
+    if (indicator) {
+      indicator.classList.toggle("has-pending", pending > 0);
+      indicator.classList.toggle("is-syncing", syncing);
+      indicator.classList.toggle("is-offline", pending > 0 && !syncing);
+      indicator.classList.toggle("has-error", hasError && pending > 0);
+    }
+
+    if (label) {
+      if (pending > 0 && syncing) {
+        label.textContent = `Đang đồng bộ ${pending} thay đổi`;
+      } else if (pending > 0 && hasError) {
+        label.textContent = `Chờ đúng mạng nội bộ (${pending})`;
+      } else if (pending > 0) {
+        label.textContent = `Đã lưu tạm ${pending} thay đổi`;
+      } else {
+        label.textContent = "Dữ liệu nội bộ (Local)";
+      }
+    }
+
+    if (pending > 0 && lastOfflinePending === 0 && !syncing) {
+      showToast("Mất kết nối mạng nội bộ. Dữ liệu đã được lưu tạm trên thiết bị.");
+    } else if (pending === 0 && lastOfflinePending > 0 && lastOfflineSyncing && !hasError) {
+      showToast("Đã đồng bộ dữ liệu offline lên máy chủ.");
+    }
+
+    lastOfflinePending = pending;
+    lastOfflineSyncing = syncing;
+  }
+
   async function copyTextToClipboard(text, successMessage = "Đã copy.") {
     if (!String(text || "").trim()) {
       showToast("Không có nội dung để copy.", true);
@@ -14917,6 +14956,10 @@
 
     window.addEventListener("popstate", syncRouteFromLocation);
     window.addEventListener("hashchange", syncRouteFromLocation);
+    window.addEventListener("local-data-sync-status", handleLocalDataSyncStatus);
+    dataStore?.getOfflineQueueCount?.()
+      .then((pending) => handleLocalDataSyncStatus({ detail: { pending, syncing: false, online: navigator.onLine } }))
+      .catch((error) => console.warn("Không đọc được trạng thái dữ liệu offline:", error));
     document.addEventListener("dblclick", (event) => {
       const image = event.target?.closest?.("img");
       if (!image || image.closest(".brand-line,.cyber-brand,.safety-logo-cell")) {
