@@ -7,6 +7,7 @@ const ROLE_ASSESSOR_5S = "assessor5s";
 const ROLE_ASSESSOR_SAFETY = "assessorSafety";
 const ROLE_ZONE_OWNER = "zoneOwner";
 const ROLE_VIEWER = "viewer";
+const ROLE_DEPARTMENT_HEAD = "departmentHead";
 const FIVE_S_PERIOD_TYPE = "5s";
 const SAFETY_PERIOD_TYPE = "safety";
 const LEGACY_PERIOD_TYPE = "both";
@@ -110,6 +111,7 @@ function normalizeAccountRole(role) {
   const value = String(role || "").trim();
   if (value === ROLE_ADMIN) return ROLE_ADMIN;
   if (["viewer", ROLE_VIEWER].includes(value)) return ROLE_VIEWER;
+  if (["departmentHead", "deptHead", ROLE_DEPARTMENT_HEAD].includes(value)) return ROLE_DEPARTMENT_HEAD;
   if (["safetyAssessor", ROLE_ASSESSOR_SAFETY].includes(value)) return ROLE_ASSESSOR_SAFETY;
   if (["manager", "scorer", ROLE_ZONE_OWNER].includes(value)) return ROLE_ZONE_OWNER;
   return ROLE_ASSESSOR_5S;
@@ -131,7 +133,7 @@ function normalizeScoreSource(source) {
 
 function normalizeAccountAccessTypes(accessTypes, role = "") {
   const normalizedRole = normalizeAccountRole(role);
-  if (normalizedRole === ROLE_ADMIN || normalizedRole === ROLE_VIEWER) {
+  if (normalizedRole === ROLE_ADMIN || normalizedRole === ROLE_VIEWER || normalizedRole === ROLE_DEPARTMENT_HEAD) {
     return [FIVE_S_PERIOD_TYPE, SAFETY_PERIOD_TYPE];
   }
 
@@ -154,6 +156,9 @@ function normalizeScopedAccountRole(role, type = FIVE_S_PERIOD_TYPE) {
   const normalizedRole = normalizeAccountRole(role);
   if (normalizedRole === ROLE_VIEWER) {
     return ROLE_VIEWER;
+  }
+  if (normalizedRole === ROLE_DEPARTMENT_HEAD) {
+    return ROLE_DEPARTMENT_HEAD;
   }
   if (normalizedRole === ROLE_ZONE_OWNER) {
     return ROLE_ZONE_OWNER;
@@ -222,6 +227,19 @@ function isAdminAccount(account) {
 
 function isViewerAccount(account) {
   return normalizeAccountRole(account?.role) === ROLE_VIEWER;
+}
+
+function isDepartmentHeadAccount(account) {
+  return normalizeAccountRole(account?.role) === ROLE_DEPARTMENT_HEAD;
+}
+
+function getDepartmentHeadAccountName(account) {
+  return String(account?.departmentHeadName || account?.name || account?.displayName || account?.username || "").trim();
+}
+
+function isAreaManagedByDepartmentHead(area, account) {
+  const headName = getDepartmentHeadAccountName(account);
+  return Boolean(headName && sameNormalizedText(area?.departmentHead, headName));
 }
 
 function sameNormalizedText(left, right) {
@@ -588,6 +606,12 @@ class AuthService {
     if (isAdminAccount(account) || isViewerAccount(account)) {
       return new Set(areas.map((area) => area.id).filter(Boolean));
     }
+    if (isDepartmentHeadAccount(account)) {
+      return new Set(areas
+        .filter((area) => isAreaManagedByDepartmentHead(area, account))
+        .map((area) => area.id)
+        .filter(Boolean));
+    }
     if (!hasAccountAccessType(account, type)) {
       return new Set();
     }
@@ -645,7 +669,53 @@ class AuthService {
     return names.some((name) => safetyRecordTextMatchesName(record?.issueFoundBy, name));
   }
 
+  isCountermeasureOnlySafetyUpdate(existingRecord, nextRecord) {
+    if (!isPlainObject(existingRecord) || !isPlainObject(nextRecord)) {
+      return false;
+    }
+    const allowedChangedFields = new Set([
+      "improvementContent",
+      "afterPhotoDataUrl",
+      "afterPhotoName",
+      "actionOwner",
+      "actionPlan",
+      "completionDate",
+      "updatedAt",
+    ]);
+    const keys = new Set([...Object.keys(existingRecord), ...Object.keys(nextRecord)]);
+    for (const key of keys) {
+      const beforeValue = existingRecord[key] === undefined ? null : existingRecord[key];
+      const afterValue = nextRecord[key] === undefined ? null : nextRecord[key];
+      if (JSON.stringify(beforeValue) !== JSON.stringify(afterValue) && !allowedChangedFields.has(key)) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  isSafetyCountermeasureWriteAllowed(root, account, existingRecord, nextRecord) {
+    if (!this.isCountermeasureOnlySafetyUpdate(existingRecord, nextRecord)) {
+      return false;
+    }
+    const periodId = String(existingRecord?.periodId || nextRecord?.periodId || "");
+    const areaId = String(existingRecord?.areaId || nextRecord?.areaId || "");
+    if (!periodId || !areaId) {
+      return false;
+    }
+    if (isAdminAccount(account) || this.isRecordOwnedByAccount(root, existingRecord, account, SAFETY_PERIOD_TYPE)) {
+      return true;
+    }
+    const role = getAccountRoleForType(account, SAFETY_PERIOD_TYPE);
+    if (isDepartmentHeadAccount(account) || role === ROLE_ZONE_OWNER) {
+      return this.getAllowedAreaIds(root, account, periodId, SAFETY_PERIOD_TYPE).has(areaId);
+    }
+    return false;
+  }
+
   assertScoreWriteAllowed(root, account, command) {
+    if (isDepartmentHeadAccount(account)) {
+      throw createHttpError("Tài khoản trưởng phòng không có quyền ghi điểm 5S.", 403);
+    }
     const existingRecord = valueAtPath(root, command.path);
     const operation = String(command.operation || "");
     const record = operation === "remove"
@@ -692,6 +762,18 @@ class AuthService {
     }
     if (!isPlainObject(record)) {
       throw createHttpError("Dữ liệu đánh giá an toàn không hợp lệ.", 400);
+    }
+
+    if (
+      operation !== "remove" &&
+      isPlainObject(existingRecord) &&
+      this.isSafetyCountermeasureWriteAllowed(root, account, existingRecord, record)
+    ) {
+      return;
+    }
+
+    if (isDepartmentHeadAccount(account)) {
+      throw createHttpError("Tài khoản trưởng phòng chỉ được cập nhật phần cải tiến/xử lý.", 403);
     }
 
     if (isPlainObject(existingRecord) && !this.isRecordOwnedByAccount(root, existingRecord, account, SAFETY_PERIOD_TYPE)) {

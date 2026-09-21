@@ -2981,6 +2981,16 @@ body.is-drag-scrolling-active .assessor-4m-wrap .assessor-score-select {
   align-items: center;
 }
 
+.account-empty-card {
+  grid-template-columns: 1fr;
+}
+
+.account-empty-card strong,
+.account-empty-card span {
+  overflow-wrap: normal;
+  word-break: normal;
+}
+
 .compact-item > div:first-child,
 .account-card > div:first-child,
 .item-card > div:first-child {
@@ -3054,7 +3064,8 @@ body.is-drag-scrolling-active .assessor-4m-wrap .assessor-score-select {
   gap: 14px;
 }
 
-.viewer-accounts-grid {
+.viewer-accounts-grid,
+.department-head-accounts-grid {
   margin-top: 0;
 }
 
@@ -3065,6 +3076,15 @@ body.is-drag-scrolling-active .assessor-4m-wrap .assessor-score-select {
 
 .simple-home-card.scope-card.viewer-card .admin-home-card-icon {
   background: linear-gradient(135deg, #f59e0b, #d97706) !important;
+}
+
+.simple-home-card.scope-card.department-head-card {
+  background: linear-gradient(135deg, #f0fdf4 0%, #ffffff 52%, #dcfce7 100%) !important;
+  border-color: rgba(34, 197, 94, 0.24) !important;
+}
+
+.simple-home-card.scope-card.department-head-card .admin-home-card-icon {
+  background: linear-gradient(135deg, #22c55e, #15803d) !important;
 }
 
 .danger-panel {
@@ -4341,8 +4361,34 @@ button.safety-sheet-tab.is-active {
 }
 
 #account-scope-switch {
-  grid-template-columns: repeat(3, minmax(250px, 1fr));
+  grid-template-columns: repeat(4, minmax(220px, 1fr));
   gap: 14px;
+}
+
+#account-scope-switch .scope-card-toggle {
+  grid-template-columns: 74px minmax(0, 1fr);
+  gap: 14px;
+  padding-right: 14px;
+}
+
+#account-scope-switch .scope-card-copy {
+  padding: 16px 0 6px;
+}
+
+#account-scope-switch .scope-card-copy strong {
+  font-size: 1.42rem;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+#account-scope-switch .scope-card-period {
+  grid-column: 2;
+  align-self: start;
+  justify-self: start;
+  max-width: 100%;
+  margin: 0 0 14px;
+  font-size: 0.78rem;
+  text-align: left;
 }
 
 .simple-home-card.scope-card {

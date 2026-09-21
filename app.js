@@ -109,7 +109,9 @@
   const ROLE_ASSESSOR_SAFETY = "assessorSafety";
   const ROLE_ZONE_OWNER = "zoneOwner";
   const ROLE_VIEWER = "viewer";
+  const ROLE_DEPARTMENT_HEAD = "departmentHead";
   const ACCOUNT_VIEWER_SCOPE = "viewer";
+  const ACCOUNT_DEPARTMENT_HEAD_SCOPE = "departmentHead";
   const FIVE_S_PERIOD_TYPE = "5s";
   const SAFETY_PERIOD_TYPE = "safety";
   const LEGACY_PERIOD_TYPE = "both";
@@ -346,6 +348,7 @@
     accountForm: document.getElementById("account-form"),
     accountRole: document.getElementById("account-role"),
     viewerAccountDetail: document.getElementById("viewer-account-detail"),
+    departmentHeadAccountDetail: document.getElementById("department-head-account-detail"),
     accountAssessorField: document.getElementById("account-assessor-field"),
     accountManagerField: document.getElementById("account-manager-field"),
     accountAssessor: document.getElementById("account-assessor"),
@@ -364,6 +367,13 @@
     viewerAccountDisplayName: document.getElementById("viewer-account-display-name"),
     viewerAccountPassword: document.getElementById("viewer-account-password"),
     viewerAccountList: document.getElementById("viewer-account-list"),
+    departmentHeadAccountForm: document.getElementById("department-head-account-form"),
+    departmentHeadAccountSource: document.getElementById("department-head-account-source"),
+    departmentHeadAccountName: document.getElementById("department-head-account-name"),
+    departmentHeadAccountUsername: document.getElementById("department-head-account-username"),
+    departmentHeadAccountDisplayName: document.getElementById("department-head-account-display-name"),
+    departmentHeadAccountPassword: document.getElementById("department-head-account-password"),
+    departmentHeadAccountList: document.getElementById("department-head-account-list"),
     modalBackdrop: document.getElementById("modal-backdrop"),
     modalTitle: document.getElementById("modal-title"),
     modalBody: document.getElementById("modal-body"),
@@ -599,7 +609,7 @@
 
   function normalizeAccountAccessTypes(accessTypes, role = "") {
     const normalizedRole = normalizeAccountRole(role);
-    if (normalizedRole === ROLE_ADMIN || normalizedRole === ROLE_VIEWER) {
+    if (normalizedRole === ROLE_ADMIN || normalizedRole === ROLE_VIEWER || normalizedRole === ROLE_DEPARTMENT_HEAD) {
       return [FIVE_S_PERIOD_TYPE, SAFETY_PERIOD_TYPE];
     }
 
@@ -622,6 +632,9 @@
     const normalizedRole = normalizeAccountRole(role);
     if (normalizedRole === ROLE_VIEWER) {
       return ROLE_VIEWER;
+    }
+    if (normalizedRole === ROLE_DEPARTMENT_HEAD) {
+      return ROLE_DEPARTMENT_HEAD;
     }
     if (normalizedRole === ROLE_ZONE_OWNER) {
       return ROLE_ZONE_OWNER;
@@ -690,7 +703,7 @@
   }
 
   function getAccountPersonId(account, type = FIVE_S_PERIOD_TYPE) {
-    if (normalizeAccountRole(account?.role) === ROLE_VIEWER) {
+    if ([ROLE_VIEWER, ROLE_DEPARTMENT_HEAD].includes(normalizeAccountRole(account?.role))) {
       return "";
     }
     const normalizedType = normalizeCatalogType(type);
@@ -707,7 +720,7 @@
     const rolesByType = { ...(account.rolesByType || {}) };
     rolesByType[normalizedType] = scopedRole;
     account.rolesByType = rolesByType;
-    if (scopedRole === ROLE_VIEWER) {
+    if (scopedRole === ROLE_VIEWER || scopedRole === ROLE_DEPARTMENT_HEAD) {
       delete account.fiveSScorerId;
       delete account.fiveSAssessorId;
       delete account.safetyScorerId;
@@ -739,6 +752,7 @@
     const value = String(role || "").trim();
     if (value === ROLE_ADMIN) return ROLE_ADMIN;
     if (["viewer", ROLE_VIEWER].includes(value)) return ROLE_VIEWER;
+    if (["departmentHead", "deptHead", ROLE_DEPARTMENT_HEAD].includes(value)) return ROLE_DEPARTMENT_HEAD;
     if (["safetyAssessor", ROLE_ASSESSOR_SAFETY].includes(value)) return ROLE_ASSESSOR_SAFETY;
     if (["manager", "scorer", ROLE_ZONE_OWNER].includes(value)) return ROLE_ZONE_OWNER;
     return ROLE_ASSESSOR_5S;
@@ -2640,20 +2654,24 @@
     return normalizeAccountRole(account?.role) === ROLE_VIEWER;
   }
 
+  function isDepartmentHeadAccount(account) {
+    return normalizeAccountRole(account?.role) === ROLE_DEPARTMENT_HEAD;
+  }
+
   function isZoneOwnerAccount(account, type = FIVE_S_PERIOD_TYPE) {
     return getAccountRoleForType(account, type) === ROLE_ZONE_OWNER;
   }
 
   function isFiveSAssessor(account) {
-    return !isViewerAccount(account) && (isAdminAccount(account) || hasAccountAccessType(account, FIVE_S_PERIOD_TYPE));
+    return !isViewerAccount(account) && !isDepartmentHeadAccount(account) && (isAdminAccount(account) || hasAccountAccessType(account, FIVE_S_PERIOD_TYPE));
   }
 
   function isSafetyAssessor(account) {
-    return !isViewerAccount(account) && hasAccountAccessType(account, SAFETY_PERIOD_TYPE);
+    return !isViewerAccount(account) && !isDepartmentHeadAccount(account) && hasAccountAccessType(account, SAFETY_PERIOD_TYPE);
   }
 
   function canUseSafety(account) {
-    return !isViewerAccount(account) && (isAdminAccount(account) || hasAccountAccessType(account, SAFETY_PERIOD_TYPE));
+    return !isViewerAccount(account) && (isAdminAccount(account) || isDepartmentHeadAccount(account) || hasAccountAccessType(account, SAFETY_PERIOD_TYPE));
   }
 
   function sameNormalizedText(left, right) {
@@ -2729,8 +2747,66 @@
     return canUseSafety(account) && isSafetyRecordOwnedByAccount(record, account);
   }
 
+  function getDepartmentHeadAccountName(account) {
+    if (!account) {
+      return "";
+    }
+    return normalizeDepartmentHeadName(account.departmentHeadName || account.name || account.displayName || account.username);
+  }
+
+  function isAreaManagedByDepartmentHead(area, account) {
+    const key = departmentHeadKey(getDepartmentHeadAccountName(account));
+    return Boolean(key && departmentHeadKey(area?.departmentHead) === key);
+  }
+
+  function getDepartmentHeadManagedAreaIds(account = currentUser, periodId = getActivePeriodId(SAFETY_PERIOD_TYPE)) {
+    if (!isDepartmentHeadAccount(account)) {
+      return new Set();
+    }
+    return new Set(
+      getAreasForPeriod(periodId)
+        .filter((area) => isAreaManagedByDepartmentHead(area, account))
+        .map((area) => area.id)
+        .filter(Boolean),
+    );
+  }
+
+  function canManageSafetyCountermeasure(record, account = currentUser) {
+    if (!record || !account || isPeriodArchived(record.periodId, SAFETY_PERIOD_TYPE)) {
+      return false;
+    }
+    if (isAdminAccount(account) || canManageSafetyRecord(record, account)) {
+      return true;
+    }
+    if (isDepartmentHeadAccount(account)) {
+      return getDepartmentHeadManagedAreaIds(account, record.periodId).has(record.areaId);
+    }
+    if (isZoneOwnerAccount(account, SAFETY_PERIOD_TYPE)) {
+      return getAllowedAreaIds(account, record.periodId).has(record.areaId);
+    }
+    return false;
+  }
+
   function requireAdminAction(message = "Chỉ admin được thực hiện thao tác này.") {
     if (isAdminAccount(currentUser)) {
+      return true;
+    }
+    showToast(message, true);
+    return false;
+  }
+
+  function canExportReports(account = currentUser) {
+    return Boolean(account) && (
+      isAdminAccount(account) ||
+      isViewerAccount(account) ||
+      isDepartmentHeadAccount(account) ||
+      hasAccountAccessType(account, FIVE_S_PERIOD_TYPE) ||
+      hasAccountAccessType(account, SAFETY_PERIOD_TYPE)
+    );
+  }
+
+  function requireExportAction(message = "Bạn không có quyền xuất file Excel.") {
+    if (canExportReports(currentUser)) {
       return true;
     }
     showToast(message, true);
@@ -2749,6 +2825,7 @@
     const normalizedRole = normalizeAccountRole(role);
     if (normalizedRole === ROLE_ADMIN) return "Admin hệ thống";
     if (normalizedRole === ROLE_VIEWER) return "Người xem";
+    if (normalizedRole === ROLE_DEPARTMENT_HEAD) return "Trưởng phòng";
     if (normalizedRole === ROLE_ASSESSOR_SAFETY) return "Assessor an toàn";
     if (normalizedRole === ROLE_ZONE_OWNER) return "Người phụ trách zone";
     return "Assessor 5S";
@@ -2757,6 +2834,7 @@
   function getScopedRoleLabel(role, type = FIVE_S_PERIOD_TYPE) {
     const scopedRole = normalizeScopedAccountRole(role, type);
     if (scopedRole === ROLE_VIEWER) return "Người xem";
+    if (scopedRole === ROLE_DEPARTMENT_HEAD) return "Trưởng phòng";
     if (scopedRole === ROLE_ZONE_OWNER) return "Người phụ trách zone";
     return normalizeCatalogType(type) === SAFETY_PERIOD_TYPE ? "Assessor AT" : "Assessor 5S";
   }
@@ -2764,6 +2842,7 @@
   function getAccountAccessLabel(account, type = "") {
     if (isAdminAccount(account)) return "Admin hệ thống";
     if (isViewerAccount(account)) return "Người xem";
+    if (isDepartmentHeadAccount(account)) return "Trưởng phòng";
     const accessTypes = type ? [normalizeCatalogType(type)] : normalizeAccountAccessTypes(account?.accessTypes, account?.role);
     return accessTypes
       .filter((accessType) => hasAccountAccessType(account, accessType))
@@ -2781,6 +2860,9 @@
     }
     if (isViewerAccount(account)) {
       return account.name || account.displayName || account.username;
+    }
+    if (isDepartmentHeadAccount(account)) {
+      return account.departmentHeadName || account.name || account.displayName || account.username;
     }
 
     const catalogType = type ? normalizeCatalogType(type) : normalizeAccountRole(account.role) === ROLE_ASSESSOR_SAFETY ? SAFETY_PERIOD_TYPE : FIVE_S_PERIOD_TYPE;
@@ -2803,6 +2885,9 @@
     }
     if (isViewerAccount(account)) {
       return account.name || account.displayName || account.username || "";
+    }
+    if (isDepartmentHeadAccount(account)) {
+      return account.displayName || account.departmentHeadName || account.name || account.username || "";
     }
 
     return account.displayName || account.username || "";
@@ -3048,6 +3133,11 @@
     const catalogType = getCatalogTypeForPeriod(periodId);
     if (isAdminAccount(account) || isViewerAccount(account)) {
       return new Set(periodAreas.map((area) => area.id));
+    }
+    if (isDepartmentHeadAccount(account)) {
+      return new Set(periodAreas
+        .filter((area) => isAreaManagedByDepartmentHead(area, account))
+        .map((area) => area.id));
     }
     if (!hasAccountAccessType(account, catalogType)) {
       return new Set();
@@ -4532,6 +4622,7 @@
   function renderRoleVisibility() {
     const isAdmin = isAdminAccount(currentUser);
     const isViewer = isViewerAccount(currentUser);
+    const isDepartmentHead = isDepartmentHeadAccount(currentUser);
     const hasFiveSAccess = !isAdmin && Boolean(hasAccountAccessType(currentUser, FIVE_S_PERIOD_TYPE));
     const hasSafetyAccess = !isAdmin && Boolean(hasAccountAccessType(currentUser, SAFETY_PERIOD_TYPE));
     const isReadOnlyPageAccess = (element) => element.matches(".tab-button, .tab-panel, .nav-group, .account-menu-divider") ||
@@ -4555,7 +4646,7 @@
 
     // 3. Phiếu chấm 5S: mở điều hướng xem, giữ quyền chấm theo role.
     document.querySelectorAll(".assessor-only").forEach((element) => {
-      element.hidden = isAdmin || isViewer || (!isReadOnlyPageAccess(element) && !hasFiveSAccess);
+      element.hidden = isAdmin || isViewer || isDepartmentHead || (!isReadOnlyPageAccess(element) && !hasFiveSAccess);
     });
 
     // 4. An toàn lao động: mở điều hướng xem, giữ quyền đánh giá theo role.
@@ -4571,7 +4662,7 @@
       element.hidden = isViewer;
     });
 
-    if (isViewer) {
+    if (isViewer || isDepartmentHead) {
       document.querySelectorAll("[data-tab='catalog'], [data-tab='accounts'], [data-go-tab='catalog'], [data-go-tab='accounts'], #tab-catalog, #tab-accounts").forEach((element) => {
         element.hidden = true;
       });
@@ -4606,6 +4697,9 @@
 
     if (isViewerAccount(currentUser)) {
       return ["home", "summary", "safety", "issue-stats"].includes(tab);
+    }
+    if (isDepartmentHeadAccount(currentUser)) {
+      return ["home", "summary", "safety", "issue-stats", "mobile-safety"].includes(tab);
     }
 
     if (tab === "assessor" && isAdminAccount(currentUser)) {
@@ -4752,6 +4846,7 @@
       showToast,
       TAB_ROUTES,
       canManageSafetyRecord,
+      canManageSafetyCountermeasure,
       elements,
       escapeHtml,
       formatDateDisplay,
@@ -4795,6 +4890,7 @@
       goToSafetyReport,
       updateSafetyZoneTarget,
       isAdminAccount,
+      isDepartmentHeadAccount,
       hasAccountAccessType,
       renderRoleVisibility,
       isFiveSAssessor,
@@ -4862,7 +4958,7 @@
     const fiveSActive = getActivePeriodId(FIVE_S_PERIOD_TYPE);
     const safetyActive = getActivePeriodId(SAFETY_PERIOD_TYPE);
     const isAdmin = isAdminAccount(currentUser);
-    const canViewAllPeriods = isAdmin || isViewerAccount(currentUser);
+    const canViewAllPeriods = isAdmin || isViewerAccount(currentUser) || isDepartmentHeadAccount(currentUser);
 
     const visibleFiveSPeriods = canViewAllPeriods
       ? fiveSPeriods
@@ -5458,6 +5554,7 @@
   }
 
   function normalizeScopeCardValue(scope) {
+    if (scope === ACCOUNT_DEPARTMENT_HEAD_SCOPE) return ACCOUNT_DEPARTMENT_HEAD_SCOPE;
     return scope === ACCOUNT_VIEWER_SCOPE ? ACCOUNT_VIEWER_SCOPE : normalizeCatalogType(scope);
   }
 
@@ -5473,13 +5570,14 @@
     return options.map((option) => {
       const scope = normalizeScopeCardValue(option.value);
       const isViewerScope = scope === ACCOUNT_VIEWER_SCOPE;
+      const isDepartmentHeadScope = scope === ACCOUNT_DEPARTMENT_HEAD_SCOPE;
       const period = isViewerScope ? null : getPeriod(getActivePeriodId(scope));
       const isActive = scope === normalizedActiveScope;
       const activeClass = isActive ? " is-active" : "";
       const title = titlePrefix + " " + option.label;
-      const periodText = isViewerScope ? "Toàn bộ bảng biểu" : period ? periodLabel(period) : currentDateDisplay();
+      const periodText = isViewerScope || isDepartmentHeadScope ? "Toàn bộ bảng biểu" : period ? periodLabel(period) : currentDateDisplay();
       const iconText = option.icon || option.label;
-      const cardClass = isViewerScope ? "viewer-card" : scope === SAFETY_PERIOD_TYPE ? "safety-card" : "score-card";
+      const cardClass = isDepartmentHeadScope ? "department-head-card" : isViewerScope ? "viewer-card" : scope === SAFETY_PERIOD_TYPE ? "safety-card" : "score-card";
       return `<article class="admin-home-card dashboard-home-card simple-home-card scope-card ${cardClass}${activeClass}">
         <button class="scope-card-toggle" type="button" data-action="${escapeHtml(action)}" data-id="${escapeHtml(scope)}" aria-label="${escapeHtml(title)}" aria-expanded="${isActive ? "true" : "false"}">
           <span class="admin-home-card-icon">${escapeHtml(iconText)}</span>
@@ -5539,7 +5637,7 @@
   function setAccountScope(scope) {
     const nextScope = normalizeScopeCardValue(scope);
     expandedAccountScope = expandedAccountScope === nextScope ? "" : nextScope;
-    if (nextScope !== ACCOUNT_VIEWER_SCOPE) {
+    if (![ACCOUNT_VIEWER_SCOPE, ACCOUNT_DEPARTMENT_HEAD_SCOPE].includes(nextScope)) {
       activeAccountScope = nextScope;
     }
     renderAll();
@@ -5894,6 +5992,12 @@
     if (isViewerAccount(account)) {
       return ["Toàn bộ bảng biểu"];
     }
+    if (isDepartmentHeadAccount(account)) {
+      return getAreasForPeriod(getActivePeriodId(type))
+        .filter((area) => (normalizeCatalogType(type) !== SAFETY_PERIOD_TYPE || isReportableSafetyArea(area)) && isAreaManagedByDepartmentHead(area, account))
+        .map((area) => area.code)
+        .filter(Boolean);
+    }
     const periodId = getActivePeriodId(type);
     const catalogType = normalizeCatalogType(type);
     return getAreasForPeriod(periodId)
@@ -5908,6 +6012,13 @@
     }
     if (isViewerAccount(account)) {
       return `${account.username} · Người xem · ${account.name || account.displayName || account.username}${account.position ? ` · ${account.position}` : ""}`;
+    }
+    if (isDepartmentHeadAccount(account)) {
+      const headName = getDepartmentHeadAccountName(account);
+      const zones = [FIVE_S_PERIOD_TYPE, SAFETY_PERIOD_TYPE]
+        .flatMap((scope) => accountZoneCodesForScope(account, scope))
+        .filter(Boolean);
+      return `${account.username} · Trưởng phòng · ${headName || account.username} · Zone ${[...new Set(zones)].join(", ") || "chưa có zone"}`;
     }
     const zones = accountZoneCodesForScope(account, type).join(", ") || "chưa có zone";
     return `${account.username} · ${getAccountAccessLabel(account, type)} · ${getAccountDisplayName(account, type) || account.username} · Zone ${zones}`;
@@ -5934,7 +6045,7 @@
   }
 
   function missingAccountAccessTypes(account) {
-    if (!account || isAdminAccount(account) || isViewerAccount(account)) {
+    if (!account || isAdminAccount(account) || isViewerAccount(account) || isDepartmentHeadAccount(account)) {
       return [];
     }
 
@@ -5952,6 +6063,9 @@
     if (isViewerAccount(account)) {
       return [];
     }
+    if (isDepartmentHeadAccount(account)) {
+      return [FIVE_S_PERIOD_TYPE, SAFETY_PERIOD_TYPE];
+    }
 
     return normalizeAccountAccessTypes(account.accessTypes, account.role)
       .filter((type) => [FIVE_S_PERIOD_TYPE, SAFETY_PERIOD_TYPE].includes(type));
@@ -5965,6 +6079,9 @@
     }
     if (isViewerAccount(account)) {
       return "Quyền hiện có: Người xem · toàn bộ bảng biểu";
+    }
+    if (isDepartmentHeadAccount(account)) {
+      return "Quyền hiện có: Trưởng phòng · xem toàn bộ bảng biểu · nhập xử lý theo zone quản lý";
     }
 
     return "Quyền hiện có: " + (labels.join(", ") || "chưa có") + " · " + accessTypes.length + " quyền";
@@ -5985,20 +6102,71 @@
     </article>`;
   }
 
+  function departmentHeadAccountSourceRows(source = elements.departmentHeadAccountSource?.value || FIVE_S_PERIOD_TYPE) {
+    const scope = normalizeCatalogType(source);
+    return getDepartmentHeadRows(getActivePeriodId(scope));
+  }
+
+  function populateDepartmentHeadAccountSelect() {
+    if (!elements.departmentHeadAccountName) {
+      return;
+    }
+    const rows = departmentHeadAccountSourceRows();
+    const current = elements.departmentHeadAccountName.value;
+    elements.departmentHeadAccountName.innerHTML = rows
+      .map((row) => `<option value="${escapeHtml(row.name)}">${escapeHtml(row.name)} · Zone ${escapeHtml(row.areaCodes.join(", ") || "chưa có")}</option>`)
+      .join("") || '<option value="">Chưa có trưởng phòng trong danh mục</option>';
+    elements.departmentHeadAccountName.value = rows.some((row) => row.name === current) ? current : rows[0]?.name || "";
+  }
+
+  function departmentHeadAccountZoneSummary(account) {
+    const fiveSZones = accountZoneCodesForScope(account, FIVE_S_PERIOD_TYPE);
+    const safetyZones = accountZoneCodesForScope(account, SAFETY_PERIOD_TYPE);
+    const fiveSText = fiveSZones.join(", ") || "chưa có";
+    const safetyText = safetyZones.join(", ") || "chưa có";
+    return `5S: ${fiveSText} · AT: ${safetyText}`;
+  }
+
+  function departmentHeadAccountCardHtml(account) {
+    const name = getDepartmentHeadAccountName(account) || account.username;
+    return `<article class="account-card">
+      <div>
+        <strong>${escapeHtml(account.username)}</strong>
+        <span>Trưởng phòng: ${escapeHtml(name)}</span>
+        <span>Hiển thị: ${escapeHtml(getAccountProfileName(account) || name)}</span>
+        <span>Quyền hiện có: Trưởng phòng · xem toàn bộ bảng biểu</span>
+        <span>Zone nhập xử lý: ${escapeHtml(departmentHeadAccountZoneSummary(account))}</span>
+      </div>
+      <div class="account-actions">
+        <button class="tiny-button" type="button" data-action="edit-account" data-id="${escapeHtml(account.id)}">Sửa</button>
+        <button class="tiny-button danger-text-button" type="button" data-action="delete-department-head-account" data-id="${escapeHtml(account.id)}">Xóa</button>
+      </div>
+    </article>`;
+  }
+
   function renderAccountsTab() {
     const accountScopeOptions = [
       ...ACCOUNT_SCOPE_OPTIONS,
       { value: ACCOUNT_VIEWER_SCOPE, label: "Người xem", icon: "Xem" },
+      { value: ACCOUNT_DEPARTMENT_HEAD_SCOPE, label: "Trưởng phòng", icon: "TP" },
     ];
     renderScopeSwitch(elements.accountScopeSwitch, expandedAccountScope, "set-account-scope", "Cấp tài khoản", null, accountScopeOptions);
-    if (expandedAccountScope === ACCOUNT_VIEWER_SCOPE) {
+    if (expandedAccountScope === ACCOUNT_VIEWER_SCOPE || expandedAccountScope === ACCOUNT_DEPARTMENT_HEAD_SCOPE) {
       if (elements.accountScopeDetail) {
         if (elements.accountScopeSwitch?.contains(elements.accountScopeDetail)) {
           elements.accountScopeSwitch.after(elements.accountScopeDetail);
         }
         elements.accountScopeDetail.hidden = true;
       }
-      mountScopeDetail(elements.accountScopeSwitch, elements.viewerAccountDetail, ACCOUNT_VIEWER_SCOPE);
+      const detailCard = expandedAccountScope === ACCOUNT_VIEWER_SCOPE ? elements.viewerAccountDetail : elements.departmentHeadAccountDetail;
+      const otherDetailCard = expandedAccountScope === ACCOUNT_VIEWER_SCOPE ? elements.departmentHeadAccountDetail : elements.viewerAccountDetail;
+      if (otherDetailCard) {
+        if (elements.accountScopeSwitch?.contains(otherDetailCard)) {
+          elements.accountScopeSwitch.after(otherDetailCard);
+        }
+        otherDetailCard.hidden = true;
+      }
+      mountScopeDetail(elements.accountScopeSwitch, detailCard, expandedAccountScope);
     } else {
       if (elements.viewerAccountDetail) {
         if (elements.accountScopeSwitch?.contains(elements.viewerAccountDetail)) {
@@ -6006,14 +6174,21 @@
         }
         elements.viewerAccountDetail.hidden = true;
       }
+      if (elements.departmentHeadAccountDetail) {
+        if (elements.accountScopeSwitch?.contains(elements.departmentHeadAccountDetail)) {
+          elements.accountScopeSwitch.after(elements.departmentHeadAccountDetail);
+        }
+        elements.departmentHeadAccountDetail.hidden = true;
+      }
       mountScopeDetail(elements.accountScopeSwitch, elements.accountScopeDetail, expandedAccountScope);
     }
+    populateDepartmentHeadAccountSelect();
     populateAccountRoleOptions();
     populateAssessorSelects();
     populateManagerSelects();
     renderAccountZoneList();
     syncAccountAssignedZones();
-    const scopedAccounts = state.accounts.filter((account) => !isViewerAccount(account) && (isAdminAccount(account) || hasAccountAccessType(account, activeAccountScope)));
+    const scopedAccounts = state.accounts.filter((account) => !isViewerAccount(account) && !isDepartmentHeadAccount(account) && (isAdminAccount(account) || hasAccountAccessType(account, activeAccountScope)));
     elements.accountList.innerHTML = scopedAccounts
       .map((account) => {
         const isAdmin = isAdminAccount(account);
@@ -6044,13 +6219,19 @@
           </div>
         </article>`;
       })
-      .join("") || `<article class="account-card"><strong>Chưa có tài khoản ${escapeHtml(getAccountScopeLabel(activeAccountScope))}</strong><span>Tạo tài khoản assessor hoặc người phụ trách zone cho luồng này.</span></article>`;
+      .join("") || `<article class="account-card account-empty-card"><div><strong>Chưa có tài khoản ${escapeHtml(getAccountScopeLabel(activeAccountScope))}</strong><span>Tạo tài khoản assessor hoặc người phụ trách zone cho luồng này.</span></div></article>`;
 
     if (elements.viewerAccountList) {
       const viewerAccounts = state.accounts.filter(isViewerAccount);
       elements.viewerAccountList.innerHTML = viewerAccounts
         .map(viewerAccountCardHtml)
-        .join("") || `<article class="account-card"><strong>Chưa có tài khoản người xem</strong><span>Tạo tài khoản người xem để theo dõi toàn bộ bảng biểu.</span></article>`;
+        .join("") || `<article class="account-card account-empty-card"><div><strong>Chưa có tài khoản người xem</strong><span>Tạo tài khoản người xem để theo dõi toàn bộ bảng biểu.</span></div></article>`;
+    }
+    if (elements.departmentHeadAccountList) {
+      const departmentHeadAccounts = state.accounts.filter(isDepartmentHeadAccount);
+      elements.departmentHeadAccountList.innerHTML = departmentHeadAccounts
+        .map(departmentHeadAccountCardHtml)
+        .join("") || `<article class="account-card account-empty-card"><div><strong>Chưa có tài khoản trưởng phòng</strong><span>Tạo tài khoản trưởng phòng để nhập phần cải tiến/xử lý theo zone quản lý.</span></div></article>`;
     }
   }
 
@@ -8476,6 +8657,10 @@
         showToast("Tài khoản người xem được quản lý ở khu riêng bên dưới.", true);
         return;
       }
+      if (isDepartmentHeadAccount(existing)) {
+        showToast("Tài khoản trưởng phòng được quản lý ở khu riêng.", true);
+        return;
+      }
       if (hasAccountAccessType(existing, scope)) {
         showToast("Tên tài khoản đã tồn tại trong luồng này.", true);
         return;
@@ -8583,6 +8768,70 @@
 
     elements.viewerAccountForm?.reset();
     showToast("Đã thêm tài khoản người xem.");
+    renderAll();
+  }
+
+  async function handleDepartmentHeadAccountSubmit(event) {
+    event.preventDefault();
+    if (!requireAdminAction()) {
+      return;
+    }
+
+    const source = normalizeCatalogType(elements.departmentHeadAccountSource?.value || FIVE_S_PERIOD_TYPE);
+    const name = normalizeDepartmentHeadName(elements.departmentHeadAccountName?.value || "");
+    const username = (elements.departmentHeadAccountUsername?.value || "").trim();
+    const displayName = (elements.departmentHeadAccountDisplayName?.value || "").trim();
+    const password = elements.departmentHeadAccountPassword?.value || "";
+    const rows = departmentHeadAccountSourceRows(source);
+
+    if (!name || !username || !password) {
+      showToast("Vui lòng nhập đủ thông tin trưởng phòng.", true);
+      return;
+    }
+    if (!rows.some((row) => departmentHeadKey(row.name) === departmentHeadKey(name))) {
+      showToast("Vui lòng chọn trưởng phòng có sẵn trong danh mục.", true);
+      return;
+    }
+    if (password.length < 4) {
+      showToast("Mật khẩu phải có ít nhất 4 ký tự.", true);
+      return;
+    }
+    if (state.accounts.some((account) => account.username === username)) {
+      showToast("Tên tài khoản đã tồn tại.", true);
+      return;
+    }
+
+    const account = {
+      id: makeId("account"),
+      role: ROLE_DEPARTMENT_HEAD,
+      accessTypes: [FIVE_S_PERIOD_TYPE, SAFETY_PERIOD_TYPE],
+      rolesByType: { [FIVE_S_PERIOD_TYPE]: ROLE_DEPARTMENT_HEAD, [SAFETY_PERIOD_TYPE]: ROLE_DEPARTMENT_HEAD },
+      name,
+      departmentHeadName: name,
+      departmentHeadSource: source,
+      displayName: displayName || name,
+      username,
+      password,
+      areaIds: [],
+      fiveSAreaIds: [],
+      safetyAreaIds: [],
+      createdAt: new Date().toISOString(),
+    };
+
+    state.accounts.push(account);
+    await Promise.all([
+      dbRef(`accounts/${account.id}`).set(account),
+      logAdminChange({
+        subjectLabel: "Tài khoản trưởng phòng",
+        afterLabel: describeAccountForScope(account, activeAccountScope),
+        changeLabel: `Thêm tài khoản trưởng phòng ${username}`,
+        scope: "",
+      }),
+    ]);
+
+    elements.departmentHeadAccountForm?.reset();
+    populateDepartmentHeadAccountSelect();
+    showToast("Đã thêm tài khoản trưởng phòng.");
     renderAll();
   }
 
@@ -10018,6 +10267,108 @@
       return;
     }
 
+    if (isDepartmentHeadAccount(account)) {
+      const allHeadRows = [
+        ...getDepartmentHeadRows(getActivePeriodId(FIVE_S_PERIOD_TYPE)).map((row) => ({ ...row, source: FIVE_S_PERIOD_TYPE, sourceLabel: "5S" })),
+        ...getDepartmentHeadRows(getActivePeriodId(SAFETY_PERIOD_TYPE)).map((row) => ({ ...row, source: SAFETY_PERIOD_TYPE, sourceLabel: "AT" })),
+      ];
+      const uniqueRows = [...new Map(allHeadRows.map((row) => [departmentHeadKey(row.name), row])).values()];
+      const selectedName = getDepartmentHeadAccountName(account);
+      openFormModal({
+        title: "Sửa tài khoản trưởng phòng",
+        html: `
+          <label>
+            <span>Trưởng phòng</span>
+            <select name="departmentHeadName" required>
+              ${uniqueRows.map((row) => `<option value="${escapeHtml(row.name)}" ${departmentHeadKey(row.name) === departmentHeadKey(selectedName) ? "selected" : ""}>${escapeHtml(row.name)} · ${escapeHtml(row.sourceLabel)} · Zone ${escapeHtml(row.areaCodes.join(", ") || "chưa có")}</option>`).join("")}
+            </select>
+          </label>
+          <label>
+            <span>Tài khoản</span>
+            <input name="username" type="text" value="${escapeHtml(account.username)}" required>
+          </label>
+          <label>
+            <span>Tên hiển thị</span>
+            <input name="displayName" type="text" value="${escapeHtml(account.displayName || "")}" placeholder="Mặc định theo tên trưởng phòng">
+          </label>
+          <label>
+            <span>Mật khẩu</span>
+            <input name="password" type="password" value="" minlength="4" placeholder="Để trống nếu không đổi">
+          </label>
+        `,
+        async onSubmit(formData) {
+          if (!requireAdminAction()) {
+            return false;
+          }
+
+          const name = normalizeDepartmentHeadName(formData.get("departmentHeadName"));
+          const username = String(formData.get("username") || "").trim();
+          const displayName = String(formData.get("displayName") || "").trim();
+          const password = String(formData.get("password") || "");
+
+          if (!name || !username) {
+            showToast("Vui lòng nhập đủ thông tin trưởng phòng.", true);
+            return false;
+          }
+          if (password && password.length < 4) {
+            showToast("Mật khẩu mới phải có ít nhất 4 ký tự.", true);
+            return false;
+          }
+          if (!uniqueRows.some((row) => departmentHeadKey(row.name) === departmentHeadKey(name))) {
+            showToast("Vui lòng chọn trưởng phòng có sẵn trong danh mục.", true);
+            return false;
+          }
+          if (state.accounts.some((item) => item.id !== id && item.username === username)) {
+            showToast("Tên tài khoản đã tồn tại.", true);
+            return false;
+          }
+
+          const beforeLabel = describeAccountForScope(account, scope);
+          const isEditingCurrentAccount = currentUser && (currentUser.id === account.id || currentUser.username === account.username);
+          account.role = ROLE_DEPARTMENT_HEAD;
+          account.accessTypes = [FIVE_S_PERIOD_TYPE, SAFETY_PERIOD_TYPE];
+          account.rolesByType = { [FIVE_S_PERIOD_TYPE]: ROLE_DEPARTMENT_HEAD, [SAFETY_PERIOD_TYPE]: ROLE_DEPARTMENT_HEAD };
+          account.name = name;
+          account.departmentHeadName = name;
+          account.displayName = displayName || name;
+          account.username = username;
+          account.areaIds = [];
+          account.fiveSAreaIds = [];
+          account.safetyAreaIds = [];
+          setAccountPersonForType(account, FIVE_S_PERIOD_TYPE, ROLE_DEPARTMENT_HEAD, "");
+          setAccountPersonForType(account, SAFETY_PERIOD_TYPE, ROLE_DEPARTMENT_HEAD, "");
+          if (password) {
+            account.password = password;
+          } else {
+            delete account.password;
+          }
+          delete account.position;
+          delete account.email;
+          delete account.senderEmail;
+          if (isEditingCurrentAccount) {
+            currentUser = account;
+            saveSession(currentUser);
+          }
+
+          await Promise.all([
+            dbRef(`accounts/${account.id}`).set(account),
+            logAdminChange({
+              subjectLabel: "Tài khoản trưởng phòng",
+              beforeLabel,
+              afterLabel: describeAccountForScope(account, scope),
+              changeLabel: `Sửa tài khoản trưởng phòng ${account.username}`,
+              scope: "",
+            }),
+          ]);
+
+          showToast("Đã cập nhật tài khoản trưởng phòng.");
+          renderAll();
+          return true;
+        },
+      });
+      return;
+    }
+
     if (!hasAccountAccessType(account, scope)) {
       return;
     }
@@ -10373,6 +10724,41 @@
           showToast("Đã xóa tài khoản người xem.");
           renderAll();
         }).catch(() => showToast("Lỗi khi xóa tài khoản người xem.", true));
+      },
+    });
+  }
+
+  function deleteDepartmentHeadAccount(id) {
+    if (!requireAdminAction()) {
+      return;
+    }
+
+    const account = state.accounts.find((item) => item.id === id && isDepartmentHeadAccount(item));
+    if (!account) {
+      return;
+    }
+
+    openConfirmModal({
+      title: "Xóa tài khoản trưởng phòng",
+      message: `Xóa tài khoản trưởng phòng ${account.username}?`,
+      confirmText: "Xóa tài khoản",
+      danger: true,
+      onConfirm() {
+        const beforeLabel = describeAccountForScope(account, activeAccountScope);
+        state.accounts = state.accounts.filter((item) => item.id !== id);
+        Promise.all([
+          dbRef(`accounts/${id}`).remove(),
+          logAdminChange({
+            subjectLabel: "Tài khoản trưởng phòng",
+            beforeLabel,
+            afterLabel: "Đã xóa",
+            changeLabel: `Xóa tài khoản trưởng phòng ${account.username}`,
+            scope: "",
+          }),
+        ]).then(() => {
+          showToast("Đã xóa tài khoản trưởng phòng.");
+          renderAll();
+        }).catch(() => showToast("Lỗi khi xóa tài khoản trưởng phòng.", true));
       },
     });
   }
@@ -10901,6 +11287,10 @@
       showToast("Bạn không có quyền thêm đánh giá an toàn.", true);
       return;
     }
+    if (isDepartmentHeadAccount(currentUser)) {
+      showToast("Trưởng phòng chỉ cập nhật phần cải tiến/xử lý trên các mối nguy đã ghi nhận.", true);
+      return;
+    }
 
     const activeSafetyPeriodId = getActivePeriodId(SAFETY_PERIOD_TYPE);
     if (!activeSafetyPeriodId || !isPeriodOpen(activeSafetyPeriodId, SAFETY_PERIOD_TYPE)) {
@@ -10921,8 +11311,8 @@
     if (!record) {
       return;
     }
-    if (!canManageSafetyRecord(record)) {
-      showToast("Bạn chỉ được sửa nhiệm vụ đánh giá an toàn của mình.", true);
+    if (!canManageSafetyCountermeasure(record)) {
+      showToast("Bạn chỉ được cập nhật báo cáo thuộc zone được phân quyền.", true);
       return;
     }
     openSafetyRecordForm(record);
@@ -11007,7 +11397,8 @@
       showToast("Bạn không có quyền cập nhật đánh giá an toàn.", true);
       return;
     }
-    if (record && !canManageSafetyRecord(record)) {
+    const countermeasureOnly = Boolean(record) && !canManageSafetyRecord(record) && canManageSafetyCountermeasure(record);
+    if (record && !canManageSafetyRecord(record) && !countermeasureOnly) {
       showToast("Bạn chỉ được sửa nhiệm vụ đánh giá an toàn của mình.", true);
       return;
     }
@@ -11020,12 +11411,76 @@
     }
 
     const row = { score: record || {}, area: selectedArea, item: getItem(record?.itemId) };
+    const afterPhotoPreview = record?.afterPhotoDataUrl
+      ? "<div class=\"photo-preview\"><img src=\"" + record.afterPhotoDataUrl + "\" alt=\"Ảnh sau cải tiến hiện tại\"><label class=\"check-line\"><input name=\"removeAfterPhoto\" type=\"checkbox\"><span>Xóa ảnh sau cải tiến hiện tại</span></label></div>"
+      : "";
+    const defaultActionOwner = getAccountDisplayName(currentUser, SAFETY_PERIOD_TYPE, periodId) || currentUser?.name || currentUser?.username || "";
+    const defaultCompletionDate = toIsoDate(record?.completionDate) || todayIsoDate();
+
+    if (countermeasureOnly) {
+      openFormModal({
+        title: "Cập nhật cải tiến / xử lý",
+        submitText: "Lưu xử lý",
+        modalClass: "safety-record-modal",
+        html: "<div class=\"modal-context\">" +
+            "<span><strong>Kỳ:</strong> " + escapeHtml(periodLabel(period)) + "</span>" +
+            "<span><strong>Zone:</strong> " + escapeHtml(selectedArea.code || "") + "</span>" +
+            "<span><strong>Mối nguy:</strong> " + escapeHtml(record?.note || "") + "</span>" +
+          "</div>" +
+          "<label><span>Nội dung cải tiến, xử lý</span><textarea name=\"improvementContent\">" + escapeHtml(record?.improvementContent || "") + "</textarea></label>" +
+          "<label><span>Ảnh sau cải tiến, xử lý</span><input name=\"afterPhoto\" type=\"file\" accept=\"image/*\">" + afterPhotoPreview + "</label>" +
+          "<label><span>Đảm nhiệm</span><input name=\"actionOwner\" type=\"text\" value=\"" + escapeHtml(record?.actionOwner || defaultActionOwner) + "\"></label>" +
+          "<label><span>Kế hoạch</span><input name=\"actionPlan\" type=\"text\" value=\"" + escapeHtml(record?.actionPlan || "") + "\"></label>" +
+          "<label><span>Ngày</span><input name=\"completionDate\" type=\"date\" value=\"" + escapeHtml(defaultCompletionDate) + "\"></label>",
+        async onSubmit(formData, form) {
+          if (blockIfArchivedPeriod(periodId, SAFETY_PERIOD_TYPE)) {
+            return false;
+          }
+          if (!canManageSafetyCountermeasure(record)) {
+            showToast("Bạn không có quyền cập nhật phần xử lý cho zone này.", true);
+            return false;
+          }
+          const afterPhotoInput = form.elements.afterPhoto;
+          const nextAfterPhoto = await prepareScorePhoto(
+            afterPhotoInput?.files?.[0],
+            { photoDataUrl: record?.afterPhotoDataUrl, photoName: record?.afterPhotoName },
+            formData.get("removeAfterPhoto") === "on",
+            periodId,
+          );
+          const payload = normalizeSafetyRecord({
+            ...record,
+            improvementContent: String(formData.get("improvementContent") || "").trim(),
+            afterPhotoDataUrl: nextAfterPhoto.photoDataUrl,
+            afterPhotoName: nextAfterPhoto.photoName,
+            actionOwner: String(formData.get("actionOwner") || "").trim() || defaultActionOwner,
+            actionPlan: String(formData.get("actionPlan") || "").trim(),
+            completionDate: String(formData.get("completionDate") || "").trim() || defaultCompletionDate,
+            updatedAt: new Date().toISOString(),
+          });
+          if (!hasSafetyRecordChanged(record, payload)) {
+            showToast("Không có thay đổi mới.");
+            return true;
+          }
+          const existingIndex = state.safetyRecords.findIndex((item) => item.id === payload.id);
+          const existingRecordCopy = existingIndex >= 0 ? cloneValue(state.safetyRecords[existingIndex]) : cloneValue(record);
+          if (existingIndex >= 0) {
+            state.safetyRecords[existingIndex] = payload;
+          }
+          await saveSafetyRecord(payload);
+          await deleteUnusedPhotoFiles([
+            existingRecordCopy?.afterPhotoDataUrl && existingRecordCopy.afterPhotoDataUrl !== payload.afterPhotoDataUrl ? existingRecordCopy.afterPhotoDataUrl : "",
+          ]);
+          showToast("Đã cập nhật phần cải tiến/xử lý.");
+          renderAll();
+          return true;
+        },
+      });
+      return;
+    }
+
     const issueDate = getSafetyRecordIssueDate(record, period);
     const photoPreview = record?.photoDataUrl
       ? "<div class=\"photo-preview\"><img src=\"" + record.photoDataUrl + "\" alt=\"Ảnh minh họa hiện tại\"><label class=\"check-line\"><input name=\"removePhoto\" type=\"checkbox\"><span>Xóa ảnh hiện tại</span></label></div>"
-      : "";
-    const afterPhotoPreview = record?.afterPhotoDataUrl
-      ? "<div class=\"photo-preview\"><img src=\"" + record.afterPhotoDataUrl + "\" alt=\"Ảnh sau cải tiến hiện tại\"><label class=\"check-line\"><input name=\"removeAfterPhoto\" type=\"checkbox\"><span>Xóa ảnh sau cải tiến hiện tại</span></label></div>"
       : "";
 
     openFormModal({
@@ -11058,9 +11513,9 @@
             "<td><input name=\"issueItemLabel\" type=\"text\" value=\"" + escapeHtml(record ? getIssueItemLabel(row) : "Nhận diện nguy cơ mất an toàn") + "\"></td>" +
             "<td><textarea name=\"improvementContent\">" + escapeHtml(record?.improvementContent || "") + "</textarea></td>" +
             "<td><input name=\"afterPhoto\" type=\"file\" accept=\"image/*\">" + afterPhotoPreview + "</td>" +
-            "<td><input name=\"actionOwner\" type=\"text\" value=\"" + escapeHtml(record?.actionOwner || "") + "\"></td>" +
+            "<td><input name=\"actionOwner\" type=\"text\" value=\"" + escapeHtml(record?.actionOwner || defaultActionOwner) + "\"></td>" +
             "<td><input name=\"actionPlan\" type=\"text\" value=\"" + escapeHtml(record?.actionPlan || "") + "\"></td>" +
-            "<td><input name=\"completionDate\" type=\"date\" value=\"" + escapeHtml(toIsoDate(record?.completionDate)) + "\"></td>" +
+            "<td><input name=\"completionDate\" type=\"date\" value=\"" + escapeHtml(defaultCompletionDate) + "\"></td>" +
           "</tr></tbody>" +
         "</table></div>",
       async onSubmit(formData, form) {
@@ -11128,9 +11583,9 @@
           improvementContent: String(formData.get("improvementContent") || "").trim(),
           afterPhotoDataUrl: nextAfterPhoto.photoDataUrl,
           afterPhotoName: nextAfterPhoto.photoName,
-          actionOwner: String(formData.get("actionOwner") || "").trim(),
+          actionOwner: String(formData.get("actionOwner") || "").trim() || defaultActionOwner,
           actionPlan: String(formData.get("actionPlan") || "").trim(),
-          completionDate: String(formData.get("completionDate") || "").trim(),
+          completionDate: String(formData.get("completionDate") || "").trim() || defaultCompletionDate,
           completionLevelConfirm: getSafetyLevelConfirm({ issueLevel }),
           completionStop6Confirm: getSafetyStop6Confirm({ issueType }),
           scorerName: ownerName,
@@ -11188,7 +11643,7 @@
     });
   }
   function exportExcel(periodId) {
-    if (!requireAdminAction("Chỉ admin được xuất file chấm 5S.")) {
+    if (!requireExportAction("Bạn không có quyền xuất file chấm 5S.")) {
       return;
     }
 
@@ -11199,7 +11654,7 @@
   }
 
   function confirmExportExcel(periodId) {
-    if (!requireAdminAction("Chỉ admin được xuất file chấm 5S.")) {
+    if (!requireExportAction("Bạn không có quyền xuất file chấm 5S.")) {
       return;
     }
 
@@ -11215,7 +11670,7 @@
   }
 
   async function exportSafetyExcel(periodId, options = {}) {
-    if (!requireAdminAction("Chỉ admin được xuất file đánh giá an toàn.")) {
+    if (!requireExportAction("Bạn không có quyền xuất file đánh giá an toàn.")) {
       return;
     }
 
@@ -11231,7 +11686,7 @@
   }
 
   function confirmExportSafetyExcel(periodId, options = {}) {
-    if (!requireAdminAction("Chỉ admin được xuất file đánh giá an toàn.")) {
+    if (!requireExportAction("Bạn không có quyền xuất file đánh giá an toàn.")) {
       return;
     }
 
@@ -11278,7 +11733,7 @@
   }
 
   async function exportSafetyAssessmentExcel() {
-    if (!requireAdminAction("Chỉ admin được xuất file đánh giá an toàn.")) {
+    if (!requireExportAction("Bạn không có quyền xuất file đánh giá an toàn.")) {
       return;
     }
 
@@ -15113,8 +15568,6 @@
     const adminActions = new Set([
       "import-page-json",
       "export-page-json",
-      "export-summary-period",
-      "export-safety-period",
       "set-catalog-scope",
       "set-account-scope",
       "set-history-scope",
@@ -15143,6 +15596,7 @@
       "add-account-access",
       "remove-account-access",
       "delete-viewer-account",
+      "delete-department-head-account",
       "delete-account",
     ]);
     const safetyActions = new Set(["add-safety-record", "edit-safety-record", "delete-safety-record"]);
@@ -15212,6 +15666,7 @@
       "add-account-access": () => addAccountAccess(id, sourceElement?.dataset.accountScope || ""),
       "remove-account-access": () => removeAccountAccess(id, sourceElement?.dataset.accountScope || activeAccountScope),
       "delete-viewer-account": () => deleteViewerAccount(id),
+      "delete-department-head-account": () => deleteDepartmentHeadAccount(id),
       "delete-account": () => deleteAccount(id),
       "edit-safety-record": () => editSafetyRecord(id),
       "modal-cancel": () => closeModal(),
@@ -15355,6 +15810,8 @@
     elements.accountManager?.addEventListener("change", () => syncAccountAssignedZones());
     elements.accountForm.addEventListener("submit", handleAccountSubmit);
     elements.viewerAccountForm?.addEventListener("submit", handleViewerAccountSubmit);
+    elements.departmentHeadAccountSource?.addEventListener("change", populateDepartmentHeadAccountSelect);
+    elements.departmentHeadAccountForm?.addEventListener("submit", handleDepartmentHeadAccountSubmit);
 
     elements.modalCloseButton.addEventListener("click", closeModal);
     elements.modalBackdrop.addEventListener("click", (event) => {

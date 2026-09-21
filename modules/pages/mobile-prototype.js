@@ -94,6 +94,15 @@
     const allAreas = context ? context.getAreasForPeriod(fiveSPeriodId) : [];
     const itemArea = allAreas.find((a) => a.id === item.areaId);
     const zoneLabel = itemArea ? `Zone ${itemArea.code} · ${itemArea.departmentHead || itemArea.responsibleName || ''}` : (item.issueLocation || "Zone");
+    const canEditFull = canManageFullSafetyRecord(context, item);
+    const canEditCountermeasure = canManageSafetyCountermeasure(context, item);
+    const countermeasureOnly = canEditCountermeasure && !canEditFull;
+    const lockedAttr = countermeasureOnly ? "disabled" : "";
+    const defaultActionOwner = context?.getAccountDisplayName?.(context.currentUser, context.SAFETY_PERIOD_TYPE, item.periodId || fiveSPeriodId)
+      || context?.currentUser?.name
+      || context?.currentUser?.username
+      || "";
+    const todayValue = typeof context?.todayIsoDate === "function" ? context.todayIsoDate() : new Date().toISOString().slice(0, 10);
 
     const rawLevel = String(item.issueLevel || item.level || item.riskLevel || "").trim().toUpperCase();
     const rawStop6 = String(item.issueType || item.stop6 || item.stop_6 || item.issue_type || "").trim();
@@ -112,7 +121,7 @@
         <div class="detail-modal-header">
           <div class="detail-header-title">
             <i class="fa-solid fa-pen-to-square text-brand-400"></i>
-            <span>Sửa Báo Cáo Mối Nguy</span>
+            <span>${countermeasureOnly ? "Cập Nhật Cải Tiến / Xử Lý" : "Sửa Báo Cáo Mối Nguy"}</span>
           </div>
           <button type="button" class="btn-close-modal" id="closeDetailModalBtn">
             <i class="fa-solid fa-xmark"></i>
@@ -124,7 +133,7 @@
           <div class="detail-meta-top">
             <span class="detail-zone-chip"><i class="fa-solid fa-location-dot"></i> ${escapeHtml(zoneLabel)}</span>
             <div class="modal-status-select-wrap">
-              <select id="modalDetailStatus" class="modal-status-select ${statusVal}">
+              <select id="modalDetailStatus" class="modal-status-select ${statusVal}" ${lockedAttr}>
                 <option value="open" ${statusVal === 'open' ? 'selected' : ''}>Chưa xử lý</option>
                 <option value="in_progress" ${statusVal === 'in_progress' ? 'selected' : ''}>Đang xử lý</option>
                 <option value="overdue" ${statusVal === 'overdue' ? 'selected' : ''}>Quá hạn</option>
@@ -137,7 +146,7 @@
           <div class="modal-form-grid-2">
             <div class="modal-form-group">
               <label class="modal-form-label">Cấp bậc nguy cơ</label>
-              <select id="modalDetailLevel" class="modal-form-select">
+              <select id="modalDetailLevel" class="modal-form-select" ${lockedAttr}>
                 <option value="" ${!rawLevel ? 'selected' : ''}>Chưa phân loại</option>
                 <option value="A" ${rawLevel === 'A' ? 'selected' : ''}>Cấp độ A (Nghiêm trọng)</option>
                 <option value="B" ${rawLevel === 'B' ? 'selected' : ''}>Cấp độ B</option>
@@ -146,7 +155,7 @@
             </div>
             <div class="modal-form-group">
               <label class="modal-form-label">Phân loại STOP 6</label>
-              <select id="modalDetailStop6" class="modal-form-select">
+              <select id="modalDetailStop6" class="modal-form-select" ${lockedAttr}>
                 <option value="" ${!rawStop6 ? 'selected' : ''}>Chưa phân loại</option>
                 <option value="1-Kẹp,kẹt" ${rawStop6 === '1-Kẹp,kẹt' ? 'selected' : ''}>1-Kẹp, kẹt</option>
                 <option value="2-Vật nặng" ${rawStop6 === '2-Vật nặng' ? 'selected' : ''}>2-Vật nặng</option>
@@ -162,14 +171,14 @@
           <!-- Description (Mô tả mối nguy hiểm) -->
           <div class="modal-form-group">
             <label class="modal-form-label">Mô tả mối nguy hiểm</label>
-            <textarea id="modalDetailNote" class="modal-form-textarea" rows="2" placeholder="Nhập mô tả chi tiết mối nguy...">${escapeHtml(item.note || '')}</textarea>
+            <textarea id="modalDetailNote" class="modal-form-textarea" rows="2" placeholder="Nhập mô tả chi tiết mối nguy..." ${lockedAttr}>${escapeHtml(item.note || '')}</textarea>
           </div>
 
           <!-- Photo 1: Ảnh hiện trường (Edit, Add & Delete) -->
           <div class="modal-form-group">
             <label class="modal-form-label"><i class="fa-solid fa-camera"></i> Ảnh hiện trường</label>
             <div class="modal-photo-upload-box" id="modalPhotoBox1">
-              <input type="file" id="modalPhotoInput1" accept="image/*" capture="environment" class="photo-file-input ${modalPhotoUrl ? 'is-hidden' : ''}">
+              <input type="file" id="modalPhotoInput1" accept="image/*" capture="environment" class="photo-file-input ${modalPhotoUrl ? 'is-hidden' : ''}" ${lockedAttr}>
               
               <div id="modalPhotoPlaceholder1" class="photo-placeholder ${modalPhotoUrl ? 'is-hidden' : ''}">
                 <div class="photo-icon-circle">
@@ -184,11 +193,11 @@
               <div id="modalPhotoWrap1" class="photo-preview-wrap ${modalPhotoUrl ? '' : 'is-hidden'}">
                 <img id="modalPhotoImg1" src="${modalPhotoUrl || ''}" alt="Ảnh hiện trường" class="photo-preview-img cursor-pointer" data-preview-img="${modalPhotoUrl || ''}" title="Chạm để xem phóng to">
                 <div class="photo-preview-actions">
-                  <button type="button" id="modalRetakePhotoBtn1" class="photo-btn retake-btn" title="Đổi / Chụp lại ảnh khác">
+                  <button type="button" id="modalRetakePhotoBtn1" class="photo-btn retake-btn" title="Đổi / Chụp lại ảnh khác" ${lockedAttr}>
                     <i class="fa-solid fa-arrows-rotate"></i>
                     <span>Đổi ảnh</span>
                   </button>
-                  <button type="button" id="modalRemovePhotoBtn1" class="photo-btn delete-btn" title="Xóa ảnh này">
+                  <button type="button" id="modalRemovePhotoBtn1" class="photo-btn delete-btn" title="Xóa ảnh này" ${lockedAttr}>
                     <i class="fa-solid fa-trash-can"></i>
                     <span>Xóa ảnh</span>
                   </button>
@@ -204,7 +213,7 @@
           <div class="modal-form-grid-2">
             <div class="modal-form-group">
               <label class="modal-form-label">Phát hiện bởi (kênh)</label>
-              <select id="modalDetailFoundChannel" class="modal-form-select">
+              <select id="modalDetailFoundChannel" class="modal-form-select" ${lockedAttr}>
                 <option value="worker" ${item.foundChannel === 'worker' ? 'selected' : ''}>Công nhân</option>
                 <option value="head" ${item.foundChannel === 'head' ? 'selected' : ''}>Trưởng bộ phận</option>
                 <option value="assessor" ${item.foundChannel === 'assessor' ? 'selected' : ''}>Assessor</option>
@@ -212,18 +221,18 @@
             </div>
             <div class="modal-form-group">
               <label class="modal-form-label">Tên người phát hiện</label>
-              <input type="text" id="modalDetailFoundBy" class="modal-form-input" value="${escapeHtml(item.issueFoundBy || '')}" placeholder="Tên người phát hiện...">
+              <input type="text" id="modalDetailFoundBy" class="modal-form-input" value="${escapeHtml(item.issueFoundBy || '')}" placeholder="Tên người phát hiện..." ${lockedAttr}>
             </div>
           </div>
 
           <div class="modal-form-grid-2">
             <div class="modal-form-group">
               <label class="modal-form-label">Mã nhân viên</label>
-              <input type="text" id="modalDetailEmployeeCode" class="modal-form-input" value="${escapeHtml(item.employeeCode || '')}" placeholder="Mã NV...">
+              <input type="text" id="modalDetailEmployeeCode" class="modal-form-input" value="${escapeHtml(item.employeeCode || '')}" placeholder="Mã NV..." ${lockedAttr}>
             </div>
             <div class="modal-form-group">
               <label class="modal-form-label">Ngày hoàn thành</label>
-              <input type="date" id="modalDetailCompletionDate" class="modal-form-input" value="${escapeHtml(item.completionDate ? item.completionDate.split('T')[0] : '')}">
+              <input type="date" id="modalDetailCompletionDate" class="modal-form-input" value="${escapeHtml(item.completionDate ? item.completionDate.split('T')[0] : todayValue)}">
             </div>
           </div>
 
@@ -271,7 +280,7 @@
           <div class="modal-form-grid-2">
             <div class="modal-form-group">
               <label class="modal-form-label">Đảm nhiệm (PIC)</label>
-              <input type="text" id="modalDetailActionOwner" class="modal-form-input" value="${escapeHtml(item.actionOwner || '')}" placeholder="Người đảm nhiệm...">
+              <input type="text" id="modalDetailActionOwner" class="modal-form-input" value="${escapeHtml(item.actionOwner || defaultActionOwner)}" placeholder="Người đảm nhiệm...">
             </div>
             <div class="modal-form-group">
               <label class="modal-form-label">Kế hoạch</label>
@@ -283,10 +292,10 @@
 
         <!-- Action Buttons Footer -->
         <div class="detail-modal-footer">
-          <button type="button" class="btn-detail-save" id="btnDetailSave">
+          <button type="button" class="btn-detail-save" id="btnDetailSave" ${canEditCountermeasure ? "" : "disabled"}>
             <i class="fa-solid fa-floppy-disk"></i> LƯU THAY ĐỔI
           </button>
-          <button type="button" class="btn-detail-delete" id="btnDetailDelete">
+          <button type="button" class="btn-detail-delete" id="btnDetailDelete" ${canEditFull ? "" : "hidden"}>
             <i class="fa-solid fa-trash-can"></i> XÓA BÁO CÁO
           </button>
         </div>
@@ -408,8 +417,8 @@
 
     // Save button click inside direct edit modal
     modal.querySelector("#btnDetailSave")?.addEventListener("click", async () => {
-      if (!checkSafetyPermission(context)) {
-        showMobileToast("Tài khoản của bạn không có quyền sửa báo cáo mối nguy!", true);
+      if (!canManageSafetyCountermeasure(context, item)) {
+        showMobileToast("Tài khoản của bạn không có quyền cập nhật phần cải tiến/xử lý cho zone này!", true);
         return;
       }
 
@@ -425,7 +434,7 @@
       const actionPlan = modal.querySelector("#modalDetailActionPlan")?.value?.trim() || "";
       const completionDate = modal.querySelector("#modalDetailCompletionDate")?.value || "";
 
-      if (!note) {
+      if (!countermeasureOnly && !note) {
         showMobileToast("Vui lòng nhập mô tả Mối nguy hiểm!", true);
         return;
       }
@@ -453,25 +462,36 @@
       }
 
       const now = new Date();
-      const updatedRecord = {
-        ...item,
-        note,
-        issueStatus,
-        issueLevel,
-        issueType,
-        foundChannel,
-        issueFoundBy,
-        employeeCode,
-        improvementContent,
-        actionOwner,
-        actionPlan,
-        completionDate,
-        photoDataUrl: finalPhotoDataUrl,
-        photoName: finalPhotoName,
-        afterPhotoDataUrl: finalAfterPhotoDataUrl,
-        afterPhotoName: finalAfterPhotoName,
-        updatedAt: now.toISOString(),
-      };
+      const updatedRecord = countermeasureOnly
+        ? {
+            ...item,
+            improvementContent,
+            actionOwner: actionOwner || defaultActionOwner,
+            actionPlan,
+            completionDate: completionDate || todayValue,
+            afterPhotoDataUrl: finalAfterPhotoDataUrl,
+            afterPhotoName: finalAfterPhotoName,
+            updatedAt: now.toISOString(),
+          }
+        : {
+            ...item,
+            note,
+            issueStatus,
+            issueLevel,
+            issueType,
+            foundChannel,
+            issueFoundBy,
+            employeeCode,
+            improvementContent,
+            actionOwner: actionOwner || defaultActionOwner,
+            actionPlan,
+            completionDate: completionDate || todayValue,
+            photoDataUrl: finalPhotoDataUrl,
+            photoName: finalPhotoName,
+            afterPhotoDataUrl: finalAfterPhotoDataUrl,
+            afterPhotoName: finalAfterPhotoName,
+            updatedAt: now.toISOString(),
+          };
 
       try {
         if (context?.state?.safetyRecords) {
@@ -496,7 +516,7 @@
 
     // Delete button click inside detail modal
     modal.querySelector("#btnDetailDelete")?.addEventListener("click", async () => {
-      if (!checkSafetyPermission(context)) {
+      if (!canManageFullSafetyRecord(context, item)) {
         showMobileToast("Tài khoản của bạn không có quyền xóa báo cáo mối nguy!", true);
         return;
       }
@@ -559,6 +579,30 @@
       return context.canUseSafety(user);
     }
     return true;
+  }
+
+  function isDepartmentHeadUser(context) {
+    const user = context?.currentUser;
+    return Boolean(user && typeof context?.isDepartmentHeadAccount === "function" && context.isDepartmentHeadAccount(user));
+  }
+
+  function canManageSafetyCountermeasure(context, record) {
+    if (!record) return false;
+    if (typeof context?.canManageSafetyCountermeasure === "function") {
+      return context.canManageSafetyCountermeasure(record, context.currentUser);
+    }
+    if (typeof context?.canManageSafetyRecord === "function") {
+      return context.canManageSafetyRecord(record, context.currentUser);
+    }
+    return checkSafetyPermission(context);
+  }
+
+  function canManageFullSafetyRecord(context, record) {
+    if (!record) return false;
+    if (typeof context?.canManageSafetyRecord === "function") {
+      return context.canManageSafetyRecord(record, context.currentUser);
+    }
+    return checkSafetyPermission(context);
   }
 
   function getMobileTheme() {
@@ -853,9 +897,15 @@
 
     const safetyPeriodId = context?.getActivePeriodId?.(context.SAFETY_PERIOD_TYPE) || "";
     const allSafetyAreas = context ? context.getAreasForPeriod(safetyPeriodId) : [];
+    const user = context?.currentUser;
+    const isAdmin = typeof context?.isAdminAccount === "function" && context.isAdminAccount(user);
+    const allowedAreaIds = (!isAdmin && typeof context?.getAllowedAreaIds === "function")
+      ? context.getAllowedAreaIds(user, safetyPeriodId)
+      : null;
+    const countermeasureOnlyMode = isDepartmentHeadUser(context);
     const reportableAreas = allSafetyAreas.filter((a) => {
       const code = String(a.templateCode || a.code || "").trim();
-      return code !== "27";
+      return code !== "27" && (!allowedAreaIds || allowedAreaIds.has(a.id));
     });
 
     const allRecords = context?.state?.safetyRecords || [];
@@ -890,10 +940,12 @@
     // Get current safety records for recent history
     const recentRecords = allRecords
       .filter((r) => !safetyPeriodId || r.periodId === safetyPeriodId)
+      .filter((r) => !allowedAreaIds || allowedAreaIds.has(r.areaId))
       .slice(0, 20);
 
-    const user = context?.currentUser;
     const defaultFinder = editingRecord ? (editingRecord.issueFoundBy || "") : (context?.getAccountDisplayName?.(user, context.SAFETY_PERIOD_TYPE, safetyPeriodId) || user?.name || "");
+    const defaultActionOwner = context?.getAccountDisplayName?.(user, context.SAFETY_PERIOD_TYPE, safetyPeriodId) || user?.name || user?.username || "";
+    const todayValue = typeof context?.todayIsoDate === "function" ? context.todayIsoDate() : new Date().toISOString().slice(0, 10);
 
     screen.innerHTML = `
       <div class="mobile-safety-container">
@@ -922,6 +974,14 @@
           </div>
         ` : ''}
 
+        ${countermeasureOnlyMode ? `
+          <div class="mobile-info-banner">
+            <div class="info-row">
+              <span class="info-label"><i class="fa-solid fa-wrench text-brand-400"></i> Chế độ:</span>
+              <span class="info-value">Cập nhật cải tiến / xử lý cho zone trưởng phòng quản lý</span>
+            </div>
+          </div>
+        ` : `
         <!-- Safety Form Card -->
         <form id="mobileSafetyForm" class="mobile-safety-form">
           
@@ -1119,7 +1179,7 @@
           <div class="form-grid-2">
             <div class="form-group">
               <label class="form-label">Đảm nhiệm (PIC)</label>
-              <input type="text" id="mobileSafetyActionOwner" class="form-control" placeholder="Người chịu trách nhiệm..." value="${escapeHtml(editingRecord?.actionOwner || '')}">
+              <input type="text" id="mobileSafetyActionOwner" class="form-control" placeholder="Người chịu trách nhiệm..." value="${escapeHtml(editingRecord?.actionOwner || defaultActionOwner)}">
             </div>
             <div class="form-group">
               <label class="form-label">Kế hoạch</label>
@@ -1131,8 +1191,8 @@
           <div class="form-group">
             <label class="form-label">Ngày hoàn thành</label>
             <div class="date-input-container">
-              <input type="text" id="mobileSafetyCompletionDateDisplay" class="form-control date-custom-input" placeholder="dd/mm/yyyy" value="${formatIsoToVnDate(editingRecord?.completionDate ? editingRecord.completionDate.split('T')[0] : '')}" readonly>
-              <input type="date" id="mobileSafetyCompletionDate" class="native-hidden-date-input" value="${escapeHtml(editingRecord?.completionDate ? editingRecord.completionDate.split('T')[0] : '')}">
+              <input type="text" id="mobileSafetyCompletionDateDisplay" class="form-control date-custom-input" placeholder="dd/mm/yyyy" value="${formatIsoToVnDate(editingRecord?.completionDate ? editingRecord.completionDate.split('T')[0] : todayValue)}" readonly>
+              <input type="date" id="mobileSafetyCompletionDate" class="native-hidden-date-input" value="${escapeHtml(editingRecord?.completionDate ? editingRecord.completionDate.split('T')[0] : todayValue)}">
               <button type="button" class="btn-calendar-trigger" tabindex="-1">
                 <i class="fa-solid fa-calendar-days text-white"></i>
               </button>
@@ -1147,6 +1207,7 @@
             </button>
           </div>
         </form>
+        `}
 
         <!-- Recent Uploads History List -->
         <div class="mobile-history-section">
@@ -1224,6 +1285,10 @@
   }
 
   function wireSafetyEvents(screen, context, safetyPeriodId, overlay) {
+    const user = context?.currentUser;
+    const defaultActionOwner = context?.getAccountDisplayName?.(user, context.SAFETY_PERIOD_TYPE, safetyPeriodId) || user?.name || user?.username || "";
+    const todayValue = typeof context?.todayIsoDate === "function" ? context.todayIsoDate() : new Date().toISOString().slice(0, 10);
+
     // Cancel Edit button
     const cancelEditBtn = screen.querySelector("#cancelEditSafetyBtn");
     if (cancelEditBtn) {
@@ -1397,9 +1462,9 @@
         const employeeCode = screen.querySelector("#mobileSafetyEmployeeCode")?.value?.trim() || "";
         const issueItemLabel = screen.querySelector("#mobileSafetyIssueItemLabel")?.value?.trim() || "Nhận diện nguy cơ mất an toàn";
         const improvementContent = screen.querySelector("#mobileSafetyImprovementContent")?.value?.trim() || "";
-        const actionOwner = screen.querySelector("#mobileSafetyActionOwner")?.value?.trim() || "";
+        const actionOwner = screen.querySelector("#mobileSafetyActionOwner")?.value?.trim() || defaultActionOwner;
         const actionPlan = screen.querySelector("#mobileSafetyActionPlan")?.value?.trim() || "";
-        const completionDate = screen.querySelector("#mobileSafetyCompletionDate")?.value || "";
+        const completionDate = screen.querySelector("#mobileSafetyCompletionDate")?.value || todayValue;
 
         if (!areaId) {
           showMobileToast("Vui lòng chọn Khu vực / Zone!", true);

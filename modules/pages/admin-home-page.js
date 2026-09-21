@@ -261,9 +261,9 @@
     }
 
     const canScoreFiveS = !isAdminAccount(currentUser) && Boolean(
-      typeof hasAccountAccessType === "function"
-        ? hasAccountAccessType(currentUser, FIVE_S_PERIOD_TYPE)
-        : (typeof isFiveSAssessor === "function" ? isFiveSAssessor(currentUser) : false)
+      typeof isFiveSAssessor === "function"
+        ? isFiveSAssessor(currentUser)
+        : (typeof hasAccountAccessType === "function" ? hasAccountAccessType(currentUser, FIVE_S_PERIOD_TYPE) : false)
     );
     const isAdmin = isAdminAccount(currentUser);
     const hasFiveSAccess = isAdmin || Boolean(

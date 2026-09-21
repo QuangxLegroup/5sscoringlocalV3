@@ -124,27 +124,6 @@
         "area-28"
       ],
       "passwordHash": "pbkdf2-sha256$210000$1MI2oRxEeHbC1I2k-Ly50Q$JF20zIWk5Bju_1ipWcIRvIkzSW87J1l5LHOAgQEQ9Ig"
-    },
-    "account-muaoqilj-p7kgfo": {
-      "id": "account-muaoqilj-p7kgfo",
-      "role": "viewer",
-      "name": "MsVanAnh",
-      "accessTypes": [
-        "5s",
-        "safety"
-      ],
-      "rolesByType": {
-        "5s": "viewer",
-        "safety": "viewer"
-      },
-      "username": "msvananh",
-      "createdAt": "2026-09-21T03:28:09.895Z",
-      "position": "BGĐ",
-      "displayName": "Vân Anh",
-      "fiveSAreaIds": [],
-      "areaIds": [],
-      "safetyAreaIds": [],
-      "passwordHash": "pbkdf2-sha256$210000$JvWHe3Drwq1TzbQvF_7IrA$L1Bg0QjtpLBI8fIIWxhwN-xTXT7itTtPTshUEovCj4Y"
     }
   }
 }

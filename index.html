@@ -624,6 +624,48 @@
                   </section>
                 </div>
               </section>
+              <section class="scope-detail-card" id="department-head-account-detail" aria-label="Cấp tài khoản trưởng phòng" hidden>
+                <div class="accounts-grid department-head-accounts-grid">
+                  <section class="panel department-head-account-panel">
+                    <div class="section-heading">
+                      <h2>Tạo tài khoản trưởng phòng</h2>
+                    </div>
+                    <form class="stacked-form" id="department-head-account-form">
+                      <label>
+                        <span>Danh sách trưởng phòng</span>
+                        <select id="department-head-account-source" required>
+                          <option value="5s">5S</option>
+                          <option value="safety">AT</option>
+                        </select>
+                      </label>
+                      <label>
+                        <span>Trưởng phòng</span>
+                        <select id="department-head-account-name" required></select>
+                      </label>
+                      <label>
+                        <span>Tài khoản</span>
+                        <input id="department-head-account-username" type="text" autocomplete="off" required>
+                      </label>
+                      <label>
+                        <span>Tên hiển thị</span>
+                        <input id="department-head-account-display-name" type="text" autocomplete="off" placeholder="Mặc định theo tên trưởng phòng">
+                      </label>
+                      <label>
+                        <span>Mật khẩu</span>
+                        <input id="department-head-account-password" type="password" autocomplete="new-password" required minlength="4">
+                      </label>
+                      <button class="primary-button" type="submit">Thêm trưởng phòng</button>
+                    </form>
+                  </section>
+
+                  <section class="panel department-head-account-list-panel">
+                    <div class="section-heading">
+                      <h2>Danh sách trưởng phòng</h2>
+                    </div>
+                    <div class="account-list" id="department-head-account-list"></div>
+                  </section>
+                </div>
+              </section>
             </div>
           </section>
         </main>
