@@ -11,6 +11,7 @@
   const OFFLINE_PHOTO_STORE = "photoMap";
   const OFFLINE_ROOT_KEY = "root";
   const OFFLINE_SYNC_INTERVAL_MS = 12000;
+  const CONNECTION_LOST_MESSAGE = "Mất kết nối dữ liệu nội bộ. Phiên đăng nhập đã được đăng xuất để tránh ghi dữ liệu offline.";
   const VOLATILE_ACCOUNT_FIELDS = new Set([
     "activeSessionId",
     "activeSessionAt",
@@ -395,6 +396,12 @@
     });
   }
 
+  async function clearQueuedCommands() {
+    await withOfflineStore(OFFLINE_QUEUE_STORE, "readwrite", (store) => {
+      store.clear();
+    });
+  }
+
   async function getPhotoMappings() {
     const entries = await withOfflineStore(OFFLINE_PHOTO_STORE, "readonly", (store) => idbRequest(store.getAll()));
     const map = new Map();
@@ -450,18 +457,10 @@
   }
 
   function scheduleOfflineSync(delayMs = 0) {
-    if (demoMode || offlineSyncing || !authToken) {
-      return;
-    }
     if (offlineSyncTimer) {
       window.clearTimeout(offlineSyncTimer);
-    }
-    offlineSyncTimer = window.setTimeout(() => {
       offlineSyncTimer = 0;
-      flushOfflineQueue().catch((error) => {
-        console.warn("Không đồng bộ được dữ liệu lưu tạm:", error);
-      });
-    }, delayMs);
+    }
   }
 
   function transformOfflinePhotoRefs(value, photoMap) {
@@ -567,6 +566,9 @@
   }
 
   async function flushOfflineQueue() {
+    await clearQueuedCommands();
+    await dispatchOfflineStatus({ pending: 0, syncing: false, online: navigator.onLine, lastError: "" });
+    return false;
     if (demoMode || offlineSyncing || !authToken) {
       return false;
     }
@@ -674,6 +676,23 @@
     }
   }
 
+  async function notifyConnectionLost(error = null) {
+    const hadAuth = Boolean(authToken);
+    clearAuthToken();
+    await clearQueuedCommands().catch((queueError) => {
+      console.warn("Không dọn được hàng chờ offline:", queueError);
+    });
+    await dispatchOfflineStatus({
+      pending: 0,
+      syncing: false,
+      online: false,
+      lastError: error?.message || CONNECTION_LOST_MESSAGE,
+    });
+    if (hadAuth) {
+      notifyAuthRevoked(CONNECTION_LOST_MESSAGE);
+    }
+  }
+
   function applyAuthPayload(payload) {
     setAuthToken(payload?.token || authToken);
     if (payload?.root) {
@@ -745,12 +764,7 @@
       return applyAuthPayload(await request("/api/auth/session"));
     } catch (error) {
       if (!isAuthError(error) && isNetworkLikeError(error)) {
-        const root = await readOfflineRoot();
-        if (root) {
-          rememberRoot(root);
-          await dispatchOfflineStatus({ pending: await getOfflineQueueCount(), online: false, lastError: error?.message || "" });
-          return buildOfflineAuthPayload(root);
-        }
+        await notifyConnectionLost(error);
       }
       clearAuthToken();
       throw error;
@@ -769,9 +783,7 @@
       return applyAuthPayload(await request("/api/auth/session/touch", { method: "POST" }));
     } catch (error) {
       if (!isAuthError(error) && isNetworkLikeError(error)) {
-        const root = rootCache || await readOfflineRoot();
-        await dispatchOfflineStatus({ pending: await getOfflineQueueCount(), online: false, lastError: error?.message || "" });
-        return buildOfflineAuthPayload(root);
+        await notifyConnectionLost(error);
       }
       throw error;
     }
@@ -801,16 +813,7 @@
     }
 
     try {
-      if (authToken && await getOfflineQueueCount()) {
-        await flushOfflineQueue();
-      }
-      if (authToken && await getOfflineQueueCount()) {
-        const cachedRoot = rootCache || await readOfflineRoot();
-        if (cachedRoot) {
-          rememberRoot(cachedRoot);
-          return rootCache;
-        }
-      }
+      await clearQueuedCommands();
       const root = await request("/api/data");
       rememberRoot(root);
     } catch (error) {
@@ -818,13 +821,8 @@
         throw error;
       }
       if (isNetworkLikeError(error)) {
-        const cachedRoot = await readOfflineRoot();
-        if (cachedRoot) {
-          rememberRoot(cachedRoot);
-          await dispatchOfflineStatus({ pending: await getOfflineQueueCount(), online: false, lastError: error?.message || "" });
-          scheduleOfflineSync(OFFLINE_SYNC_INTERVAL_MS);
-          return rootCache;
-        }
+        await notifyConnectionLost(error);
+        throw error;
       }
       enterDemoMode(error);
       return loadDemoRoot();
@@ -848,12 +846,7 @@
 
     polling = true;
     try {
-      if (!demoMode && authToken && await getOfflineQueueCount()) {
-        await flushOfflineQueue();
-        if (await getOfflineQueueCount()) {
-          return;
-        }
-      }
+      await clearQueuedCommands();
       const root = demoMode ? readDemoRoot() : await request("/api/data");
       const signature = signatureForRoot(root);
       if (signature !== rootSignature) {
@@ -866,7 +859,7 @@
         clearAuthToken();
         notifyAuthRevoked(error.message);
       } else if (isNetworkLikeError(error)) {
-        await dispatchOfflineStatus({ pending: await getOfflineQueueCount(), online: false, lastError: error?.message || "" });
+        await notifyConnectionLost(error);
       }
       console.warn("Không đồng bộ được dữ liệu nội bộ:", error);
     } finally {
@@ -924,7 +917,9 @@
       });
       stream.onerror = () => {
         stopDataStream();
-        scheduleDataStreamReconnect();
+        notifyConnectionLost(new Error(CONNECTION_LOST_MESSAGE)).catch((error) => {
+          console.warn("Không đăng xuất được khi mất kết nối stream:", error);
+        });
       };
     } catch (error) {
       console.warn("Không mở được kênh đồng bộ tức thời:", error);
@@ -948,7 +943,8 @@
         throw error;
       }
       if (isNetworkLikeError(error)) {
-        return applyOfflineWrite(operation, path, value);
+        await notifyConnectionLost(error);
+        throw error;
       }
       enterDemoMode(error);
       return applyDemoWrite(operation, path, value);
@@ -973,16 +969,8 @@
         throw error;
       }
       if (isNetworkLikeError(error)) {
-        const savedPhoto = saveDemoPhoto(photo);
-        await enqueueOfflineCommand({
-          type: "photo-save",
-          photo: clone(photo || {}),
-          localSignature: signatureForText(savedPhoto.url || ""),
-        });
-        return {
-          ...savedPhoto,
-          offline: true,
-        };
+        await notifyConnectionLost(error);
+        throw error;
       }
       enterDemoMode(error);
       return saveDemoPhoto(photo);
@@ -1004,14 +992,8 @@
         throw error;
       }
       if (isNetworkLikeError(error)) {
-        const rawPath = String(photo?.path || photo?.url || "");
-        if (rawPath.startsWith("/api/photos/") || rawPath.includes("/api/photos/")) {
-          await enqueueOfflineCommand({
-            type: "photo-delete",
-            photo: clone(photo || {}),
-          });
-        }
-        return { ok: true, offline: true };
+        await notifyConnectionLost(error);
+        throw error;
       }
       enterDemoMode(error);
       return { ok: true };
@@ -1068,18 +1050,14 @@
   }
 
   function startOfflineSyncWatch() {
-    window.addEventListener("online", () => {
-      scheduleOfflineSync(500);
+    window.addEventListener("offline", () => {
+      notifyConnectionLost(new Error(CONNECTION_LOST_MESSAGE)).catch((error) => {
+        console.warn("Không đăng xuất được khi trình duyệt offline:", error);
+      });
     });
-    window.addEventListener("focus", () => {
-      scheduleOfflineSync(500);
-    });
-    window.setInterval(() => {
-      scheduleOfflineSync();
-    }, OFFLINE_SYNC_INTERVAL_MS);
-    getOfflineQueueCount()
-      .then((pending) => dispatchOfflineStatus({ pending, syncing: false, online: navigator.onLine }))
-      .catch((error) => console.warn("Không đọc được số lệnh offline:", error));
+    clearQueuedCommands()
+      .then(() => dispatchOfflineStatus({ pending: 0, syncing: false, online: navigator.onLine }))
+      .catch((error) => console.warn("Không dọn được hàng chờ offline:", error));
   }
 
   startOfflineSyncWatch();
