@@ -198,6 +198,13 @@
     setFieldVisible(elements.safetyYearFilter, Boolean(reportId));
     setFieldVisible(elements.safetyMonthFilter, isAssessment || isIdentification);
     setFieldVisible(elements.safetyAreaFilter, isAssessment);
+    setFieldVisible(elements.safetyStatusFilter, isAssessment);
+    if (elements.safetyStatusFilter) {
+      const selected = elements.safetyStatusFilter.value || "";
+      elements.safetyStatusFilter.innerHTML = '<option value="">Tất cả trạng thái</option>' +
+        (context.ISSUE_STATUS_OPTIONS || []).map((option) => `<option value="${context.escapeHtml(option.value)}">${context.escapeHtml(option.label)}</option>`).join("");
+      elements.safetyStatusFilter.value = (context.ISSUE_STATUS_OPTIONS || []).some((option) => option.value === selected) ? selected : "";
+    }
     setFieldVisible(elements.safetyDepartmentFilter, false);
 
     const isAdmin = Boolean(context.isAdminAccount?.(context.currentUser));
@@ -843,33 +850,29 @@
   }
 
   function renderProgressTable(monthTotals, closedTotals, year = 2026, context = {}) {
-    let lastDataMonth = 0;
-    MONTHS.forEach((m, idx) => {
-      if (Number(monthTotals[idx] || 0) > 0 || Number(closedTotals[idx] || 0) > 0) {
-        lastDataMonth = m;
-      }
-    });
+    const canEditTargets = Boolean(context.isAdminAccount?.(context.currentUser));
 
     let cumulative = 0;
     let cumulativeClosed = 0;
     const rows = MONTHS.map((month, index) => {
-      const isPastOrCurrent = month <= (lastDataMonth || 12);
       cumulative += Number(monthTotals[index] || 0);
       cumulativeClosed += Number(closedTotals[index] || 0);
-      const ratio = cumulative ? cumulativeClosed / cumulative : 0;
-      const rateText = isPastOrCurrent ? formatPercent(ratio) : "0%";
+      const denominator = cumulative + (context.safetyTimeline?.carryImplementation || 0);
+      const ratio = denominator ? cumulativeClosed / denominator : 0;
+      const rateText = formatPercent(ratio);
       const targetVal = context?.getSafetyMonthlyTarget ? context.getSafetyMonthlyTarget(year, month) : 100;
 
       return `<tr>
         <th class="row-label-cell progress-col-month">T${month}</th>
         <td class="progress-col-num">${numberCell(monthTotals[index])}</td>
         <td class="progress-col-num">${numberCell(closedTotals[index])}</td>
-        <td class="progress-col-cum">${isPastOrCurrent ? numberCell(cumulative) : ""}</td>
-        <td class="progress-col-cum">${isPastOrCurrent ? numberCell(cumulativeClosed) : ""}</td>
+        <td class="progress-col-cum">${numberCell(cumulative)}</td>
+        <td class="progress-col-cum">${numberCell(cumulativeClosed)}</td>
         <td class="progress-col-rate col-highlight-rate">${rateText}</td>
+        <td class="progress-col-num">${numberCell(context.safetyTimeline?.completed[index] || 0)}</td>
         <td class="progress-col-target">
           <div class="progress-target-cell">
-            <input class="progress-target-input" type="number" min="0" max="100" step="1" value="${targetVal}" placeholder="100" aria-label="Mục tiêu tháng ${month} năm ${year}" data-progress-target-input data-year="${year}" data-month="${month}">
+            ${canEditTargets ? `<input class="progress-target-input" type="number" min="0" max="100" step="1" value="${targetVal}" placeholder="100" aria-label="Mục tiêu tháng ${month} năm ${year}" data-progress-target-input data-year="${year}" data-month="${month}">` : `<span>${targetVal}</span>`}
             <span class="progress-target-unit">%</span>
           </div>
         </td>
@@ -886,6 +889,7 @@
             <th class="progress-col-cum">Tích lũy<br>phát hiện</th>
             <th class="progress-col-cum">Tích lũy<br>đối sách</th>
             <th class="progress-col-rate">Tỉ lệ<br>đối sách</th>
+            <th>Hoàn thành<br>thực tế</th>
             <th class="progress-col-target">Mục tiêu</th>
           </tr>
         </thead>
@@ -902,12 +906,6 @@
     const plotWidth = 640;
     const width = left + plotWidth + 24;
     const height = 265;
-    let lastDataMonth = 0;
-    MONTHS.forEach((m, idx) => {
-      if (Number(monthTotals[idx] || 0) > 0 || Number(closedTotals[idx] || 0) > 0) {
-        lastDataMonth = m;
-      }
-    });
 
     const cumulative = [];
     const cumulativeClosed = [];
@@ -939,11 +937,12 @@
         '<text x="' + x + '" y="' + (height - 18) + '" class="excel-month-label">T' + month + '</text>' +
       '</g>';
     }).join("");
-    const activeIndices = MONTHS.map((m, i) => m <= (lastDataMonth || 12) ? i : -1).filter((i) => i >= 0);
+    const activeIndices = MONTHS.map((_, index) => index);
     const line = activeIndices.length ? activeIndices.map((index) => (left + index * step + step / 2).toFixed(1) + ',' + chartY(cumulative[index], max, top, plotHeight).toFixed(1)).join(" ") : "";
     const closedLine = activeIndices.length ? activeIndices.map((index) => (left + index * step + step / 2).toFixed(1) + ',' + chartY(cumulativeClosed[index], max, top, plotHeight).toFixed(1)).join(" ") : "";
     const labels = activeIndices.map((index) => '<text x="' + (left + index * step + step / 2) + '" y="' + (chartY(cumulative[index], max, top, plotHeight) - 7) + '" class="excel-bar-label">' + (cumulative[index] || '') + '</text>').join("");
     const closedLabels = activeIndices.map((index) => '<text x="' + (left + index * step + step / 2) + '" y="' + (chartY(cumulativeClosed[index], max, top, plotHeight) + 13) + '" class="excel-bar-label">' + (cumulativeClosed[index] || '') + '</text>').join("");
+    const markers = activeIndices.map((index) => `<circle cx="${left + index * step + step / 2}" cy="${chartY(cumulative[index], max, top, plotHeight)}" r="3" fill="#70ad47"/><circle cx="${left + index * step + step / 2}" cy="${chartY(cumulativeClosed[index], max, top, plotHeight)}" r="3" fill="#8064a2"/>`).join("");
 
     return '<div class="factory-chart-panel">' +
       '<div class="factory-chart-canvas-wrap">' +
@@ -951,7 +950,7 @@
           grid + bars +
           (line ? '<polyline points="' + line + '" class="progress-cumulative-line"></polyline>' : '') +
           (closedLine ? '<polyline points="' + closedLine + '" class="progress-closed-line"></polyline>' : '') +
-          labels + closedLabels +
+          markers + labels + closedLabels +
         '</svg>' +
       '</div>' +
       '<div class="factory-chart-legend">' +
@@ -987,7 +986,8 @@
     const cumulativeRates = MONTHS.map((month, index) => {
       cumulativeTotal += Number(monthTotals[index] || 0);
       cumulativeClosed += Number(closedTotals[index] || 0);
-      return cumulativeTotal ? cumulativeClosed / cumulativeTotal : 0;
+      const denominator = cumulativeTotal + (context.safetyTimeline?.carryImplementation || 0);
+      return denominator ? cumulativeClosed / denominator : 0;
     });
 
     const targetValues = MONTHS.map((m) => {
@@ -1113,12 +1113,12 @@
       ? `<div class="safety-actions">
           <button class="tiny-button" type="button" data-action="edit-safety-record" data-id="${escapeHtml(row.score.id)}">Sửa</button>
           <button class="tiny-button danger-text-button" type="button" data-action="delete-safety-record" data-id="${escapeHtml(row.score.id)}">Xóa</button>
-          <span class="item-meta">${escapeHtml(statusLabel)}</span>
         </div>`
-      : `<div class="safety-actions"><span class="item-meta">${escapeHtml(statusLabel)}</span></div>`;
+      : "";
 
     return `<tr>
       <td class="safety-no-cell"><span>${index}</span>${actions}</td>
+      <td class="safety-status-cell">${escapeHtml(statusLabel)}</td>
       <td>${escapeHtml(getIssueLocation(row))}</td>
       <td>${escapeHtml(getIssueDay(row))}</td>
       <td>${escapeHtml(getIssueMonth(row, row.score.periodId))}</td>
@@ -1129,7 +1129,7 @@
       ${SAFETY_LEVEL_COLUMNS.map((column) => renderSafetyMarkCell(isSafetyLevelSelected(row.score, column.value), context, column.value === "A" ? "level-a-column" : "level-mark")).join("")}
       ${SAFETY_FOUND_COLUMNS.map((column) => renderSafetyMarkCell(isSafetyFoundSelected(row.score, column.value), context, "", getIssueFoundBy(row) || "1")).join("")}
       <td>${escapeHtml(getIssueEmployeeCode(row))}</td>
-      <td>${escapeHtml(row.score.improvementContent || "")}</td>
+      <td>${escapeHtml(row.score.improvementContent || "")}${row.score.countermeasureDate ? `<br><small>Triển khai: ${escapeHtml(context.formatDateDisplay(row.score.countermeasureDate))}</small>` : ""}</td>
       <td>${row.score.afterPhotoDataUrl ? `<img class="safety-thumb" src="${row.score.afterPhotoDataUrl}" alt="Ảnh sau cải tiến">` : ""}</td>
       <td>${escapeHtml(row.score.actionOwner || "")}</td>
       <td>${escapeHtml(row.score.actionPlan || "")}</td>
@@ -1156,22 +1156,22 @@
 
     return `
       <colgroup>
-        <col style="width: 58px"><col style="width: 120px"><col style="width: 50px"><col style="width: 50px"><col style="width: 280px"><col style="width: 170px"><col style="width: 74px">
+        <col style="width: 58px"><col style="width: 110px"><col style="width: 120px"><col style="width: 50px"><col style="width: 50px"><col style="width: 280px"><col style="width: 170px"><col style="width: 74px">
         ${Array.from({ length: 13 }, () => '<col style="width: 36px">').join("")}
         <col style="width: 110px"><col style="width: 260px"><col style="width: 170px"><col style="width: 120px"><col style="width: 120px"><col style="width: 92px"><col style="width: 150px"><col style="width: 150px">
       </colgroup>
       <thead>
         <tr class="safety-form-top">
-          <th class="safety-logo-cell" colspan="3" rowspan="2"><img src="images/Logo.jpg" alt="LeGroup"></th>
+          <th class="safety-logo-cell" colspan="4" rowspan="2"><img src="images/Logo.jpg" alt="LeGroup"></th>
           <th class="safety-title-cell" colspan="19" rowspan="2"><strong>BẢNG THEO DÕI NHẬN DẠNG NGUY HIỂM VÀ KHẮC PHỤC</strong><span>HAZARD IDENTIFICATION &amp; ACTIVITY FOLLOW UP SHEET</span></th>
           <th class="safety-date-label" colspan="3">Issue Date</th><th class="safety-date-value" colspan="3">${escapeHtml(issueDate)}</th>
         </tr>
         <tr class="safety-form-top"><th class="safety-date-label" colspan="3">Report date</th><th class="safety-date-value" colspan="3">${escapeHtml(reportDate)}</th></tr>
-        <tr class="safety-meta-row"><td colspan="6"><span>Người Thực Hiện:</span> ${escapeHtml(report.performer)}</td><td colspan="5"><span>Người Kiểm Tra:</span></td><td colspan="17"><strong>${escapeHtml(report.checker)}</strong></td></tr>
-        <tr class="safety-meta-row"><td colspan="6"><span>Chức Danh:</span> ${escapeHtml(report.performerTitle || "")}</td><td colspan="5"><span>Chức Danh:</span> ${escapeHtml(report.checkerTitle || "")}</td><td colspan="17"></td></tr>
-        <tr class="safety-meta-row"><td colspan="6"><span>Bộ Phận:</span> ${escapeHtml(report.department || "")}</td><td colspan="5"><span>Bộ Phận:</span> ${escapeHtml(report.checkerDepartment || "")}</td><td colspan="17"></td></tr>
+        <tr class="safety-meta-row"><td colspan="7"><span>Người Thực Hiện:</span> ${escapeHtml(report.performer)}</td><td colspan="5"><span>Người Kiểm Tra:</span></td><td colspan="17"><strong>${escapeHtml(report.checker)}</strong></td></tr>
+        <tr class="safety-meta-row"><td colspan="7"><span>Chức Danh:</span> ${escapeHtml(report.performerTitle || "")}</td><td colspan="5"><span>Chức Danh:</span> ${escapeHtml(report.checkerTitle || "")}</td><td colspan="17"></td></tr>
+        <tr class="safety-meta-row"><td colspan="7"><span>Bộ Phận:</span> ${escapeHtml(report.department || "")}</td><td colspan="5"><span>Bộ Phận:</span> ${escapeHtml(report.checkerDepartment || "")}</td><td colspan="17"></td></tr>
         <tr class="safety-main-header">
-          <th rowspan="3">No</th><th rowspan="3">Vị trí</th><th rowspan="3">Ngày</th><th rowspan="3">Tháng</th><th rowspan="3">Mối nguy hiểm phát hiện được</th><th rowspan="3">Hình Ảnh Minh Họa</th><th rowspan="3">Số lần phát hiện</th>
+          <th rowspan="3">No</th><th rowspan="3">Trạng thái</th><th rowspan="3">Vị trí</th><th rowspan="3">Ngày</th><th rowspan="3">Tháng</th><th rowspan="3">Mối nguy hiểm phát hiện được</th><th rowspan="3">Hình Ảnh Minh Họa</th><th rowspan="3">Số lần phát hiện</th>
           <th colspan="13">${escapeHtml(report.instruction || DEFAULT_SAFETY_REPORT.instruction)}</th>
           <th rowspan="3">Mã nhân viên</th><th rowspan="3">Nội dung cải tiến, xử lý</th><th rowspan="3">Hình ảnh sau cải tiến, xử lý</th><th rowspan="3">Đảm nhiệm</th><th rowspan="3">Kế hoạch</th><th colspan="3">Hoàn thành</th>
         </tr>
@@ -1182,7 +1182,7 @@
           ${SAFETY_FOUND_COLUMNS.map((column) => `<th><span>${escapeHtml(column.label)}</span></th>`).join("")}
         </tr>
       </thead>
-      <tbody>${rows.length ? rows.map((row, index) => renderSafetyRow(row, startIndex + index + 1, context)).join("") : `<tr><td colspan="28" class="empty-cell">${escapeHtml(emptyMessage)}</td></tr>`}</tbody>`;
+      <tbody>${rows.length ? rows.map((row, index) => renderSafetyRow(row, startIndex + index + 1, context)).join("") : `<tr><td colspan="29" class="empty-cell">${escapeHtml(emptyMessage)}</td></tr>`}</tbody>`;
   }
 
   function renderAnnualFactoryCard(filters, yearRows, groups, selectedDepartment, reportPeriod, context) {
@@ -1190,8 +1190,9 @@
     const matrix = buildDepartmentMatrix(groups, yearRows, context);
     const rankMatrix = buildRankMatrix(yearRows, context);
     const stop6Matrix = buildStop6Matrix(yearRows, context);
-    const monthTotals = MONTHS.map((month) => sumIssueCounts(yearRows.filter((row) => monthOf(row, context) === month), context));
-    const countermeasureTotals = MONTHS.map((month) => sumIssueCounts(yearRows.filter((row) => monthOf(row, context) === month && hasCountermeasure(row, context)), context));
+    const timeline = context.safetyTimeline;
+    const monthTotals = timeline.detected;
+    const countermeasureTotals = timeline.implemented;
     const selectedGroup = selectedDepartment ? groups.find((group) => group.name === selectedDepartment) || null : null;
     const selectedAreas = selectedGroup ? selectedGroup.areas : groups.flatMap((group) => group.areas);
     const selectedAreaIds = new Set(selectedAreas.map((area) => area.id));
@@ -1211,7 +1212,9 @@
     // Calculate Executive KPI summary values
     const totalDetectedYtd = monthTotals.reduce((sum, v) => sum + v, 0);
     const totalCountermeasureYtd = countermeasureTotals.reduce((sum, v) => sum + v, 0);
-    const completionRatePct = totalDetectedYtd ? Math.round((totalCountermeasureYtd / totalDetectedYtd) * 100) : 0;
+    const totalCompletedYtd = timeline.completed.reduce((sum, value) => sum + value, 0);
+    const completionDenominator = totalDetectedYtd + timeline.carryCompletion;
+    const completionRatePct = completionDenominator ? Math.round((totalCompletedYtd / completionDenominator) * 100) : 0;
     
     // High Risk Rank A
     const rankARow = rankMatrix.find((r) => String(r.name).toUpperCase().includes("A"));
@@ -1283,7 +1286,7 @@
               <strong class="kpi-value font-mono">${totalCountermeasureYtd}</strong>
               <span class="kpi-label">Đối sách đã triển khai</span>
             </div>
-            <div class="kpi-subtext"><i class="fa-solid fa-arrows-spin"></i> Biện pháp khắc phục đã duyệt</div>
+            <div class="kpi-subtext">Theo ngày thực tế triển khai · Hoàn thành thực tế: ${totalCompletedYtd}</div>
           </div>
 
           <div class="factory-kpi-card">
@@ -1620,29 +1623,33 @@
 
   function renderSafetyAssessmentMonthlyChart(yearRows, filters, context) {
     const escapeHtml = context.escapeHtml;
-    const monthTotals = MONTHS.map((month) => sumIssueCounts(yearRows.filter((row) => monthOf(row, context) === month), context));
-    const countermeasureTotals = MONTHS.map((month) => sumIssueCounts(yearRows.filter((row) => monthOf(row, context) === month && hasCountermeasure(row, context)), context));
-    const max = Math.max(1, ...monthTotals, ...countermeasureTotals);
-    const hasData = monthTotals.some((value) => value) || countermeasureTotals.some((value) => value);
+    const monthTotals = context.safetyTimeline.detected;
+    const countermeasureTotals = context.safetyTimeline.implemented;
+    const completedTotals = context.safetyTimeline.completed;
+    const max = Math.max(1, ...monthTotals, ...countermeasureTotals, ...completedTotals);
+    const hasData = monthTotals.some((value) => value) || countermeasureTotals.some((value) => value) || completedTotals.some((value) => value);
 
     if (!hasData) {
       return '<section class="safety-assessment-chart-panel"><div class="admin-card-chart-empty">Chưa có dữ liệu AT theo tháng.</div></section>';
     }
 
     return '<section class="safety-assessment-chart-panel">' +
-      '<div class="admin-card-chart-head"><strong>Nhận diện AT theo tháng ' + escapeHtml(filters.year) + '</strong><span>Số nhận diện / Đối sách triển khai</span></div>' +
+      '<div class="admin-card-chart-head"><strong>Nhận diện AT theo tháng ' + escapeHtml(filters.year) + '</strong><span>Phát hiện / Triển khai / Hoàn thành thực tế</span></div>' +
       '<div class="safety-assessment-month-chart" aria-hidden="true">' + MONTHS.map((month, index) => {
         const detected = monthTotals[index] || 0;
         const countermeasure = countermeasureTotals[index] || 0;
         const detectedHeight = detected ? Math.max(3, Math.round((detected / max) * 158)) : 0;
         const counterHeight = countermeasure ? Math.max(3, Math.round((countermeasure / max) * 158)) : 0;
+        const completed = completedTotals[index] || 0;
+        const completedHeight = completed ? Math.max(3, Math.round((completed / max) * 158)) : 0;
         return '<span>' +
           '<i class="assessment-month-detected ' + (detected ? '' : 'is-empty') + '" style="height:' + escapeHtml(String(detectedHeight)) + 'px"><b>' + escapeHtml(numberCell(detected)) + '</b></i>' +
           '<i class="assessment-month-counter ' + (countermeasure ? '' : 'is-empty') + '" style="height:' + escapeHtml(String(counterHeight)) + 'px"><b>' + escapeHtml(numberCell(countermeasure)) + '</b></i>' +
+          '<i class="assessment-month-completed ' + (completed ? '' : 'is-empty') + '" style="height:' + escapeHtml(String(completedHeight)) + 'px"><b>' + escapeHtml(numberCell(completed)) + '</b></i>' +
           '<em>T' + escapeHtml(String(month)) + '</em>' +
         '</span>';
       }).join("") + '</div>' +
-      '<div class="admin-card-chart-legend safety-assessment-month-legend"><span><i></i>Số nhận diện</span><span><i class="assessment-counter-legend"></i>Đối sách triển khai</span></div>' +
+      '<div class="admin-card-chart-legend safety-assessment-month-legend"><span><i></i>Số nhận diện</span><span><i class="assessment-counter-legend"></i>Đối sách triển khai</span><span><i class="assessment-completed-legend"></i>Hoàn thành thực tế</span></div>' +
     '</section>';
   }
 
@@ -1657,20 +1664,23 @@
   }
   function renderSafetyAssessmentCard(filters, monthRows, yearRows, visibleAreas, reportPeriod, context) {
     const { escapeHtml } = context;
+    const allMonthRows = monthRows;
+    const statusFilter = context.elements.safetyStatusFilter?.value || "";
+    monthRows = monthRows.filter((row) => !statusFilter || issueStatusOf(row, context) === statusFilter);
     const zoneText = visibleAreas.length === 1 ? "Zone " + visibleAreas[0].code + " · " : "";
-    const pageKey = [filters.year, filters.month, visibleAreas.map((area) => area.id).join(","), reportPeriod?.id || ""].join("|");
+    const pageKey = [filters.year, filters.month, visibleAreas.map((area) => area.id).join(","), reportPeriod?.id || "", statusFilter].join("|");
     const pagination = getPaginationState("assessment", pageKey, monthRows.length);
     const pagedRows = monthRows.slice(pagination.startIndex, pagination.endIndex);
     const pager = renderSafetyPager("assessment", pagination, monthRows.length, context);
     const caption = zoneText + "Tháng " + filters.month + "/" + filters.year + " · " + monthRows.length + " vấn đề";
-    const emptyMessage = "Chưa có báo cáo đánh giá an toàn trong tháng " + filters.month + "/" + filters.year + ".";
+    const emptyMessage = "Không có báo cáo đánh giá an toàn phù hợp bộ lọc trong tháng " + filters.month + "/" + filters.year + ".";
     const tableHtml = pager +
       '<div class="table-wrap wide-table-wrap" data-drag-scroll><table class="safety-table">' + renderSafetyTableHtml(pagedRows, reportPeriod, context, emptyMessage, pagination.startIndex) + '</table></div>' +
       pager;
     return '<section class="dashboard-card wide safety-report-card safety-assessment-card">' +
       '<div class="section-heading excel-title-heading"><h2>ĐÁNH GIÁ AN TOÀN</h2><span>' + escapeHtml(caption) + '</span></div>' +
       copyableReportBlock("safety-assessment-" + (reportPeriod?.id || filters.year + "-" + filters.month), tableHtml, "Copy", context) +
-      renderSafetyAssessmentCharts(filters, monthRows, yearRows, context) +
+      renderSafetyAssessmentCharts(filters, allMonthRows, yearRows, context) +
       '</section>';
   }
 
@@ -1767,7 +1777,8 @@
       elements.editSafetyMetaButton.title = canAdd ? "Thiết lập báo cáo" : "Chỉ xem";
     }
 
-    renderSafetyDashboard(activeReport, filters, monthRows, yearRows, visibleAreas, groups, selectedDepartment, reportPeriod, context);
+    const safetyTimeline = context.getSafetyTimeline(filters.year, visibleAreaIds);
+    renderSafetyDashboard(activeReport, filters, monthRows, yearRows, visibleAreas, groups, selectedDepartment, reportPeriod, { ...context, safetyTimeline });
   }
 
   document.addEventListener("click", (event) => {

@@ -97,7 +97,7 @@
     const canEditFull = canManageFullSafetyRecord(context, item);
     const canEditCountermeasure = canManageSafetyCountermeasure(context, item);
     const countermeasureOnly = canEditCountermeasure && !canEditFull;
-    const lockedAttr = countermeasureOnly ? "disabled" : "";
+    const lockedAttr = !canEditFull ? "disabled" : "";
     const defaultActionOwner = context?.getAccountDisplayName?.(context.currentUser, context.SAFETY_PERIOD_TYPE, item.periodId || fiveSPeriodId)
       || context?.currentUser?.name
       || context?.currentUser?.username
@@ -231,9 +231,13 @@
               <input type="text" id="modalDetailEmployeeCode" class="modal-form-input" value="${escapeHtml(item.employeeCode || '')}" placeholder="Mã NV..." ${lockedAttr}>
             </div>
             <div class="modal-form-group">
-              <label class="modal-form-label">Ngày hoàn thành</label>
-              <input type="date" id="modalDetailCompletionDate" class="modal-form-input" value="${escapeHtml(item.completionDate ? item.completionDate.split('T')[0] : todayValue)}">
+              <label class="modal-form-label">Ngày dự kiến / ngày ghi nhận cũ</label>
+              <input type="date" id="modalDetailCompletionDate" class="modal-form-input" value="${escapeHtml(item.completionDate ? item.completionDate.split('T')[0] : '')}">
             </div>
+          </div>
+          <div class="modal-form-grid-2">
+            <div class="modal-form-group"><label class="modal-form-label">Ngày thực tế triển khai đối sách</label><input type="date" id="modalDetailCountermeasureDate" class="modal-form-input" value="${escapeHtml(item.countermeasureDate || '')}"></div>
+            <div class="modal-form-group"><label class="modal-form-label">Ngày hoàn thành thực tế</label><input type="date" id="modalDetailCompletedDate" class="modal-form-input" value="${escapeHtml(item.completedDate || '')}"></div>
           </div>
 
           <!-- Improvement / Countermeasure Details -->
@@ -292,11 +296,11 @@
 
         <!-- Action Buttons Footer -->
         <div class="detail-modal-footer">
-          <button type="button" class="btn-detail-save" id="btnDetailSave" ${canEditCountermeasure ? "" : "disabled"}>
-            <i class="fa-solid fa-floppy-disk"></i> LƯU THAY ĐỔI
-          </button>
-          <button type="button" class="btn-detail-delete" id="btnDetailDelete" ${canEditFull ? "" : "hidden"}>
+          <button type="button" class="btn-detail-delete" id="btnDetailDelete">
             <i class="fa-solid fa-trash-can"></i> XÓA BÁO CÁO
+          </button>
+          <button type="button" class="btn-detail-save" id="btnDetailSave">
+            <i class="fa-solid fa-floppy-disk"></i> LƯU THAY ĐỔI
           </button>
         </div>
 
@@ -304,6 +308,18 @@
     `;
 
     document.body.appendChild(modal);
+    if (!canEditCountermeasure) {
+      modal.querySelectorAll("input, select, textarea").forEach((input) => { input.disabled = true; });
+      modal.querySelector(".detail-modal-footer")?.insertAdjacentHTML("beforebegin", '<p class="findings-readonly" role="status">Chỉ xem — bạn không có quyền thêm, sửa, xóa báo cáo này.</p>');
+    }
+    modal.addEventListener("click", (event) => {
+      const photoButton = event.target.closest(".photo-btn");
+      if (photoButton && (!canEditCountermeasure || (countermeasureOnly && photoButton.closest("#modalPhotoWrap1")))) {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        showMobileToast("Bạn không có quyền sửa, xóa ảnh này.", true);
+      }
+    }, true);
 
     const closeModal = () => modal.remove();
     modal.querySelector(".detail-modal-backdrop").addEventListener("click", closeModal);
@@ -433,6 +449,8 @@
       const actionOwner = modal.querySelector("#modalDetailActionOwner")?.value?.trim() || "";
       const actionPlan = modal.querySelector("#modalDetailActionPlan")?.value?.trim() || "";
       const completionDate = modal.querySelector("#modalDetailCompletionDate")?.value || "";
+      const countermeasureDate = modal.querySelector("#modalDetailCountermeasureDate")?.value || "";
+      const completedDate = modal.querySelector("#modalDetailCompletedDate")?.value || "";
 
       if (!countermeasureOnly && !note) {
         showMobileToast("Vui lòng nhập mô tả Mối nguy hiểm!", true);
@@ -468,7 +486,7 @@
             improvementContent,
             actionOwner: actionOwner || defaultActionOwner,
             actionPlan,
-            completionDate: completionDate || todayValue,
+            completionDate, countermeasureDate, completedDate,
             afterPhotoDataUrl: finalAfterPhotoDataUrl,
             afterPhotoName: finalAfterPhotoName,
             updatedAt: now.toISOString(),
@@ -485,7 +503,7 @@
             improvementContent,
             actionOwner: actionOwner || defaultActionOwner,
             actionPlan,
-            completionDate: completionDate || todayValue,
+            completionDate, countermeasureDate, completedDate,
             photoDataUrl: finalPhotoDataUrl,
             photoName: finalPhotoName,
             afterPhotoDataUrl: finalAfterPhotoDataUrl,
@@ -494,15 +512,13 @@
           };
 
       try {
+        if (typeof context?.saveSafetyRecord !== "function") throw new Error("Không có kết nối lưu dữ liệu.");
+        await context.saveSafetyRecord(updatedRecord);
         if (context?.state?.safetyRecords) {
           const idx = context.state.safetyRecords.findIndex((r) => r.id === item.id);
           if (idx >= 0) {
             context.state.safetyRecords[idx] = updatedRecord;
           }
-        }
-
-        if (typeof context?.saveSafetyRecord === "function") {
-          await context.saveSafetyRecord(updatedRecord);
         }
 
         closeModal();
@@ -581,11 +597,6 @@
     return true;
   }
 
-  function isDepartmentHeadUser(context) {
-    const user = context?.currentUser;
-    return Boolean(user && typeof context?.isDepartmentHeadAccount === "function" && context.isDepartmentHeadAccount(user));
-  }
-
   function canManageSafetyCountermeasure(context, record) {
     if (!record) return false;
     if (typeof context?.canManageSafetyCountermeasure === "function") {
@@ -630,50 +641,16 @@
       currentAppContext = passedContext;
     }
     const context = getAppContext();
-    const can5S = checkFiveSPermission(context);
-    const canSafety = checkSafetyPermission(context);
-
-    if (initialTab === "5s") {
-      if (can5S) {
-        activeTab = "5s";
-      } else if (canSafety) {
-        activeTab = "safety";
-        showMobileToast("Tài khoản không có quyền chấm 5S, đã chuyển sang Đánh Giá An Toàn.");
-      } else {
-        showMobileToast("Tài khoản của bạn không có quyền sử dụng giao diện Mobile.", true);
-        return;
-      }
-    } else {
-      if (canSafety) {
-        activeTab = "safety";
-      } else if (can5S) {
-        activeTab = "5s";
-        showMobileToast("Tài khoản không có quyền đánh giá An Toàn, đã chuyển sang Chấm Điểm 5S.");
-      } else {
-        showMobileToast("Tài khoản của bạn không có quyền sử dụng giao diện Mobile.", true);
-        return;
-      }
+    if (!context?.currentUser) {
+      showMobileToast("Vui lòng đăng nhập để xem giao diện Mobile.", true);
+      return;
     }
+    activeTab = ["5s", "findings"].includes(initialTab) ? initialTab : "safety";
 
     // If overlay is already open in DOM, do NOT tear down and recreate overlay!
     const existingOverlay = document.getElementById("mobileProtoOverlay");
     if (existingOverlay && document.body.contains(existingOverlay)) {
-      const tabBtnSafety = existingOverlay.querySelector("#mobileTabBtnSafety");
-      const tabBtn5S = existingOverlay.querySelector("#mobileTabBtn5S");
-      const screenSafety = existingOverlay.querySelector("#mobileScreenSafety");
-      const screen5S = existingOverlay.querySelector("#mobileScreen5S");
-
-      if (activeTab === "5s") {
-        if (tabBtn5S) tabBtn5S.className = "mobile-tab-btn is-active-fives";
-        if (tabBtnSafety) tabBtnSafety.className = "mobile-tab-btn" + (!checkSafetyPermission(context) ? " is-disabled-tab" : "");
-        if (screen5S) screen5S.classList.remove("is-hidden");
-        if (screenSafety) screenSafety.classList.add("is-hidden");
-      } else {
-        if (tabBtnSafety) tabBtnSafety.className = "mobile-tab-btn is-active-safety";
-        if (tabBtn5S) tabBtn5S.className = "mobile-tab-btn" + (!checkFiveSPermission(context) ? " is-disabled-tab" : "");
-        if (screenSafety) screenSafety.classList.remove("is-hidden");
-        if (screen5S) screen5S.classList.add("is-hidden");
-      }
+      showMobilePane(existingOverlay, context);
       return;
     }
 
@@ -694,7 +671,7 @@
     initMobilePrototype(overlay, context);
 
     // Update browser URL route
-    const targetRoute = activeTab === "5s" ? "/mobile/5s" : "/mobile/safety";
+    const targetRoute = activeTab === "findings" ? "/mobile/5s-findings" : activeTab === "5s" ? "/mobile/5s" : "/mobile/safety";
     context?.pushRoute?.(targetRoute);
   }
 
@@ -715,13 +692,11 @@
     const fiveSPeriod = context?.getPeriod?.(fiveSPeriodId);
     const periodBadgeText = fiveSPeriod ? context.periodLabel(fiveSPeriod) : "Kỳ đang mở";
 
-    const can5S = checkFiveSPermission(context);
-    const canSafety = checkSafetyPermission(context);
     const currentTheme = getMobileTheme();
 
     const isAdmin = typeof context?.isAdminAccount === "function" && context.isAdminAccount(user);
     const isZoneOwner = typeof context?.isZoneOwnerAccount === "function" && context.isZoneOwnerAccount(user);
-    const roleTitle = isZoneOwner ? "Quản lý zone" : isAdmin ? "Admin" : "Assessor";
+    const roleTitle = context?.isViewerAccount?.(user) ? "Người xem" : context?.isDepartmentHeadAccount?.(user) ? "Trưởng bộ phận" : isZoneOwner ? "Quản lý zone" : isAdmin ? "Admin" : "Assessor";
 
     return `
       <!-- Desktop Top Control Bar (Hidden on small mobile screens) -->
@@ -770,18 +745,20 @@
           </div>
 
           <!-- Segmented Tab Switcher -->
-          <div class="mobile-tab-switcher">
-            <button type="button" id="mobileTabBtnSafety" class="mobile-tab-btn ${activeTab === 'safety' ? 'is-active-safety' : ''} ${!canSafety ? 'is-disabled-tab' : ''}" ${!canSafety ? 'title="Bạn không có quyền đánh giá An Toàn"' : ''}>
-              <i class="fa-solid ${canSafety ? 'fa-triangle-exclamation text-amber-400' : 'fa-lock text-slate-400'}"></i>
+          <div class="mobile-tab-switcher mobile-tabs-with-findings">
+            <button type="button" id="mobileTabBtnSafety" class="mobile-tab-btn ${activeTab === 'safety' ? 'is-active-safety' : ''} ">
+              <i class="fa-solid fa-triangle-exclamation text-amber-400"></i>
               <span>Báo Cáo An Toàn</span>
             </button>
-            <button type="button" id="mobileTabBtn5S" class="mobile-tab-btn ${activeTab === '5s' ? 'is-active-fives' : ''} ${!can5S ? 'is-disabled-tab' : ''}" ${!can5S ? 'title="Bạn không có quyền chấm 5S"' : ''}>
-              <i class="fa-solid ${can5S ? 'fa-clipboard-check text-emerald-400' : 'fa-lock text-slate-400'}"></i>
+            <button type="button" id="mobileTabBtn5S" class="mobile-tab-btn ${activeTab === '5s' ? 'is-active-fives' : ''} ">
+              <i class="fa-solid fa-clipboard-check text-emerald-400"></i>
               <span>Chấm Điểm 5S</span>
             </button>
+            <button type="button" id="mobileTabBtnFindings" class="mobile-tab-btn">📝 <span>Vấn đề 5S</span></button>
           </div>
         </div>
 
+        <div id="mobileScreenFindings" class="mobile-screen-pane is-hidden"></div>
         <!-- SCREEN 1: BÁO CÁO AN TOÀN -->
         <div id="mobileScreenSafety" class="mobile-screen-pane ${activeTab === 'safety' ? '' : 'is-hidden'}">
           <!-- Populated by renderSafetyScreen() -->
@@ -843,49 +820,32 @@
       });
     }
 
-    // Tab switcher
-    const tabBtnSafety = overlay.querySelector("#mobileTabBtnSafety");
-    const tabBtn5S = overlay.querySelector("#mobileTabBtn5S");
-    const screenSafety = overlay.querySelector("#mobileScreenSafety");
-    const screen5S = overlay.querySelector("#mobileScreen5S");
+    overlay.querySelector("#mobileTabBtnSafety")?.addEventListener("click", () => {
+      context.setActiveTab("mobile-safety");
+    });
+    overlay.querySelector("#mobileTabBtn5S")?.addEventListener("click", () => {
+      context.setActiveTab("mobile-5s");
+    });
+    overlay.querySelector("#mobileTabBtnFindings")?.addEventListener("click", () => context.setActiveTab("mobile-findings"));
+    showMobilePane(overlay, context);
+  }
 
-    function switchMobileTab(tab) {
-      if (tab === "safety") {
-        if (!checkSafetyPermission(context)) {
-          showMobileToast("Tài khoản của bạn không có quyền đánh giá An Toàn!", true);
-          return;
-        }
-        activeTab = "safety";
-        tabBtnSafety.className = "mobile-tab-btn is-active-safety";
-        tabBtn5S.className = "mobile-tab-btn" + (!checkFiveSPermission(context) ? " is-disabled-tab" : "");
-        screenSafety.classList.remove("is-hidden");
-        screen5S.classList.add("is-hidden");
-        renderSafetyScreen(overlay, getAppContext());
-        context?.pushRoute?.("/mobile/safety");
-      } else {
-        if (!checkFiveSPermission(context)) {
-          showMobileToast("Tài khoản của bạn không có quyền chấm 5S!", true);
-          return;
-        }
-        activeTab = "5s";
-        tabBtn5S.className = "mobile-tab-btn is-active-fives";
-        tabBtnSafety.className = "mobile-tab-btn" + (!checkSafetyPermission(context) ? " is-disabled-tab" : "");
-        screen5S.classList.remove("is-hidden");
-        screenSafety.classList.add("is-hidden");
-        renderFiveSScreen(overlay, getAppContext());
-        context?.pushRoute?.("/mobile/5s");
-      }
+  function showMobilePane(overlay, context) {
+    const switched = overlay.dataset.activePane !== activeTab;
+    overlay.dataset.activePane = activeTab;
+    const periodBadge = overlay.querySelector(".period-pill-text");
+    const periodType = activeTab === "safety" ? context.SAFETY_PERIOD_TYPE : context.FIVE_S_PERIOD_TYPE;
+    if (periodBadge) periodBadge.textContent = context.periodLabel(context.getPeriod(context.getActivePeriodId(periodType)));
+    for (const [tab, suffix] of [["safety", "Safety"], ["5s", "5S"], ["findings", "Findings"]]) {
+      const button = overlay.querySelector("#mobileTabBtn" + suffix);
+      const pane = overlay.querySelector("#mobileScreen" + suffix);
+      button?.classList.toggle("is-active-fives", activeTab === tab && tab !== "safety");
+      button?.classList.toggle("is-active-safety", activeTab === tab && tab === "safety");
+      pane?.classList.toggle("is-hidden", activeTab !== tab);
     }
-
-    if (tabBtnSafety) tabBtnSafety.addEventListener("click", () => switchMobileTab("safety"));
-    if (tabBtn5S) tabBtn5S.addEventListener("click", () => switchMobileTab("5s"));
-
-    // Initial render based on activeTab
-    if (activeTab === "safety") {
-      renderSafetyScreen(overlay, context);
-    } else {
-      renderFiveSScreen(overlay, context);
-    }
+    if (activeTab === "findings") window.FiveSFindingsPage.mount(overlay.querySelector("#mobileScreenFindings"), context);
+    else if (activeTab === "5s" && switched) renderFiveSScreen(overlay, context);
+    else if (activeTab === "safety" && switched) renderSafetyScreen(overlay, context);
   }
 
   // ─────────────────────────────────────────────────────────────────────────────
@@ -902,10 +862,9 @@
     const allowedAreaIds = (!isAdmin && typeof context?.getAllowedAreaIds === "function")
       ? context.getAllowedAreaIds(user, safetyPeriodId)
       : null;
-    const countermeasureOnlyMode = isDepartmentHeadUser(context);
     const reportableAreas = allSafetyAreas.filter((a) => {
       const code = String(a.templateCode || a.code || "").trim();
-      return code !== "27" && (!allowedAreaIds || allowedAreaIds.has(a.id));
+      return code !== "27";
     });
 
     const allRecords = context?.state?.safetyRecords || [];
@@ -940,7 +899,6 @@
     // Get current safety records for recent history
     const recentRecords = allRecords
       .filter((r) => !safetyPeriodId || r.periodId === safetyPeriodId)
-      .filter((r) => !allowedAreaIds || allowedAreaIds.has(r.areaId))
       .slice(0, 20);
 
     const defaultFinder = editingRecord ? (editingRecord.issueFoundBy || "") : (context?.getAccountDisplayName?.(user, context.SAFETY_PERIOD_TYPE, safetyPeriodId) || user?.name || "");
@@ -974,14 +932,6 @@
           </div>
         ` : ''}
 
-        ${countermeasureOnlyMode ? `
-          <div class="mobile-info-banner">
-            <div class="info-row">
-              <span class="info-label"><i class="fa-solid fa-wrench text-brand-400"></i> Chế độ:</span>
-              <span class="info-value">Cập nhật cải tiến / xử lý cho zone trưởng phòng quản lý</span>
-            </div>
-          </div>
-        ` : `
         <!-- Safety Form Card -->
         <form id="mobileSafetyForm" class="mobile-safety-form">
           
@@ -1189,10 +1139,10 @@
 
           <!-- Row 11: Ngày hoàn thành -->
           <div class="form-group">
-            <label class="form-label">Ngày hoàn thành</label>
+            <label class="form-label">Ngày dự kiến / ngày ghi nhận cũ</label>
             <div class="date-input-container">
-              <input type="text" id="mobileSafetyCompletionDateDisplay" class="form-control date-custom-input" placeholder="dd/mm/yyyy" value="${formatIsoToVnDate(editingRecord?.completionDate ? editingRecord.completionDate.split('T')[0] : todayValue)}" readonly>
-              <input type="date" id="mobileSafetyCompletionDate" class="native-hidden-date-input" value="${escapeHtml(editingRecord?.completionDate ? editingRecord.completionDate.split('T')[0] : todayValue)}">
+              <input type="text" id="mobileSafetyCompletionDateDisplay" class="form-control date-custom-input" placeholder="dd/mm/yyyy" value="${formatIsoToVnDate(editingRecord?.completionDate ? editingRecord.completionDate.split('T')[0] : '')}" readonly>
+              <input type="date" id="mobileSafetyCompletionDate" class="native-hidden-date-input" value="${escapeHtml(editingRecord?.completionDate ? editingRecord.completionDate.split('T')[0] : '')}">
               <button type="button" class="btn-calendar-trigger" tabindex="-1">
                 <i class="fa-solid fa-calendar-days text-white"></i>
               </button>
@@ -1200,14 +1150,17 @@
           </div>
 
           <!-- Submit Button -->
-          <div class="form-submit-row">
+          <div class="form-grid-2">
+            <div class="form-group"><label class="form-label">Ngày thực tế triển khai đối sách</label><input type="date" id="mobileSafetyCountermeasureDate" class="form-control" value="${escapeHtml(editingRecord?.countermeasureDate || '')}"></div>
+            <div class="form-group"><label class="form-label">Ngày hoàn thành thực tế</label><input type="date" id="mobileSafetyCompletedDate" class="form-control" value="${escapeHtml(editingRecord?.completedDate || '')}"></div>
+          </div>
+          <div class="form-submit-row mobile-fixed-save">
             <button type="submit" id="mobileSubmitSafetyBtn" class="btn-primary-gradient">
               <i class="fa-solid ${editingRecord ? 'fa-floppy-disk' : 'fa-paper-plane'}"></i>
               <span>${editingRecord ? 'CẬP NHẬT BÁO CÁO AN TOÀN' : 'LƯU BÁO CÁO AN TOÀN'}</span>
             </button>
           </div>
         </form>
-        `}
 
         <!-- Recent Uploads History List -->
         <div class="mobile-history-section">
@@ -1445,13 +1398,33 @@
     // Form submit handler
     const form = screen.querySelector("#mobileSafetyForm");
     if (form) {
+      if (!checkSafetyPermission(context)) {
+        form.querySelectorAll("input, select, textarea").forEach((input) => { input.disabled = true; });
+        form.insertAdjacentHTML("afterbegin", '<p class="findings-readonly" role="status">Chỉ xem — bạn không có quyền thêm, sửa, xóa đánh giá an toàn.</p>');
+        form.addEventListener("click", (event) => {
+          if (event.target.closest("button")) {
+            event.preventDefault();
+            event.stopImmediatePropagation();
+            showMobileToast("Bạn không có quyền thêm, sửa, lưu hoặc xóa đánh giá an toàn.", true);
+          }
+        }, true);
+      }
       form.addEventListener("submit", async (e) => {
         e.preventDefault();
         if (!checkSafetyPermission(context)) {
           showMobileToast("Tài khoản của bạn không có quyền đánh giá An toàn!", true);
           return;
         }
+        if (!safetyPeriodId || context?.isPeriodArchived?.(safetyPeriodId, context.SAFETY_PERIOD_TYPE)
+          || (context?.isPeriodOpen && !context.isPeriodOpen(safetyPeriodId, context.SAFETY_PERIOD_TYPE))) {
+          showMobileToast("Kỳ đánh giá an toàn này đã khóa hoặc không còn mở.", true);
+          return;
+        }
         const areaId = screen.querySelector("#mobileSafetyZoneSelect")?.value;
+        if (areaId && allowedAreaIds && !allowedAreaIds.has(areaId)) {
+          showMobileToast("Bạn không có quyền thêm, sửa đánh giá an toàn trong Zone này.", true);
+          return;
+        }
         const desc = screen.querySelector("#mobileSafetyDescription")?.value?.trim();
         const issueDate = screen.querySelector("#mobileSafetyIssueDate")?.value || "";
         const stop6 = screen.querySelector("#mobileSafetyStop6")?.value || "";
@@ -1464,7 +1437,9 @@
         const improvementContent = screen.querySelector("#mobileSafetyImprovementContent")?.value?.trim() || "";
         const actionOwner = screen.querySelector("#mobileSafetyActionOwner")?.value?.trim() || defaultActionOwner;
         const actionPlan = screen.querySelector("#mobileSafetyActionPlan")?.value?.trim() || "";
-        const completionDate = screen.querySelector("#mobileSafetyCompletionDate")?.value || todayValue;
+        const completionDate = screen.querySelector("#mobileSafetyCompletionDate")?.value || "";
+        const countermeasureDate = screen.querySelector("#mobileSafetyCountermeasureDate")?.value || "";
+        const completedDate = screen.querySelector("#mobileSafetyCompletedDate")?.value || "";
 
         if (!areaId) {
           showMobileToast("Vui lòng chọn Khu vực / Zone!", true);
@@ -1537,6 +1512,8 @@
           actionOwner,
           actionPlan,
           completionDate,
+          countermeasureDate,
+          completedDate,
           completionLevelConfirm: context?.getSafetyLevelConfirm?.({ issueLevel: level }) || "",
           completionStop6Confirm: context?.getSafetyStop6Confirm?.({ issueType: stop6 }) || "",
           scorerName: existingRecord?.scorerName || ownerName,
@@ -1547,6 +1524,8 @@
         };
 
         try {
+          if (typeof context?.saveSafetyRecord !== "function") throw new Error("Không có kết nối lưu dữ liệu.");
+          await context.saveSafetyRecord(payload);
           if (context?.state?.safetyRecords) {
             const idx = context.state.safetyRecords.findIndex((r) => r.id === targetId);
             if (idx >= 0) {
@@ -1555,10 +1534,6 @@
               context.state.safetyRecords.unshift(payload);
             }
           }
-          if (typeof context?.saveSafetyRecord === "function") {
-            await context.saveSafetyRecord(payload);
-          }
-
           // Reset form & state
           editingSafetyRecordId = "";
           uploadedSafetyPhotoData = "";
@@ -1600,7 +1575,7 @@
 
     // Default zone selection
     if (assignedAreas.length > 0) {
-      if (!currentFiveSZoneId || (allowedAreaIds && !allowedAreaIds.has(currentFiveSZoneId))) {
+      if (!currentFiveSZoneId || !allAreas.some((area) => area.id === currentFiveSZoneId)) {
         currentFiveSZoneId = assignedAreas[0].id;
       }
     } else if (!currentFiveSZoneId && allAreas.length > 0) {
@@ -1609,7 +1584,7 @@
 
     const selectedArea = allAreas.find((a) => a.id === currentFiveSZoneId) || assignedAreas[0] || allAreas[0] || null;
     const isAreaAllowed = !allowedAreaIds || (selectedArea && allowedAreaIds.has(selectedArea.id));
-    const canEditScore = periodOpen && isAreaAllowed;
+    const canEditScore = checkFiveSPermission(context) && periodOpen && isAreaAllowed;
 
     const scoreSource = typeof context?.getScoreSourceForAccount === "function"
       ? context.getScoreSourceForAccount(user)
@@ -1623,7 +1598,9 @@
 
     // Notice banner HTML
     let noticeBannerHtml = "";
-    if (!periodOpen) {
+    if (!checkFiveSPermission(context)) {
+      noticeBannerHtml = '<div class="fives-notice-banner warning"><span>Chỉ xem — bạn không có quyền thêm, sửa, xóa điểm 5S.</span></div>';
+    } else if (!periodOpen) {
       noticeBannerHtml = `
         <div class="fives-notice-banner warning">
           <i class="fa-solid fa-lock"></i>

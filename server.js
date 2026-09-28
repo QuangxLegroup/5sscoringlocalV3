@@ -15,7 +15,6 @@ const { StaticFileService } = require("./src/server/services/static-file-service
 
 const HOST = process.env.HOST || "127.0.0.1";
 const START_PORT = Number(process.env.PORT) || 5500;
-const MAX_PORT = START_PORT + 20;
 const DATA_DIR = process.env.DATA_DIR ? path.resolve(process.env.DATA_DIR) : path.join(__dirname, "data");
 const DATA_FILE = process.env.DATA_FILE || "runtime/main-data.json";
 const PHOTO_DIR = process.env.PHOTO_DIR ? path.resolve(process.env.PHOTO_DIR) : path.join(DATA_DIR, "photos");
@@ -38,8 +37,7 @@ function loadSeedAccounts() {
   }
 }
 
-async function seedAccounts(repository) {
-  const seedMap = loadSeedAccounts();
+async function seedAccounts(repository, seedMap = loadSeedAccounts()) {
   const seedEntries = Object.entries(seedMap);
   if (!seedEntries.length) {
     return;
@@ -51,45 +49,19 @@ async function seedAccounts(repository) {
       root.accounts = {};
     }
 
-    const existingByUsername = new Map();
-    for (const [id, account] of Object.entries(root.accounts)) {
-      if (account?.username) {
-        existingByUsername.set(account.username, id);
-      }
-    }
+    // Seeds bootstrap an empty installation only. Runtime accounts are authoritative.
+    if (Object.values(root.accounts).some((account) => account?.username)) return root;
 
     let changed = false;
     for (const [seedId, seedAccount] of seedEntries) {
       if (!seedAccount?.username) continue;
 
-      const existingId = existingByUsername.get(seedAccount.username);
-      if (existingId) {
-        const existing = root.accounts[existingId];
-        const updated = { ...existing };
-        if (seedAccount.role) updated.role = seedAccount.role;
-        if (seedAccount.name) updated.name = seedAccount.name;
-        if (seedAccount.passwordHash) updated.passwordHash = seedAccount.passwordHash;
-        if (seedAccount.accessTypes) updated.accessTypes = seedAccount.accessTypes;
-        if (seedAccount.rolesByType) updated.rolesByType = seedAccount.rolesByType;
-        if (seedAccount.areaIds) updated.areaIds = seedAccount.areaIds;
-        if (seedAccount.fiveSAreaIds) updated.fiveSAreaIds = seedAccount.fiveSAreaIds;
-        if (seedAccount.safetyAreaIds) updated.safetyAreaIds = seedAccount.safetyAreaIds;
-        if (seedAccount.assessorId) updated.assessorId = seedAccount.assessorId;
-        if (seedAccount.fiveSAssessorId) updated.fiveSAssessorId = seedAccount.fiveSAssessorId;
-        if (seedAccount.safetyAssessorId) updated.safetyAssessorId = seedAccount.safetyAssessorId;
-        if (seedAccount.scorerId) updated.scorerId = seedAccount.scorerId;
-        if (seedAccount.fiveSScorerId) updated.fiveSScorerId = seedAccount.fiveSScorerId;
-        if (seedAccount.safetyScorerId) updated.safetyScorerId = seedAccount.safetyScorerId;
-        root.accounts[existingId] = updated;
-        changed = true;
-      } else {
-        root.accounts[seedId] = { ...seedAccount, id: seedId };
-        changed = true;
-      }
+      root.accounts[seedId] = { ...seedAccount, id: seedId };
+      changed = true;
     }
 
     if (changed) {
-      console.log(`Đã đồng bộ ${seedEntries.length} tài khoản từ seed-accounts.json.`);
+      console.log(`Đã khởi tạo tài khoản từ seed-accounts.json cho dữ liệu mới.`);
     }
     return root;
   });
@@ -143,4 +115,8 @@ async function listen(port) {
   });
 }
 
-listen(START_PORT);
+if (require.main === module) {
+  listen(START_PORT).catch((error) => { console.error(error); process.exitCode = 1; });
+}
+
+module.exports = { createServer, seedAccounts };

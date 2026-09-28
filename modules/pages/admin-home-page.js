@@ -292,6 +292,7 @@
       [
         ...(canScoreFiveS ? [navButton({ icon: "📝", label: "Phiếu chấm", title: "Phiếu chấm điểm 5S", tab: "assessor" })] : []),
         ...(hasFiveSAccess ? [navButton({ icon: "📊", label: "Bảng Điểm 5S", title: "Tổng hợp điểm 5S", tab: "summary" })] : []),
+        navButton({ icon: "📝", label: "Vấn đề 5S", title: "Vấn đề 5S", tab: "five-s-findings" }),
       ],
       [
         ...(hasSafetyAccess ? [

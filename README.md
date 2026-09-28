@@ -19,7 +19,7 @@ Chay server noi bo:
 npm start
 ```
 
-Sau do mo dia chi localhost duoc in ra trong terminal, mac dinh la `http://127.0.0.1:5175`.
+Sau do mo dia chi localhost duoc in ra trong terminal, mac dinh la `http://127.0.0.1:5500`.
 Cac duong dan truc tiep gom `/login`, `/home`, `/assessor`, `/summary`, `/safety`, `/issue-stats`, `/catalog` va `/accounts`.
 Sau khi dang nhap, reload trinh duyet se giu phien noi bo va mo lai dung trang hien tai.
 Du lieu cham diem se nam tai `data/runtime/main-data.json`; anh moi se nam trong `data/photos/MM-YYYY` va file JSON chi giu duong dan anh.
@@ -55,6 +55,9 @@ Mac dinh port `587` dung STARTTLS. Neu dung SMTP SSL port `465`, dat them `$env:
 10. Admin xem `Thong ke AT` de dem so van de dang gap phai trong thang theo zone va STOP 6.
 
 ## Ghi chu
+
+- Thong ke AT: so nhan dien theo thang phat hien; doi sach theo `countermeasureDate` (ngay thuc te trien khai); hoan thanh theo `completedDate` va trang thai da dong. Hai ngay thuc te khong tu dien hom nay. `completionDate` cu duoc giu de tham chieu/du kien, khong duoc dung thay ngay thuc te.
+- Ban ghi cu thieu ngay van duoc giu, hien canh bao can bo sung ngay trong bao cao. Hoat dong xu ly sang nam sau duoc tinh vao nam thuc te; ti le luy ke co tinh so van de chuyen tu nam truoc vao mau so.
 
 - Hang muc 5S co dinh theo cau hinh he thong, khong cho sua trong app.
 - Moi ky danh gia co `settingsSnapshot` rieng cho danh muc nguoi, zone va thiet lap AT. Khi sua truong phong, nguoi phu trach zone hoac assessor thi chi snapshot cua ky dang mo thay doi; cac ky khac khong bi doi theo.
@@ -101,9 +104,16 @@ Cau hinh Docker dung image Debian-based, khong dung Alpine:
 Chay production stack:
 
 ```bash
+cp .env.example .env
+node -e "console.log(require('node:crypto').randomBytes(32).toString('hex'))"
+# Dien ket qua vao JWT_SECRET trong .env, sau do:
 docker compose up -d --build
 ```
 
-Mac dinh frontend mo o `http://localhost:8080`, backend API truc tiep o `http://localhost:5175/api/health`. Co the copy `.env.example` thanh `.env` de doi port, CORS, SMTP hoac cac bien san sang cho database/JWT neu sau nay backend duoc nang cap.
+Mac dinh frontend mo o `http://localhost:5500`, backend API truc tiep o `http://localhost:5175/api/health`. Co the copy `.env.example` thanh `.env` de doi port, CORS, SMTP hoac cac bien san sang cho database/JWT neu sau nay backend duoc nang cap.
+
+Neu da co `.env` cu, can doi `FRONTEND_PORT=5500`, `APP_URL=http://localhost:5500` va `CORS_ORIGIN=http://localhost:5500,http://127.0.0.1:5500`. Khi truy cap bang ten mien/IP LAN, dung URL thuc te. Compose yeu cau JWT_SECRET rieng, khong con dung khoa mac dinh cong khai. Khong chay dong thoi `npm start` va frontend Docker tren cung cong 5500.
+
+Truoc khi trien khai: chay `npm test`, `npm run check`, `docker compose config --quiet`; sao luu thu muc `data`. Tai khoan seed chi khoi tao khi chua co tai khoan, khong ghi de mat khau/quyen runtime khi khoi dong lai.
 
 Du an hien tai khong dung Prisma va khong co `schema.prisma`, nen khong can `binaryTargets`, migrate, db push hay seed. Du an cung khong dung PostgreSQL trong source hien tai, vi vay compose khong tao database service thua.

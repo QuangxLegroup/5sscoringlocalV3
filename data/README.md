@@ -8,6 +8,7 @@ Neu may dang co file cu `legroup-5s.json`, app se tu doc va tao lai file moi tro
 Thu muc `organized/` duoc tao lai tu dong moi lan co thay doi du lieu, dung de xem nhanh theo tung chu de:
 
 - `organized/cham-5s/<nam>/<thang>.json`: diem cham 5S theo ky.
+- `organized/cham-5s/phat-hien.json`: cac phieu "Cac van de ve 5S phat hien", dung chung cho may tinh va mobile (collection `fiveSFindings`).
 - `organized/danh-gia-an-toan/<nam>/<thang>.json`: ban ghi danh gia an toan theo ky.
 - `organized/danh-muc/`: ky danh gia, zone, nhom AT, assessor/manager va target.
 - `organized/tai-khoan/`: tai khoan va lich su phien.

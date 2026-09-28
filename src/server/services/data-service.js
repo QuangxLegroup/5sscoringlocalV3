@@ -2,6 +2,7 @@
 
 const fs = require("node:fs/promises");
 const path = require("node:path");
+const SafetyTimeline = require("../../../modules/core/safety-timeline");
 
 const SEED_ACCOUNTS_FILE = path.resolve(__dirname, "..", "..", "..", "data", "seed-accounts.json");
 
@@ -125,6 +126,27 @@ function createHttpError(message, statusCode) {
   const error = new Error(message);
   error.statusCode = statusCode;
   return error;
+}
+
+function assertZoneManagersNotReplaced(previousRoot, nextRoot) {
+  const values = (collection) => Object.values(collection || {}).filter(Boolean);
+  const check = (before, after) => {
+    const previous = new Map(values(before).map((area) => [area.id, area]));
+    for (const area of values(after)) {
+      const old = previous.get(area.id);
+      if (old?.scorerId && area.scorerId && old.scorerId !== area.scorerId) {
+        throw createHttpError(`Zone ${area.code || old.code || area.id} đã có người quản lý. Không thể thêm hoặc thay thế người quản lý của Zone này.`, 409);
+      }
+    }
+  };
+  check(previousRoot?.areas, nextRoot?.areas);
+  check(previousRoot?.safetyAreas, nextRoot?.safetyAreas);
+  const previousPeriods = new Map(values(previousRoot?.periods).map((period) => [period.id, period]));
+  for (const period of values(nextRoot?.periods)) {
+    const previous = previousPeriods.get(period.id)?.settingsSnapshot;
+    check(previous?.areas, period.settingsSnapshot?.areas);
+    check(previous?.safetyAreas, period.settingsSnapshot?.safetyAreas);
+  }
 }
 
 function isInsideRoot(rootDir, filePath) {
@@ -296,6 +318,18 @@ class DataService {
         throw error;
       }
 
+      assertZoneManagersNotReplaced(currentRoot, nextRoot);
+      const previousRecords = new Map(Object.entries(currentRoot?.safetyRecords || {}).map(([key, record]) => [record?.id || key, record]));
+      // Full collection imports may contain historical records without actual dates.
+      // Keep them intact; reports explicitly flag missing dates instead of inferring them.
+      const legacyImport = targetPath === "safetyRecords" || (targetPath === "" && Object.prototype.hasOwnProperty.call(command.value || {}, "safetyRecords"));
+      for (const [key, record] of Object.entries(nextRoot?.safetyRecords || {})) {
+        const previous = previousRecords.get(record?.id || key);
+        if (!record || legacyImport || JSON.stringify(record) === JSON.stringify(previous)) continue;
+        const period = Object.values(nextRoot?.periods || {}).find((item) => item?.id === record.periodId);
+        const error = SafetyTimeline.validate(record, previous, period?.year);
+        if (error) throw createHttpError(error, 400);
+      }
       return this.authService ? this.authService.prepareRootForStorage(nextRoot, currentRoot) : nextRoot;
     }).then((root) => {
       if (targetPath.startsWith("accounts")) {

@@ -626,7 +626,7 @@ class AuthService {
       )
       .map((area) => area.id)
       .filter(Boolean);
-    return new Set([...explicitIds, ...byPerson]);
+    return new Set(role === ROLE_ZONE_OWNER && personId ? byPerson : [...explicitIds, ...byPerson]);
   }
 
   getAccountDisplayNameCandidates(root, account, periodId, type = FIVE_S_PERIOD_TYPE) {
@@ -680,6 +680,8 @@ class AuthService {
       "actionOwner",
       "actionPlan",
       "completionDate",
+      "countermeasureDate",
+      "completedDate",
       "updatedAt",
     ]);
     const keys = new Set([...Object.keys(existingRecord), ...Object.keys(nextRecord)]);
@@ -749,7 +751,29 @@ class AuthService {
     });
   }
 
+  assertSafetyPeriodWritable(root, record) {
+    const periods = collectionValues(root?.periods);
+    const period = periods.find((item) => item.id === record?.periodId);
+    const legacyActive = periods.find((item) => item.id === root?.activePeriodId);
+    const activeId = root?.activeSafetyPeriodId || (legacyActive && normalizePeriodType(legacyActive.type) !== FIVE_S_PERIOD_TYPE ? legacyActive.id : "");
+    if (!period || normalizePeriodType(period.type) === FIVE_S_PERIOD_TYPE || period.archived || (activeId && period.id !== activeId)) {
+      throw createHttpError("Kỳ đánh giá an toàn này đã khóa hoặc không còn mở.", 403);
+    }
+  }
+
+  assertDepartmentHeadSafetyScope(root, account, record) {
+    const period = collectionValues(root?.periods).find((item) => item.id === record?.periodId);
+    if (!isPlainObject(record) || !period || normalizePeriodType(period.type) !== SAFETY_PERIOD_TYPE
+      || !this.getAllowedAreaIds(root, account, period.id, SAFETY_PERIOD_TYPE).has(record.areaId)) {
+      throw createHttpError("Bạn chỉ được thêm, sửa, xóa đánh giá an toàn trong Zone mình quản lý.", 403);
+    }
+  }
+
   assertSafetyRecordWriteAllowed(root, account, command) {
+    if (pathParts(command.path).length !== 2
+      || (command.operation === "update" && Object.keys(command.value || {}).some((key) => key.includes("/")))) {
+      throw createHttpError("Vui lòng cập nhật từng báo cáo an toàn đầy đủ.", 403);
+    }
     const existingRecord = valueAtPath(root, command.path);
     const operation = String(command.operation || "");
     const record = operation === "remove"
@@ -763,6 +787,14 @@ class AuthService {
     if (!isPlainObject(record)) {
       throw createHttpError("Dữ liệu đánh giá an toàn không hợp lệ.", 400);
     }
+    if (existingRecord) this.assertSafetyPeriodWritable(root, existingRecord);
+    this.assertSafetyPeriodWritable(root, record);
+
+    if (isDepartmentHeadAccount(account)) {
+      if (existingRecord) this.assertDepartmentHeadSafetyScope(root, account, existingRecord);
+      this.assertDepartmentHeadSafetyScope(root, account, record);
+      return;
+    }
 
     if (
       operation !== "remove" &&
@@ -770,10 +802,6 @@ class AuthService {
       this.isSafetyCountermeasureWriteAllowed(root, account, existingRecord, record)
     ) {
       return;
-    }
-
-    if (isDepartmentHeadAccount(account)) {
-      throw createHttpError("Tài khoản trưởng phòng chỉ được cập nhật phần cải tiến/xử lý.", 403);
     }
 
     if (isPlainObject(existingRecord) && !this.isRecordOwnedByAccount(root, existingRecord, account, SAFETY_PERIOD_TYPE)) {
@@ -828,11 +856,17 @@ class AuthService {
   assertDeletedSafetyRecordWriteAllowed(root, account, command) {
     const operation = String(command.operation || "");
     const [, recordIdFromPath] = pathParts(command.path);
+    if (isDepartmentHeadAccount(account) && (pathParts(command.path).length !== 2
+      || (operation === "update" && Object.keys(command.value || {}).some((key) => key.includes("/"))))) {
+      throw createHttpError("Vui lòng cập nhật từng đánh dấu xóa đầy đủ.", 403);
+    }
     if (operation === "remove") {
       const marker = valueAtPath(root, command.path);
       if (!isPlainObject(marker)) {
         return;
       }
+      this.assertSafetyPeriodWritable(root, marker);
+      if (isDepartmentHeadAccount(account)) this.assertDepartmentHeadSafetyScope(root, account, marker);
       if (marker.deletedBy && !sameNormalizedText(marker.deletedBy, account?.username)) {
         throw createHttpError("Bạn không có quyền khôi phục đánh dấu xóa này.", 403);
       }
@@ -858,6 +892,14 @@ class AuthService {
     const existingRecord = this.findCollectionRecordById(root?.safetyRecords, recordId);
     const legacyRecord = sourceScoreId ? this.findCollectionRecordById(root?.scores, sourceScoreId) : null;
     const record = existingRecord || legacyRecord || marker;
+    this.assertSafetyPeriodWritable(root, record);
+    if (isDepartmentHeadAccount(account)) {
+      const existingMarker = valueAtPath(root, command.path);
+      if (existingMarker) this.assertDepartmentHeadSafetyScope(root, account, existingMarker);
+      this.assertDepartmentHeadSafetyScope(root, account, record);
+      this.assertDepartmentHeadSafetyScope(root, account, marker);
+      return;
+    }
     if (!record?.periodId || !record?.areaId || !hasAccountAccessType(account, SAFETY_PERIOD_TYPE)) {
       throw createHttpError("Bạn không có quyền xóa đánh giá an toàn.", 403);
     }
@@ -870,6 +912,39 @@ class AuthService {
     if (!allowedAreaIds.has(record.areaId)) {
       throw createHttpError("Bạn không có quyền xóa đánh giá an toàn cho zone này.", 403);
     }
+  }
+
+  assertFiveSFindingWriteAllowed(root, account, command) {
+    if (!isDepartmentHeadAccount(account) && !(hasAccountAccessType(account, FIVE_S_PERIOD_TYPE) && getAccountRoleForType(account, FIVE_S_PERIOD_TYPE) === ROLE_ZONE_OWNER)) {
+      throw createHttpError("Chỉ quản lý Zone, Trưởng bộ phận và admin được thay đổi phiếu 5S.", 403);
+    }
+    const parts = pathParts(command.path);
+    // Scope checks require a complete record, never a collection or nested patch.
+    if (parts.length !== 2 || !["set", "update", "remove"].includes(command.operation)) {
+      throw createHttpError("Vui lòng cập nhật từng phiếu 5S.", 403);
+    }
+    const existing = valueAtPath(root, command.path);
+    const assertScope = (record) => {
+      const periods = collectionValues(root?.periods).filter((period) => normalizePeriodType(period.type) !== SAFETY_PERIOD_TYPE);
+      const date = /^(\d{4})-(\d{2})-\d{2}$/.exec(record?.inspectionDate || "");
+      const period = record?.periodId ? periods.find((item) => item.id === record.periodId) : date && periods.find((item) => Number(item.year) === Number(date[1]) && Number(item.month) === Number(date[2]));
+      const activeId = root?.activeFiveSPeriodId || periods.find((item) => item.id === root?.activePeriodId)?.id || "";
+      if (!period || period.archived || period.id !== activeId) {
+        throw createHttpError("Chỉ được thay đổi vấn đề 5S trong kỳ đánh giá admin đang mở.", 403);
+      }
+      const areas = period ? this.getAreasForPeriod(root, period.id, FIVE_S_PERIOD_TYPE) : [];
+      const code = String(record?.area || "").replace(/^zone\s*/i, "").split("·")[0].trim();
+      const area = record?.areaId ? areas.find((item) => item.id === record.areaId) : areas.find((item) => String(item.code).trim() === code);
+      if (!period || !area || !this.getAllowedAreaIds(root, account, period.id, FIVE_S_PERIOD_TYPE).has(area.id)) {
+        throw createHttpError("Bạn chỉ được đánh giá Zone được phân công trong kỳ này.", 403);
+      }
+    };
+    if (existing) assertScope(existing);
+    if (command.operation === "remove" || command.value === null) return;
+    if (!isPlainObject(command.value) || Object.keys(command.value).some((key) => key.includes("/") || ["__proto__", "constructor", "prototype"].includes(key))) {
+      throw createHttpError("Dữ liệu phiếu 5S không hợp lệ.", 403);
+    }
+    assertScope(command.operation === "update" ? { ...existing, ...command.value } : command.value);
   }
 
   assertDataWriteAllowed(command, authContext, root) {
@@ -900,6 +975,10 @@ class AuthService {
     }
 
     const [rootKey] = parts;
+    if (rootKey === "fiveSFindings") {
+      this.assertFiveSFindingWriteAllowed(root, account, command);
+      return;
+    }
     if (rootKey === "scores") {
       this.assertScoreWriteAllowed(root, account, command);
       return;

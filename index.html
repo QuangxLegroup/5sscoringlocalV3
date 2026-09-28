@@ -13,7 +13,7 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
-    <link rel="stylesheet" href="styles.css?v=2026091825">
+    <link rel="stylesheet" href="styles.css?v=2026092825">
   </head>
   <body>
     <section class="loading-screen" id="loading-screen">
@@ -96,6 +96,7 @@
           <div class="nav-group nav-group-safety">
             <div class="nav-group-title">An toàn lao động</div>
             <nav class="tabs" aria-label="Điều hướng An Toàn">
+              <button class="tab-button" type="button" data-tab="five-s-findings" title="Vấn đề 5S"><span class="tab-icon">📝</span><span>Vấn đề 5S</span></button>
               <button class="tab-button safety-access-only" type="button" data-tab="safety" data-safety-report="assessment">
                 <span class="tab-icon">🛡️</span>
                 <span>Đánh giá an toàn</span>
@@ -159,6 +160,7 @@
               <span class="tab-icon">📊</span>
               <span>Bảng Điểm 5S</span>
             </button>
+            <button class="tab-button" type="button" data-tab="five-s-findings" title="Vấn đề 5S"><span class="tab-icon">📝</span><span>Vấn đề 5S</span></button>
             <button class="tab-button safety-access-only" type="button" data-tab="safety" data-safety-report="assessment" title="Đánh giá an toàn">
               <span class="tab-icon">🛡️</span>
               <span>Đánh giá AT</span>
@@ -289,6 +291,7 @@
           </section>
 
           <!-- TAB SAFETY -->
+          <section class="tab-panel" id="tab-five-s-findings"></section>
           <section class="tab-panel safety-access-only" id="tab-safety">
             <div class="toolbar safety-toolbar">
               <label>
@@ -306,6 +309,10 @@
               <label>
                 <span>Zone</span>
                 <select id="safety-area-filter"></select>
+              </label>
+              <label>
+                <span>Trạng thái</span>
+                <select id="safety-status-filter"></select>
               </label>
               <label>
                 <span>Bộ phận năm</span>
@@ -416,6 +423,10 @@
                         <span>Tên người phụ trách zone / người được đánh giá</span>
                         <input id="scorer-name" type="text" autocomplete="off" required>
                       </label>
+                      <div class="form-field">
+                        <span>Zone quản lý và tự chấm điểm</span>
+                        <div class="zone-check-list" id="scorer-zone-list"></div>
+                      </div>
                       <button class="primary-button" type="submit">Thêm người</button>
                     </form>
                     <div class="compact-list" id="scorer-list"></div>
@@ -517,15 +528,6 @@
                     </form>
                   </section>
 
-                  <section class="panel catalog-items-panel">
-                    <div class="section-heading catalog-section-heading">
-                      <div>
-                        <span class="section-step">Chuẩn 5S</span>
-                        <h2>Hạng mục 5S cố định</h2>
-                      </div>
-                    </div>
-                    <div class="item-list" id="item-list"></div>
-                  </section>
                 </div>
               </section>
             </div>
@@ -557,10 +559,6 @@
                         <span>Người phụ trách zone</span>
                         <select id="account-manager"></select>
                       </label>
-                      <div class="form-field" id="account-zone-field">
-                        <span id="account-zone-label">Zone người được cấp tài khoản phụ trách</span>
-                        <div class="zone-check-list" id="account-zone-list"></div>
-                      </div>
                       <label>
                         <span>Tài khoản</span>
                         <input id="account-username" type="text" autocomplete="off" required>
@@ -687,17 +685,19 @@
     <div class="toast" id="toast" role="status" aria-live="polite"></div>
     <script src="modules/local-data-api.js"></script>
     <script src="modules/core/page-registry.js"></script>
+    <script src="modules/core/safety-timeline.js?v=2026092823"></script>
     <script src="modules/pages/admin-home-page.js"></script>
     <script src="modules/pages/assessor-page.js"></script>
     <script src="modules/pages/summary-page.js"></script>
-    <script src="modules/pages/safety-page.js?v=2026091822"></script>
+    <script src="modules/pages/safety-page.js?v=2026092824"></script>
     <script src="modules/pages/issue-stats-page.js"></script>
     <script src="modules/pages/catalog-page.js"></script>
     <script src="modules/pages/accounts-page.js"></script>
     <script src="modules/pages/data-page.js"></script>
-    <script src="modules/pages/mobile-prototype.js?v=2026091825"></script>
+    <script src="modules/pages/five-s-findings-page.js?v=2026092828"></script>
+    <script src="modules/pages/mobile-prototype.js?v=2026092828"></script>
     <script src="standards.js"></script>
-    <script src="app.js?v=2026091818"></script>
+    <script src="app.js?v=2026092832"></script>
   
     <script>
       (() => {

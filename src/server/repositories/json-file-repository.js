@@ -8,6 +8,7 @@ const LEGACY_DATA_FILE_NAME = "legroup-5s.json";
 const FIVE_S_PERIOD_TYPE = "5s";
 const SAFETY_PERIOD_TYPE = "safety";
 const COLLECTION_FILE_MAP = [
+  { file: "cham-5s/phat-hien.json", keys: ["fiveSFindings"] },
   { file: "danh-muc/ky-danh-gia.json", keys: ["periods", "activePeriodId", "activeFiveSPeriodId", "activeSafetyPeriodId"] },
   { file: "danh-muc/5s-zone.json", keys: ["areas", "managers", "assessors", "departmentHeadContacts", "fiveSChartTargets"] },
   { file: "danh-muc/at-zone.json", keys: ["safetyAreas", "safetyManagers", "safetyAssessors", "safetyDepartmentGroups", "safetyDepartmentHeadContacts", "safetyReport", "safetyIdentificationOverrides"] },
