@@ -14038,8 +14038,8 @@ input[type="date"]::-webkit-calendar-picker-indicator {
 .findings-toolbar { justify-content: space-between; margin-bottom: 12px; }
 .findings-toolbar > label { display: grid; gap: 6px; flex: 1; max-width: 620px; min-width: 180px; color: inherit; }
 .findings-page button { min-height: 40px; padding: 8px 14px; border: 1px solid #93b4ca; border-radius: 6px; background: #f1f7fb; color: #153c52; cursor: pointer; font-weight: 600; }
-.findings-page button[type="submit"], .findings-page [data-finding-action="new"] { background: #047857; color: white; border-color: #047857; }
-.findings-page [data-finding-export] { background: #087b42; color: #fff; border-color: #087b42; }
+.findings-page button[type="submit"], .findings-page [data-finding-action="new"] { background: #0284C7; color: white; border-color: #0284C7; }
+.findings-page [data-finding-export] { background: #0284C7; color: #fff; border-color: #0284C7; }
 .findings-page button:disabled { opacity: .6; cursor: wait; }
 .findings-page input, .findings-page select, .findings-page textarea { box-sizing: border-box; width: 100%; min-width: 0; border: 1px solid #a8b8c4; border-radius: 3px; background: white; color: #182c3b; font: inherit; padding: 8px; }
 .findings-page input:disabled { opacity: 1; color: #182c3b; background: transparent; border-color: transparent; }

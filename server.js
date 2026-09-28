@@ -14,7 +14,7 @@ const { SmtpMailService } = require("./src/server/services/smtp-mail-service");
 const { StaticFileService } = require("./src/server/services/static-file-service");
 
 const HOST = process.env.HOST || "127.0.0.1";
-const START_PORT = Number(process.env.PORT) || 5500;
+const START_PORT = Number(process.env.PORT) || 5555;
 const DATA_DIR = process.env.DATA_DIR ? path.resolve(process.env.DATA_DIR) : path.join(__dirname, "data");
 const DATA_FILE = process.env.DATA_FILE || "runtime/main-data.json";
 const PHOTO_DIR = process.env.PHOTO_DIR ? path.resolve(process.env.PHOTO_DIR) : path.join(DATA_DIR, "photos");
