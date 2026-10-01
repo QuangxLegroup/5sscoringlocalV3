@@ -25,14 +25,21 @@ function sendSession(response, payload, request) {
 }
 
 class AuthController {
-  constructor({ authService }) {
+  constructor({ authService, onSessionReplaced = null }) {
     this.authService = authService;
+    this.onSessionReplaced = onSessionReplaced;
   }
 
   async handleLogin(request, response) {
     const credentials = await readJsonBody(request);
     const payload = await this.authService.login(credentials.username, credentials.password);
-    sendSession(response, payload, request);
+    const { replacedSessionId, ...sessionPayload } = payload;
+    if (replacedSessionId) {
+      try {
+        this.onSessionReplaced?.(replacedSessionId);
+      } catch (_) {}
+    }
+    sendSession(response, sessionPayload, request);
   }
 
   async handleSession(request, response) {

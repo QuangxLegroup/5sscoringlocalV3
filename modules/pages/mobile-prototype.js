@@ -98,10 +98,6 @@
     const canEditCountermeasure = canManageSafetyCountermeasure(context, item);
     const countermeasureOnly = canEditCountermeasure && !canEditFull;
     const lockedAttr = !canEditFull ? "disabled" : "";
-    const defaultActionOwner = context?.getAccountDisplayName?.(context.currentUser, context.SAFETY_PERIOD_TYPE, item.periodId || fiveSPeriodId)
-      || context?.currentUser?.name
-      || context?.currentUser?.username
-      || "";
     const todayValue = typeof context?.todayIsoDate === "function" ? context.todayIsoDate() : new Date().toISOString().slice(0, 10);
 
     const rawLevel = String(item.issueLevel || item.level || item.riskLevel || "").trim().toUpperCase();
@@ -280,7 +276,7 @@
           <div class="modal-form-grid-2">
             <div class="modal-form-group">
               <label class="modal-form-label">Đảm nhiệm (PIC)</label>
-              <input type="text" id="modalDetailActionOwner" class="modal-form-input" value="${escapeHtml(item.actionOwner || defaultActionOwner)}" placeholder="Người đảm nhiệm...">
+              <input type="text" id="modalDetailActionOwner" class="modal-form-input" value="${escapeHtml(item.actionOwner || "")}" placeholder="Người đảm nhiệm...">
             </div>
             <div class="modal-form-group">
               <label class="modal-form-label">Kế hoạch</label>
@@ -480,7 +476,7 @@
         ? {
             ...item,
             improvementContent,
-            actionOwner: actionOwner || defaultActionOwner,
+            actionOwner,
             actionPlan,
             completionDate, countermeasureDate, completedDate,
             afterPhotoDataUrl: finalAfterPhotoDataUrl,
@@ -497,7 +493,7 @@
             issueFoundBy,
             employeeCode,
             improvementContent,
-            actionOwner: actionOwner || defaultActionOwner,
+            actionOwner,
             actionPlan,
             completionDate, countermeasureDate, completedDate,
             photoDataUrl: finalPhotoDataUrl,
@@ -896,7 +892,6 @@
       .slice(0, 20);
 
     const defaultFinder = editingRecord ? (editingRecord.issueFoundBy || "") : (context?.getAccountDisplayName?.(user, context.SAFETY_PERIOD_TYPE, safetyPeriodId) || user?.name || "");
-    const defaultActionOwner = context?.getAccountDisplayName?.(user, context.SAFETY_PERIOD_TYPE, safetyPeriodId) || user?.name || user?.username || "";
     const todayValue = typeof context?.todayIsoDate === "function" ? context.todayIsoDate() : new Date().toISOString().slice(0, 10);
 
     screen.innerHTML = `
@@ -1123,7 +1118,7 @@
           <div class="form-grid-2">
             <div class="form-group">
               <label class="form-label">Đảm nhiệm (PIC)</label>
-              <input type="text" id="mobileSafetyActionOwner" class="form-control" placeholder="Người chịu trách nhiệm..." value="${escapeHtml(editingRecord?.actionOwner || defaultActionOwner)}">
+              <input type="text" id="mobileSafetyActionOwner" class="form-control" placeholder="Người chịu trách nhiệm..." value="${escapeHtml(editingRecord?.actionOwner || "")}">
             </div>
             <div class="form-group">
               <label class="form-label">Kế hoạch</label>
@@ -1224,12 +1219,11 @@
     `;
 
     // Wire up events inside Safety form
-    wireSafetyEvents(screen, context, safetyPeriodId, overlay);
+    wireSafetyEvents(screen, context, safetyPeriodId, overlay, allowedAreaIds);
   }
 
-  function wireSafetyEvents(screen, context, safetyPeriodId, overlay) {
+  function wireSafetyEvents(screen, context, safetyPeriodId, overlay, allowedAreaIds) {
     const user = context?.currentUser;
-    const defaultActionOwner = context?.getAccountDisplayName?.(user, context.SAFETY_PERIOD_TYPE, safetyPeriodId) || user?.name || user?.username || "";
     const todayValue = typeof context?.todayIsoDate === "function" ? context.todayIsoDate() : new Date().toISOString().slice(0, 10);
 
     // Cancel Edit button
@@ -1410,6 +1404,8 @@
           showMobileToast("Kỳ đánh giá an toàn này đã khóa hoặc không còn mở.", true);
           return;
         }
+        const isEditing = Boolean(editingSafetyRecordId);
+        const existingRecord = isEditing ? (context?.state?.safetyRecords || []).find((r) => r.id === editingSafetyRecordId) : null;
         const areaId = screen.querySelector("#mobileSafetyZoneSelect")?.value;
         if (areaId && allowedAreaIds && !allowedAreaIds.has(areaId)) {
           showMobileToast("Bạn không có quyền thêm, sửa đánh giá an toàn trong Zone này.", true);
@@ -1425,7 +1421,7 @@
         const employeeCode = screen.querySelector("#mobileSafetyEmployeeCode")?.value?.trim() || "";
         const issueItemLabel = screen.querySelector("#mobileSafetyIssueItemLabel")?.value?.trim() || "Nhận diện nguy cơ mất an toàn";
         const improvementContent = screen.querySelector("#mobileSafetyImprovementContent")?.value?.trim() || "";
-        const actionOwner = screen.querySelector("#mobileSafetyActionOwner")?.value?.trim() || defaultActionOwner;
+        const actionOwner = screen.querySelector("#mobileSafetyActionOwner")?.value?.trim() || "";
         const actionPlan = screen.querySelector("#mobileSafetyActionPlan")?.value?.trim() || "";
         const completionDate = screen.querySelector("#mobileSafetyCompletionDate")?.value || "";
         const countermeasureDate = screen.querySelector("#mobileSafetyCountermeasureDate")?.value || existingRecord?.countermeasureDate || "";
@@ -1471,8 +1467,6 @@
         const issueMonth = String(Number(dateParts[1]) || now.getMonth() + 1);
         const issueDay = String(Number(dateParts[2]) || now.getDate());
 
-        const isEditing = Boolean(editingSafetyRecordId);
-        const existingRecord = isEditing ? (context?.state?.safetyRecords || []).find((r) => r.id === editingSafetyRecordId) : null;
         const targetId = isEditing ? editingSafetyRecordId : (context?.makeId ? context.makeId("safety") : `safety-${Date.now()}`);
         const ownerUsername = user?.username || "assessor";
         const ownerName = issueFoundBy || context?.getAccountDisplayName?.(user, context.SAFETY_PERIOD_TYPE, safetyPeriodId) || user?.name || ownerUsername;

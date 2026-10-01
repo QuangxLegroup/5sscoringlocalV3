@@ -70,9 +70,12 @@ async function seedAccounts(repository, seedMap = loadSeedAccounts()) {
 function createServer() {
   const dataRepository = new JsonFileRepository({ dataDir: DATA_DIR, fileName: DATA_FILE });
   const authService = new AuthService({ repository: dataRepository, secret: process.env.JWT_SECRET || "" });
-  const authController = new AuthController({ authService });
   const dataService = new DataService({ repository: dataRepository, photoDir: PHOTO_DIR, authService });
   const dataController = new DataController({ dataService, authService });
+  const authController = new AuthController({
+    authService,
+    onSessionReplaced: (sessionId) => dataController.revokeSession(sessionId),
+  });
 
   const staticFileService = new StaticFileService({ rootDir: __dirname });
   const staticFileController = new StaticFileController({ staticFileService });

@@ -4,8 +4,10 @@ const { test } = require("node:test");
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
+const { EventEmitter } = require("node:events");
 const { Readable } = require("node:stream");
 const { AuthController } = require("../src/server/controllers/auth-controller");
+const { DataController } = require("../src/server/controllers/data-controller");
 const { sendError } = require("../src/server/http/response");
 const { StaticFileService } = require("../src/server/services/static-file-service");
 const { AuthService, TOKEN_COOKIE_NAME } = require("../src/server/services/auth-service");
@@ -23,15 +25,16 @@ function makeResponse() {
 
 test("auth responses keep the session token only in the HttpOnly cookie", async () => {
   const token = "test-session-secret-token";
+  let replacedSessionId = "";
   const authService = {
     async login() {
-      return { token, sessionId: "session-id", account: { id: "account-id", username: "tester" } };
+      return { token, sessionId: "session-id", replacedSessionId: "old-session", account: { id: "account-id", username: "tester" } };
     },
     async touchSession() {
       return { token, sessionId: "session-id", account: { id: "account-id", username: "tester" } };
     },
   };
-  const controller = new AuthController({ authService });
+  const controller = new AuthController({ authService, onSessionReplaced: (sessionId) => { replacedSessionId = sessionId; } });
   const request = Readable.from([Buffer.from(JSON.stringify({ username: "tester", password: "private" }))]);
   request.headers = {};
   request.socket = {};
@@ -47,7 +50,55 @@ test("auth responses keep the session token only in the HttpOnly cookie", async 
     assert.match(response.headers["Set-Cookie"], new RegExp(encodeURIComponent(token)));
     assert.doesNotMatch(response.body, new RegExp(token));
     assert.doesNotMatch(response.body, /"token"\s*:/);
+    assert.doesNotMatch(response.body, /replacedSessionId/);
   }
+  assert.equal(replacedSessionId, "old-session");
+});
+
+test("logging in on a second device replaces the previous session and accepts the new one", async () => {
+  let root = { accounts: [{ id: "account-id", username: "tester", password: "password" }] };
+  const repository = {
+    async updateRoot(mutator) {
+      root = await mutator(root);
+      return root;
+    },
+    async readRoot() { return root; },
+  };
+  const service = new AuthService({ repository, secret: "test-only-secret" });
+  const first = await service.login("tester", "password");
+  const second = await service.login("tester", "password");
+  const requestFor = (token) => ({ headers: { cookie: `${TOKEN_COOKIE_NAME}=${encodeURIComponent(token)}` } });
+
+  assert.equal(second.replacedSessionId, first.sessionId);
+  await assert.rejects(service.authenticateRequest(requestFor(first.token)), (error) => error.statusCode === 401);
+  const activeSession = await service.authenticateRequest(requestFor(second.token));
+  assert.equal(activeSession.payload.sid, second.sessionId);
+});
+
+test("session replacement immediately closes only the previous device stream", () => {
+  const controller = new DataController({ dataService: {} });
+  const makeStream = (sessionId) => {
+    const request = new EventEmitter();
+    const response = {
+      chunks: [],
+      writableEnded: false,
+      writeHead() {},
+      write(chunk) { this.chunks.push(chunk); },
+      end() { this.writableEnded = true; },
+    };
+    controller.handleStream(request, response, { payload: { sid: sessionId } });
+    return { request, response };
+  };
+  const previous = makeStream("previous-session");
+  const active = makeStream("active-session");
+
+  controller.revokeSession("previous-session");
+
+  assert.equal(previous.response.writableEnded, true);
+  assert.match(previous.response.chunks.join(""), /event: session-revoked/);
+  assert.equal(active.response.writableEnded, false);
+  assert.equal(controller.streamClients.size, 1);
+  active.request.emit("close");
 });
 
 test("public API errors hide internal details and expose only a reference ID", () => {

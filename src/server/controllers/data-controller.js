@@ -25,7 +25,7 @@ class DataController {
     this.notifyDataChanged();
   }
 
-  handleStream(request, response) {
+  handleStream(request, response, authContext = null) {
     response.writeHead(200, {
       "Content-Type": "text/event-stream; charset=utf-8",
       "Cache-Control": "no-cache, no-transform",
@@ -34,7 +34,7 @@ class DataController {
     });
     response.write(`event: ready\ndata: ${Date.now()}\n\n`);
 
-    const client = { response };
+    const client = { response, sessionId: String(authContext?.payload?.sid || "") };
     this.streamClients.add(client);
     let authCheckBusy = false;
     let closed = false;
@@ -44,6 +44,18 @@ class DataController {
       clearInterval(keepAlive);
       clearInterval(authCheck);
       this.streamClients.delete(client);
+    };
+    client.revoke = () => {
+      if (closed) return;
+      try {
+        const message = "Phiên đăng nhập đã hết hạn hoặc bị thay đổi. Vui lòng đăng nhập lại.";
+        response.write(`event: session-revoked\ndata: ${JSON.stringify({ message })}\n\n`);
+        response.end();
+      } catch (_) {
+        // The client is already gone.
+      } finally {
+        closeClient();
+      }
     };
     const keepAlive = setInterval(() => {
       response.write(`event: ping\ndata: ${Date.now()}\n\n`);
@@ -77,6 +89,16 @@ class DataController {
     request.on("close", () => {
       closeClient();
     });
+  }
+
+  revokeSession(sessionId) {
+    const targetSessionId = String(sessionId || "");
+    if (!targetSessionId) return;
+    for (const client of this.streamClients) {
+      if (client.sessionId === targetSessionId) {
+        client.revoke?.();
+      }
+    }
   }
 
   notifyDataChanged() {

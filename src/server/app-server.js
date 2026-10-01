@@ -90,8 +90,8 @@ function createAppServer({ authController, authService, dataController, staticFi
       }
 
       if (requestUrl.pathname === "/api/data/stream" && request.method === "GET") {
-        await authService.authenticateRequest(request);
-        dataController.handleStream(request, response);
+        const authContext = await authService.authenticateRequest(request);
+        dataController.handleStream(request, response, authContext);
         return;
       }
 

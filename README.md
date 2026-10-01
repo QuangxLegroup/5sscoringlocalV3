@@ -110,9 +110,17 @@ node -e "console.log(require('node:crypto').randomBytes(32).toString('hex'))"
 docker compose up -d --build
 ```
 
-Mac dinh frontend mo o `http://localhost:5500`, backend API truc tiep o `http://localhost:5175/api/health`. Co the copy `.env.example` thanh `.env` de doi port, CORS, SMTP hoac cac bien san sang cho database/JWT neu sau nay backend duoc nang cap.
+Docker Compose mo frontend HTTP chi tren may chu tai `http://localhost:5500`; backend API chi bind loopback va duoc frontend proxy noi bo. Caddy phuc vu HTTPS tren cong 443 cho cac thiet bi trong LAN. IP LAN mac dinh trong `.env.example` la `192.168.2.61`; doi `APP_HOST` thanh IP LAN cua may chu neu khac va nen tao DHCP reservation tren router de IP khong thay doi. Tablet truy cap `https://<APP_HOST>`.
 
-Neu da co `.env` cu, can doi `FRONTEND_PORT=5500`, `APP_URL=http://localhost:5500` va `CORS_ORIGIN=http://localhost:5500,http://127.0.0.1:5500`. Khi truy cap bang ten mien/IP LAN, dung URL thuc te. Compose yeu cau JWT_SECRET rieng, khong con dung khoa mac dinh cong khai. Khong chay dong thoi `npm start` va frontend Docker tren cung cong 5500.
+CA noi bo cua Caddy khong duoc Android tin cay san. Sau lan khoi dong dau tien, xuat chi root certificate (khong xuat private key):
+
+```powershell
+docker compose cp caddy:/data/caddy/pki/authorities/local/root.crt .\data\caddy-root.crt
+```
+
+Chuyen `data/caddy-root.crt` sang tablet, sau do vao **Cai dat > Bao mat va quyen rieng tu > Cai dat bao mat khac > Cai tu bo nho thiet bi > Chung chi CA** (ten muc co the khac tuy phien ban Android) va cai chung chi. Mo `https://<APP_HOST>` trong Chrome; neu Chrome bao ket noi an toan, co the chon **Cai dat ung dung**. Neu doi `APP_HOST`, mo lai app theo IP moi; neu doi `HTTPS_PORT` khoi 443 thi them cong vao URL.
+
+Neu da co `.env` cu, them `APP_HOST=192.168.2.61` (hoac IP LAN thuc te) va `HTTPS_PORT=443`. Giu `JWT_SECRET` rieng; khong chia se volume `caddy_data` vi volume do chua private key CA. Khong chay dong thoi `npm start` va frontend Docker tren cung cong 5500.
 
 Truoc khi trien khai: chay `npm test`, `npm run check`, `docker compose config --quiet`; sao luu thu muc `data`. Tai khoan seed chi khoi tao khi chua co tai khoan, khong ghi de mat khau/quyen runtime khi khoi dong lai.
 

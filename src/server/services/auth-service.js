@@ -463,6 +463,8 @@ class AuthService {
         throw createHttpError("Sai tài khoản hoặc mật khẩu.", 401);
       }
 
+      const previousSessionId = String(account.activeSessionId || "");
+      const replacedSessionId = previousSessionId && this.isSessionFresh(account) ? previousSessionId : "";
       const sessionId = crypto.randomUUID();
       const now = new Date();
       const expiresAt = new Date(now.getTime() + SESSION_TTL_MS).toISOString();
@@ -474,6 +476,7 @@ class AuthService {
       result = {
         token,
         sessionId,
+        replacedSessionId,
         sessionStartedAt: account.activeSessionStartedAt,
         expiresAt,
         accountId: account.id || "",

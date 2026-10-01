@@ -11813,7 +11813,6 @@
     const afterPhotoPreview = record?.afterPhotoDataUrl
       ? "<div class=\"photo-preview\"><img src=\"" + record.afterPhotoDataUrl + "\" alt=\"Ảnh sau cải tiến hiện tại\"><label class=\"check-line\"><input name=\"removeAfterPhoto\" type=\"checkbox\"><span>Xóa ảnh sau cải tiến hiện tại</span></label></div>"
       : "";
-    const defaultActionOwner = getAccountDisplayName(currentUser, SAFETY_PERIOD_TYPE, periodId) || currentUser?.name || currentUser?.username || "";
     const defaultCompletionDate = toIsoDate(record?.completionDate) || "";
     const actualDateFields = "";
 
@@ -11829,7 +11828,7 @@
           "</div>" +
           "<label><span>Nội dung cải tiến, xử lý</span><textarea name=\"improvementContent\">" + escapeHtml(record?.improvementContent || "") + "</textarea></label>" +
           "<label><span>Ảnh sau cải tiến, xử lý</span><input name=\"afterPhoto\" type=\"file\" accept=\"image/*\">" + afterPhotoPreview + "</label>" +
-          "<label><span>Đảm nhiệm</span><input name=\"actionOwner\" type=\"text\" value=\"" + escapeHtml(record?.actionOwner || defaultActionOwner) + "\"></label>" +
+          "<label><span>Đảm nhiệm</span><input name=\"actionOwner\" type=\"text\" value=\"" + escapeHtml(record?.actionOwner || "") + "\"></label>" +
           "<label><span>Kế hoạch</span><input name=\"actionPlan\" type=\"text\" value=\"" + escapeHtml(record?.actionPlan || "") + "\"></label>" +
           "<label><span>Ngày dự kiến / ngày ghi nhận cũ</span><input name=\"completionDate\" type=\"date\" value=\"" + escapeHtml(defaultCompletionDate) + "\"></label>" + actualDateFields,
         async onSubmit(formData, form) {
@@ -11852,7 +11851,7 @@
             improvementContent: String(formData.get("improvementContent") || "").trim(),
             afterPhotoDataUrl: nextAfterPhoto.photoDataUrl,
             afterPhotoName: nextAfterPhoto.photoName,
-            actionOwner: String(formData.get("actionOwner") || "").trim() || defaultActionOwner,
+            actionOwner: String(formData.get("actionOwner") || "").trim(),
             actionPlan: String(formData.get("actionPlan") || "").trim(),
             completionDate: String(formData.get("completionDate") || "").trim() || defaultCompletionDate,
             countermeasureDate: String(formData.get("countermeasureDate") || record?.countermeasureDate || ""),
@@ -11913,7 +11912,7 @@
             "<td><input name=\"issueItemLabel\" type=\"text\" value=\"" + escapeHtml(record ? getIssueItemLabel(row) : "Nhận diện nguy cơ mất an toàn") + "\"></td>" +
             "<td><textarea name=\"improvementContent\">" + escapeHtml(record?.improvementContent || "") + "</textarea></td>" +
             "<td><input name=\"afterPhoto\" type=\"file\" accept=\"image/*\">" + afterPhotoPreview + "</td>" +
-            "<td><input name=\"actionOwner\" type=\"text\" value=\"" + escapeHtml(record?.actionOwner || defaultActionOwner) + "\"></td>" +
+            "<td><input name=\"actionOwner\" type=\"text\" value=\"" + escapeHtml(record?.actionOwner || "") + "\"></td>" +
             "<td><input name=\"actionPlan\" type=\"text\" value=\"" + escapeHtml(record?.actionPlan || "") + "\"></td>" +
             "<td><input name=\"completionDate\" type=\"date\" value=\"" + escapeHtml(defaultCompletionDate) + "\"></td>" +
           "</tr></tbody>" +
@@ -11983,7 +11982,7 @@
           improvementContent: String(formData.get("improvementContent") || "").trim(),
           afterPhotoDataUrl: nextAfterPhoto.photoDataUrl,
           afterPhotoName: nextAfterPhoto.photoName,
-          actionOwner: String(formData.get("actionOwner") || "").trim() || defaultActionOwner,
+          actionOwner: String(formData.get("actionOwner") || "").trim(),
           actionPlan: String(formData.get("actionPlan") || "").trim(),
           completionDate: String(formData.get("completionDate") || "").trim() || defaultCompletionDate,
           countermeasureDate: String(formData.get("countermeasureDate") || record?.countermeasureDate || ""),

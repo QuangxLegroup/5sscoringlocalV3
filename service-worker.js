@@ -12,7 +12,9 @@ const STATIC_ASSETS = [
   "/styles.css",
   "/app.js",
   "/standards.js",
-  "/images/Logo.jpg"
+  "/images/Logo.jpg",
+  "/images/pwa-192.png",
+  "/images/pwa-512.png"
 ];
 
 // Cài đặt: cache các file tĩnh chính
