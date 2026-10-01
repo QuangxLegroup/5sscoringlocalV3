@@ -218,11 +218,7 @@ class DataService {
   }
 
   getHealth() {
-    return {
-      ok: true,
-      dataFile: this.repository.filePath,
-      photoDir: this.photoDir,
-    };
+    return { ok: true };
   }
 
   async readData(authContext = null) {

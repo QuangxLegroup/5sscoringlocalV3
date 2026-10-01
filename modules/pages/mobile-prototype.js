@@ -521,8 +521,7 @@
         showMobileToast("Đã lưu thay đổi báo cáo thành công!");
         renderSafetyScreen(overlay, context);
       } catch (err) {
-        console.error("Lỗi khi cập nhật báo cáo:", err);
-        showMobileToast("Lỗi khi lưu: " + (err.message || err), true);
+        showMobileToast("Không lưu được báo cáo. Vui lòng thử lại.", true);
       }
     });
 
@@ -556,8 +555,7 @@
         showMobileToast("Đã xóa báo cáo mối nguy thành công!");
         renderSafetyScreen(overlay, context);
       } catch (err) {
-        console.error("Lỗi khi xóa:", err);
-        showMobileToast("Lỗi khi xóa: " + (err.message || err), true);
+        showMobileToast("Không xóa được báo cáo. Vui lòng thử lại.", true);
       }
     });
   }
@@ -1536,8 +1534,7 @@
           showMobileToast(isEditing ? "Đã cập nhật báo cáo an toàn!" : "Đã lưu báo cáo an toàn thành công!");
           renderSafetyScreen(overlay, context);
         } catch (err) {
-          console.error("Lỗi khi lưu báo cáo an toàn:", err);
-          showMobileToast("Lỗi khi lưu: " + (err.message || err), true);
+          showMobileToast("Không lưu được báo cáo. Vui lòng thử lại.", true);
         }
       });
     }
@@ -2242,8 +2239,7 @@
           if (fillBarEl) fillBarEl.style.width = `${stat.pct}%`;
 
         } catch (err) {
-          console.error("Lỗi khi lưu điểm:", err);
-          showMobileToast("Lỗi khi lưu điểm: " + (err.message || err), true);
+          showMobileToast("Không lưu được điểm. Vui lòng thử lại.", true);
         }
       });
     });

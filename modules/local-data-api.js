@@ -31,7 +31,7 @@
   let lastOfflineStatus = null;
   let offlineDbPromise = null;
   let demoMode = window.location.protocol === "file:";
-  let authToken = "";
+  let authSession = null;
   const listeners = new Set();
 
   function clone(value) {
@@ -74,7 +74,6 @@
       const parsed = JSON.parse(raw);
       return isPlainObject(parsed) ? parsed : null;
     } catch (error) {
-      console.warn("Không đọc được dữ liệu demo trong trình duyệt:", error);
       return null;
     }
   }
@@ -86,9 +85,7 @@
       } else {
         window.localStorage.setItem(DEMO_STORAGE_KEY, JSON.stringify(root));
       }
-    } catch (error) {
-      console.warn("Không lưu được dữ liệu demo trong trình duyệt:", error);
-    }
+    } catch (error) {}
   }
 
   function loadDemoRoot() {
@@ -98,15 +95,12 @@
 
   function enterDemoMode(error) {
     if (window.location.protocol !== "file:") {
-      console.warn("Không kết nối được API nội bộ; không chuyển sang demo để tránh tách dữ liệu:", error);
       const apiError = new Error("Không kết nối được dữ liệu nội bộ. Vui lòng kiểm tra server/Docker đang chạy và mở đúng địa chỉ web.");
-      apiError.cause = error;
       apiError.status = error?.status;
       throw apiError;
     }
 
     if (!demoMode) {
-      console.warn("Không có API nội bộ, chuyển sang chế độ demo trong trình duyệt:", error);
       if (!readDemoRoot() && rootCache) {
         writeDemoRoot(rootCache);
       }
@@ -308,7 +302,6 @@
         request.onblocked = () => reject(new Error("Bộ nhớ offline đang bị khóa bởi tab khác."));
       }).catch((error) => {
         offlineDbPromise = null;
-        console.warn("Không mở được IndexedDB để lưu offline:", error);
         return null;
       });
     }
@@ -451,9 +444,7 @@
     lastOfflineStatus = detail;
     try {
       window.dispatchEvent(new CustomEvent("local-data-sync-status", { detail }));
-    } catch (error) {
-      console.warn("Không phát được trạng thái đồng bộ offline:", error);
-    }
+    } catch (error) {}
     return detail;
   }
 
@@ -506,7 +497,25 @@
       return null;
     }
 
-    return JSON.parse(text);
+    try {
+      return JSON.parse(text);
+    } catch (_) {
+      const error = new Error("Không thể xử lý phản hồi dữ liệu. Vui lòng thử lại.");
+      error.status = 502;
+      throw error;
+    }
+  }
+
+  function publicApiErrorMessage(status) {
+    if (status === 400) return "Dữ liệu gửi lên không hợp lệ. Vui lòng kiểm tra lại.";
+    if (status === 401) return "Phiên đăng nhập không hợp lệ hoặc đã hết hạn. Vui lòng đăng nhập lại.";
+    if (status === 403) return "Bạn không có quyền thực hiện thao tác này.";
+    if (status === 404) return "Không tìm thấy nội dung yêu cầu.";
+    if (status === 405) return "Thao tác này không được hỗ trợ.";
+    if (status === 409) return "Dữ liệu đã thay đổi hoặc bị xung đột. Vui lòng tải lại rồi thử lại.";
+    if (status === 413) return "Dữ liệu gửi lên vượt quá giới hạn cho phép.";
+    if (status === 429) return "Có quá nhiều yêu cầu. Vui lòng thử lại sau.";
+    return "Hệ thống đang gặp sự cố. Vui lòng thử lại sau.";
   }
 
   async function request(path, options = {}) {
@@ -519,16 +528,20 @@
       credentials: options.credentials || "include",
       headers: {
         "Content-Type": "application/json",
-        ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}),
         ...(options.headers || {}),
       },
     });
 
     const payload = await readJsonResponse(response);
     if (!response.ok) {
-      const error = new Error(payload?.error || `Lỗi dữ liệu nội bộ (${response.status})`);
+      const error = new Error(publicApiErrorMessage(response.status));
       error.status = response.status;
-      error.payload = payload;
+      error.referenceId = /^[a-zA-Z0-9-]{1,64}$/.test(String(payload?.referenceId || ""))
+        ? payload.referenceId
+        : "";
+      if (error.referenceId) {
+        error.message += ` Mã tham chiếu: ${error.referenceId}.`;
+      }
       throw error;
     }
 
@@ -539,38 +552,11 @@
     return error?.status === 401 || error?.status === 403;
   }
 
-  function readTokenPayload(token = authToken) {
-    const encodedPayload = String(token || "").split(".")[0] || "";
-    if (!encodedPayload) {
-      return {};
-    }
-
-    try {
-      const padded = encodedPayload.replace(/-/g, "+").replace(/_/g, "/").padEnd(Math.ceil(encodedPayload.length / 4) * 4, "=");
-      return JSON.parse(window.atob(padded));
-    } catch (error) {
-      console.warn("Không đọc được payload phiên đăng nhập offline:", error);
-      return {};
-    }
-  }
-
-  function buildOfflineAuthPayload(root) {
-    const payload = readTokenPayload();
-    return {
-      token: authToken,
-      root,
-      offline: true,
-      accountId: payload.sub || "",
-      username: payload.username || "",
-      sessionId: payload.sid || "",
-    };
-  }
-
   async function flushOfflineQueue() {
     await clearQueuedCommands();
     await dispatchOfflineStatus({ pending: 0, syncing: false, online: navigator.onLine, lastError: "" });
     return false;
-    if (demoMode || offlineSyncing || !authToken) {
+    if (demoMode || offlineSyncing || !authSession) {
       return false;
     }
 
@@ -631,72 +617,73 @@
           if (isAuthError(error)) {
             throw error;
           }
-          console.warn("Không tải lại được dữ liệu sau khi đồng bộ offline:", error);
         }
       }
 
       return true;
     } catch (error) {
       if (isAuthError(error)) {
-        clearAuthToken();
-        notifyAuthRevoked(error.message);
+        clearAuthSession();
+        notifyAuthRevoked();
       }
       await dispatchOfflineStatus({
         pending: await getOfflineQueueCount(),
         syncing: false,
         online: false,
-        lastError: error?.message || "Không đồng bộ được dữ liệu lưu tạm.",
+        lastError: "Không đồng bộ được dữ liệu lưu tạm. Vui lòng thử lại.",
       });
       return false;
     } finally {
       offlineSyncing = false;
       const pending = await getOfflineQueueCount();
       await dispatchOfflineStatus({ pending, syncing: false, online: navigator.onLine });
-      if (pending && authToken && !demoMode) {
+      if (pending && authSession && !demoMode) {
         scheduleOfflineSync(OFFLINE_SYNC_INTERVAL_MS);
       }
     }
   }
 
-  function setAuthToken(token = "") {
-    authToken = String(token || "");
+  function setAuthSession(payload = {}) {
+    const account = payload.account || {};
+    const accountId = payload.accountId || account.id || "";
+    const username = payload.username || account.username || "";
+    const sessionId = payload.sessionId || account.activeSessionId || "";
+    authSession = accountId || username || sessionId
+      ? { accountId, username, sessionId, sessionStartedAt: payload.sessionStartedAt || "" }
+      : null;
     scheduleOfflineSync(500);
   }
 
-  function clearAuthToken() {
-    authToken = "";
+  function clearAuthSession() {
+    authSession = null;
     stopDataStream();
   }
 
-  function notifyAuthRevoked(message = "") {
+  function notifyAuthRevoked() {
     try {
       window.dispatchEvent(new CustomEvent("local-data-auth-revoked", {
-        detail: { message: message || "Phiên đăng nhập đã bị thay thế." },
+        detail: { message: "Phiên đăng nhập đã hết hạn hoặc bị thay đổi. Vui lòng đăng nhập lại." },
       }));
-    } catch (error) {
-      console.warn("Không phát được sự kiện phiên đăng nhập bị thay thế:", error);
-    }
+    } catch (_) {}
   }
 
-  async function notifyConnectionLost(error = null) {
-    const hadAuth = Boolean(authToken);
-    clearAuthToken();
-    await clearQueuedCommands().catch((queueError) => {
-      console.warn("Không dọn được hàng chờ offline:", queueError);
-    });
+  async function notifyConnectionLost() {
+    const hadAuth = Boolean(authSession);
+    clearAuthSession();
+    await clearQueuedCommands().catch(() => {});
     await dispatchOfflineStatus({
       pending: 0,
       syncing: false,
       online: false,
-      lastError: error?.message || CONNECTION_LOST_MESSAGE,
+      lastError: CONNECTION_LOST_MESSAGE,
     });
     if (hadAuth) {
-      notifyAuthRevoked(CONNECTION_LOST_MESSAGE);
+      notifyAuthRevoked();
     }
   }
 
   function applyAuthPayload(payload) {
-    setAuthToken(payload?.token || authToken);
+    setAuthSession(payload);
     if (payload?.root) {
       rememberRoot(payload.root, lastResponseSignature);
       notifyAll();
@@ -730,7 +717,6 @@
         throw error;
       }
       const payload = {
-        token: "demo",
         sessionId: `demo-${Date.now()}`,
         sessionStartedAt: new Date().toISOString(),
         account,
@@ -753,12 +739,21 @@
     }
   }
 
-  async function restoreSession(token = "") {
-    setAuthToken(token);
+  async function restoreSession(sessionInfo = {}) {
+    setAuthSession(sessionInfo);
     if (demoMode) {
+      const root = loadDemoRoot();
+      const accounts = Array.isArray(root?.accounts) ? root.accounts : Object.values(root?.accounts || {});
+      const account = accounts.find((item) => item?.id === sessionInfo.accountId)
+        || accounts.find((item) => item?.username === sessionInfo.username)
+        || null;
       return {
-        token: authToken,
-        root: loadDemoRoot(),
+        account,
+        accountId: account?.id || sessionInfo.accountId || "",
+        username: account?.username || sessionInfo.username || "",
+        sessionId: sessionInfo.sessionId || "",
+        sessionStartedAt: sessionInfo.sessionStartedAt || "",
+        root,
       };
     }
 
@@ -768,16 +763,22 @@
       if (!isAuthError(error) && isNetworkLikeError(error)) {
         await notifyConnectionLost(error);
       }
-      clearAuthToken();
+      clearAuthSession();
       throw error;
     }
   }
 
   async function touchSession() {
     if (demoMode) {
+      const root = rootCache || loadDemoRoot();
+      const accounts = Array.isArray(root?.accounts) ? root.accounts : Object.values(root?.accounts || {});
+      const account = accounts.find((item) => item?.id === authSession?.accountId)
+        || accounts.find((item) => item?.username === authSession?.username)
+        || null;
       return {
-        token: authToken,
-        root: rootCache || loadDemoRoot(),
+        ...authSession,
+        account,
+        root,
       };
     }
 
@@ -797,16 +798,14 @@
         await request("/api/auth/logout", { method: "POST" });
       }
     } finally {
-      clearAuthToken();
+      clearAuthSession();
     }
   }
 
   function rememberRoot(root) {
     rootCache = root && typeof root === "object" ? root : null;
     rootSignature = signatureForRoot(rootCache);
-    persistOfflineRoot(rootCache).catch((error) => {
-      console.warn("Không lưu được cache offline:", error);
-    });
+    persistOfflineRoot(rootCache).catch(() => {});
   }
 
   async function loadRoot() {
@@ -858,12 +857,11 @@
       scheduleOfflineSync(500);
     } catch (error) {
       if (isAuthError(error)) {
-        clearAuthToken();
-        notifyAuthRevoked(error.message);
+        clearAuthSession();
+        notifyAuthRevoked();
       } else if (isNetworkLikeError(error)) {
         await notifyConnectionLost(error);
       }
-      console.warn("Không đồng bộ được dữ liệu nội bộ:", error);
     } finally {
       polling = false;
     }
@@ -887,7 +885,7 @@
   }
 
   function scheduleDataStreamReconnect() {
-    if (streamRetryTimer || demoMode || !listeners.size || !authToken || typeof EventSource === "undefined") {
+    if (streamRetryTimer || demoMode || !listeners.size || !authSession || typeof EventSource === "undefined") {
       return;
     }
 
@@ -898,7 +896,7 @@
   }
 
   function startDataStream() {
-    if (stream || demoMode || !listeners.size || !authToken || typeof EventSource === "undefined") {
+    if (stream || demoMode || !listeners.size || !authSession || typeof EventSource === "undefined") {
       return;
     }
 
@@ -907,24 +905,15 @@
       stream.addEventListener("data-changed", () => {
         pollRoot();
       });
-      stream.addEventListener("session-revoked", (event) => {
-        let message = "";
-        try {
-          message = JSON.parse(event.data || "{}")?.message || "";
-        } catch (error) {
-          message = String(event.data || "");
-        }
-        clearAuthToken();
-        notifyAuthRevoked(message);
+      stream.addEventListener("session-revoked", () => {
+        clearAuthSession();
+        notifyAuthRevoked();
       });
       stream.onerror = () => {
         stopDataStream();
-        notifyConnectionLost(new Error(CONNECTION_LOST_MESSAGE)).catch((error) => {
-          console.warn("Không đăng xuất được khi mất kết nối stream:", error);
-        });
+        notifyConnectionLost().catch(() => {});
       };
     } catch (error) {
-      console.warn("Không mở được kênh đồng bộ tức thời:", error);
       scheduleDataStreamReconnect();
     }
   }
@@ -1046,7 +1035,7 @@
         if (!rootSignature) {
           loadRoot()
             .then(() => notifyOne(listener))
-            .catch((error) => console.warn("Không đọc được dữ liệu nội bộ:", error));
+            .catch(() => {});
         }
 
         return () => {
@@ -1061,13 +1050,11 @@
 
   function startOfflineSyncWatch() {
     window.addEventListener("offline", () => {
-      notifyConnectionLost(new Error(CONNECTION_LOST_MESSAGE)).catch((error) => {
-        console.warn("Không đăng xuất được khi trình duyệt offline:", error);
-      });
+      notifyConnectionLost().catch(() => {});
     });
     clearQueuedCommands()
       .then(() => dispatchOfflineStatus({ pending: 0, syncing: false, online: navigator.onLine }))
-      .catch((error) => console.warn("Không dọn được hàng chờ offline:", error));
+      .catch(() => {});
   }
 
   startOfflineSyncWatch();
@@ -1079,8 +1066,8 @@
     logout,
     restoreSession,
     touchSession,
-    setAuthToken,
-    clearAuthToken,
+    setAuthSession,
+    clearAuthSession,
     savePhoto,
     deletePhoto,
     flushOfflineQueue,

@@ -435,12 +435,6 @@ class AuthService {
   }
 
   extractToken(request) {
-    const authorization = String(request.headers.authorization || "");
-    const bearerMatch = /^Bearer\s+(.+)$/i.exec(authorization);
-    if (bearerMatch) {
-      return bearerMatch[1].trim();
-    }
-
     const cookies = Object.fromEntries(
       String(request.headers.cookie || "")
         .split(";")

@@ -28,6 +28,7 @@ const APP_ROUTES = new Set([
   "/catalog",
   "/accounts",
   "/data",
+  "/score-sheets",
 ]);
 
 function normalizeRoutePath(requestPath) {
@@ -60,6 +61,14 @@ class StaticFileService {
   }
 
   async getFile(requestPath) {
+    const requestedPath = decodeURIComponent(String(requestPath || "/"));
+    const normalizedRequestPath = normalizeRoutePath(requestedPath);
+    const requestedSegments = normalizedRequestPath.split("/").filter(Boolean);
+    if (requestedSegments.some((segment) => segment.startsWith("."))
+      || (requestedSegments[0] === "data" && normalizedRequestPath !== "/data")) {
+      return { statusCode: 403 };
+    }
+
     const publicPath = toPublicPath(requestPath);
     const decodedPath = decodeURIComponent(publicPath);
     const filePath = path.resolve(this.rootDir, `.${decodedPath}`);

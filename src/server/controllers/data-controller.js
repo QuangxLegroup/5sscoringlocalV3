@@ -60,7 +60,7 @@ class DataController {
             return;
           }
           try {
-            const message = error?.message || "Phiên đăng nhập đã bị thay thế.";
+            const message = "Phiên đăng nhập đã hết hạn hoặc bị thay đổi. Vui lòng đăng nhập lại.";
             response.write(`event: session-revoked\ndata: ${JSON.stringify({ message })}\n\n`);
             response.end();
           } catch (writeError) {

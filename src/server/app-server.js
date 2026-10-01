@@ -1,6 +1,7 @@
 "use strict";
 
 const http = require("node:http");
+const { randomUUID } = require("node:crypto");
 const { URL } = require("node:url");
 const { sendError, sendJson } = require("./http/response");
 
@@ -33,7 +34,7 @@ function applyCorsHeaders(request, response, allowedOrigins) {
   response.setHeader("Access-Control-Allow-Origin", allowedOrigin);
   response.setHeader("Vary", "Origin");
   response.setHeader("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
-  response.setHeader("Access-Control-Allow-Headers", "Content-Type,Authorization");
+  response.setHeader("Access-Control-Allow-Headers", "Content-Type");
   if (allowedOrigin !== "*") {
     response.setHeader("Access-Control-Allow-Credentials", "true");
   }
@@ -132,10 +133,12 @@ function createAppServer({ authController, authService, dataController, staticFi
 
       await staticFileController.handle(request, response, requestUrl);
     } catch (error) {
-      if (!error.statusCode || error.statusCode >= 500) {
-        console.error(error);
+      const statusCode = Number.isInteger(error.statusCode) ? error.statusCode : 500;
+      const referenceId = statusCode >= 500 ? randomUUID() : "";
+      if (referenceId) {
+        console.error(`[request:${referenceId}] Request failed`, error);
       }
-      sendError(response, error);
+      sendError(response, error, referenceId);
     }
   });
 }

@@ -430,7 +430,6 @@
   let currentSessionId = "";
   let currentSessionStartedAt = "";
   let currentSessionHistoryId = "";
-  let currentAuthToken = "";
   const authenticatedPhotoUrlCache = new Map();
   const authenticatedPhotoUrlPromises = new Map();
   let dataUnsubscribe = null;
@@ -1323,16 +1322,10 @@
 
     if (raw) {
       const normalized = normalizeState(raw);
-      cleanupDeprecatedEmailStorage(raw, normalized).catch((error) => {
-        console.warn("Không dọn được dữ liệu email cũ:", error);
-      });
-      cleanupExpiredHistoryStorage(raw).catch((error) => {
-        console.warn("Không dọn được lịch sử cũ quá hạn:", error);
-      });
+      cleanupDeprecatedEmailStorage(raw, normalized).catch(() => {});
+      cleanupExpiredHistoryStorage(raw).catch(() => {});
       if (raw.version !== DATA_VERSION) {
-        dbRef().set(stateToStorage(normalized)).catch((error) => {
-          console.warn("Không nâng cấp được version dữ liệu:", error);
-        });
+        dbRef().set(stateToStorage(normalized)).catch(() => {});
       }
       return normalized;
     }
@@ -1357,9 +1350,7 @@
     });
     try {
       await dbRef().update(updates);
-    } catch (error) {
-      console.warn("Không dọn được log lịch sử cũ quá hạn 3 tháng:", error);
-    }
+    } catch (_) {}
   }
 
   async function cleanupDeprecatedEmailStorage(raw, normalized) {
@@ -1486,7 +1477,6 @@
       await markSafetyRecordDeleted(record);
       return true;
     } catch (error) {
-      console.warn("Không đánh dấu được báo cáo AT đã xóa:", error);
       return false;
     }
   }
@@ -1502,7 +1492,6 @@
     try {
       await unmarkSafetyRecordDeleted(recordId);
     } catch (error) {
-      console.warn("Không gỡ được đánh dấu xóa báo cáo AT:", error);
     }
   }
 
@@ -1510,7 +1499,6 @@
     try {
       await logAdminChange(change);
     } catch (error) {
-      console.warn("Không ghi được lịch sử thay đổi:", error);
     }
   }
 
@@ -1722,7 +1710,6 @@
 
     snapshotSeedPromise = Promise.all(missingPeriods.map((period) => savePeriodSnapshot(period)))
       .catch((error) => {
-        console.warn("Không tạo được snapshot cho toàn bộ kỳ:", error);
       })
       .finally(() => {
         snapshotSeedPromise = null;
@@ -4433,11 +4420,9 @@
         sessionId: currentSessionId,
         sessionStartedAt: currentSessionStartedAt,
         sessionHistoryId: currentSessionHistoryId,
-        authToken: currentAuthToken,
         savedAt: new Date().toISOString(),
       }));
     } catch (error) {
-      console.warn("Không lưu được phiên đăng nhập.", error);
     }
   }
 
@@ -4450,9 +4435,6 @@
       state = normalizeState(payload.root);
       invalidateScoreRecordIndex();
     }
-
-    currentAuthToken = payload.token || currentAuthToken || "";
-    dataStore?.setAuthToken?.(currentAuthToken);
 
     const accountId = payload.account?.id || payload.accountId || "";
     const username = payload.account?.username || payload.username || "";
@@ -4478,6 +4460,14 @@
     currentSessionHistoryId = options.keepHistory
       ? currentSessionHistoryId || payload.sessionHistoryId || makeId("history")
       : payload.sessionHistoryId || currentSessionHistoryId || makeId("history");
+    dataStore?.setAuthSession?.({
+      ...payload,
+      account,
+      accountId: account.id,
+      username: account.username,
+      sessionId: currentSessionId,
+      sessionStartedAt: currentSessionStartedAt,
+    });
     saveSession(currentUser);
     restorePersistedImportUndoAction();
     return currentUser;
@@ -4491,7 +4481,7 @@
   }
 
   async function touchAccountSession(account = currentUser) {
-    if (!account?.id || !currentSessionId || !currentAuthToken) {
+    if (!account?.id || !currentSessionId) {
       return;
     }
 
@@ -4499,11 +4489,11 @@
     applyAuthenticatedPayload(payload, { keepHistory: true });
   }
 
-  function handleSessionRevoked(message = "") {
-    if (!currentUser && !currentSessionId && !currentAuthToken) {
+  function handleSessionRevoked() {
+    if (!currentUser && !currentSessionId) {
       return;
     }
-    showToast(message || "Phiên đăng nhập đã được đăng nhập ở nơi khác. Vui lòng đăng nhập lại nếu cần.", true);
+    showToast("Phiên đăng nhập đã hết hạn hoặc bị thay đổi. Vui lòng đăng nhập lại.", true);
     clearSession();
     showLoginScreen();
   }
@@ -4512,16 +4502,15 @@
     stopSessionHeartbeat();
     sessionHeartbeatTimer = window.setInterval(() => {
       touchAccountSession().catch((error) => {
-        console.warn("Không cập nhật được phiên đăng nhập.", error);
         if (isAuthRequestError(error)) {
-          handleSessionRevoked(error.message);
+          handleSessionRevoked();
         }
       });
     }, SESSION_HEARTBEAT_MS);
   }
 
   async function releaseCurrentSession() {
-    if (!currentSessionId && !currentAuthToken) {
+    if (!currentSessionId) {
       stopSessionHeartbeat();
       return;
     }
@@ -4534,19 +4523,17 @@
     try {
       window.localStorage.removeItem(SESSION_STORAGE_KEY);
     } catch (error) {
-      console.warn("Không xóa được phiên đăng nhập.", error);
     }
     if (typeof window.closeMobilePrototype === "function") {
       window.closeMobilePrototype();
     }
     stopSessionHeartbeat();
     stopDataWatch();
-    dataStore?.clearAuthToken?.();
+    dataStore?.clearAuthSession?.();
     clearAuthenticatedPhotoUrlCache();
     currentSessionId = "";
     currentSessionStartedAt = "";
     currentSessionHistoryId = "";
-    currentAuthToken = "";
   }
 
   async function restoreSessionUser() {
@@ -4557,7 +4544,11 @@
       }
 
       const session = JSON.parse(rawSession);
-      if (!session.authToken) {
+      if (session.authToken) {
+        delete session.authToken;
+        window.localStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(session));
+      }
+      if (!session.accountId && !session.username) {
         clearSession();
         return false;
       }
@@ -4565,14 +4556,17 @@
       currentSessionId = session.sessionId || "";
       currentSessionStartedAt = session.sessionStartedAt || "";
       currentSessionHistoryId = session.sessionHistoryId || makeId("history");
-      currentAuthToken = session.authToken || "";
-      const payload = await dataStore.restoreSession(currentAuthToken);
+      const payload = await dataStore.restoreSession({
+        accountId: session.accountId || "",
+        username: session.username || "",
+        sessionId: currentSessionId,
+        sessionStartedAt: currentSessionStartedAt,
+      });
       applyAuthenticatedPayload(payload, { keepHistory: true });
       activeTab = getFallbackTab();
       startSessionHeartbeat();
       return true;
     } catch (error) {
-      console.warn("Không khôi phục được phiên đăng nhập.", error);
       clearSession();
       return false;
     }
@@ -6527,11 +6521,10 @@
       startDataWatch();
       renderAll({ replaceRoute: true });
     } catch (error) {
-      console.error(error);
       if (error?.status === 401) {
         showToast("Sai tài khoản hoặc mật khẩu.", true);
       } else {
-        showToast(error?.message || "Không đăng nhập được.", true);
+        showToast("Không đăng nhập được. Vui lòng thử lại.", true);
       }
       return;
     } finally {
@@ -6547,7 +6540,6 @@
     try {
       await releaseCurrentSession();
     } catch (error) {
-      console.warn("Không giải phóng được phiên đăng nhập.", error);
     }
     clearSession();
     undoStack.length = 0;
@@ -6772,8 +6764,7 @@
       scheduleAssessorScoreFocusRestore(focusContext);
       showToast("Đã lưu điểm.");
     } catch (error) {
-      console.error(error);
-      showToast(error?.message || "Lỗi khi lưu điểm.", true);
+      showToast("Không lưu được điểm. Vui lòng thử lại.", true);
       renderActiveTab();
     } finally {
       document.querySelectorAll(assessorScoreSelectSelector({
@@ -7069,8 +7060,7 @@
       }
       return true;
     } catch (error) {
-      console.error(error);
-      showToast(error?.message || "Lỗi khi lưu điểm.", true);
+      showToast("Không lưu được điểm. Vui lòng thử lại.", true);
       return false;
     } finally {
       delete input.dataset.saving;
@@ -7735,7 +7725,6 @@
     try {
       window.sessionStorage.setItem(IMPORT_UNDO_STORAGE_KEY, JSON.stringify(action));
     } catch (error) {
-      console.warn("Không lưu được mốc hoàn tác import:", error);
     }
   }
 
@@ -7743,7 +7732,6 @@
     try {
       window.sessionStorage.removeItem(IMPORT_UNDO_STORAGE_KEY);
     } catch (error) {
-      console.warn("Không xóa được mốc hoàn tác import:", error);
     }
   }
 
@@ -7761,7 +7749,6 @@
         updateUndoRedoButtons();
       }
     } catch (error) {
-      console.warn("Không khôi phục được mốc hoàn tác import:", error);
     }
   }
 
@@ -7863,7 +7850,6 @@
         renderAll();
       }
     } catch (error) {
-      console.error("Lỗi khi hoàn tác:", error);
       showToast("Lỗi khi hoàn tác.", true);
     } finally {
       isExecutingUndoRedo = false;
@@ -7981,7 +7967,6 @@
         renderAll();
       }
     } catch (error) {
-      console.error("Lỗi khi làm lại:", error);
       showToast("Lỗi khi làm lại.", true);
     } finally {
       isExecutingUndoRedo = false;
@@ -8021,8 +8006,7 @@
           closeModal();
         }
       } catch (error) {
-        console.error(error);
-        showToast(error?.message || "Lỗi khi lưu dữ liệu.", true);
+        showToast("Không lưu được dữ liệu. Vui lòng thử lại.", true);
       }
     });
 
@@ -8151,7 +8135,6 @@
     try {
       await dataStore.deletePhoto({ url });
     } catch (error) {
-      console.warn("Không xóa được file ảnh không còn sử dụng:", error);
     }
   }
 
@@ -8198,7 +8181,6 @@
 
     const promise = fetch(url, {
       credentials: "include",
-      headers: currentAuthToken ? { Authorization: `Bearer ${currentAuthToken}` } : {},
     })
       .then((response) => {
         if (!response.ok) {
@@ -8214,7 +8196,6 @@
       })
       .catch((error) => {
         authenticatedPhotoUrlPromises.delete(url);
-        console.warn("Không tải được ảnh minh họa:", error);
         return url;
       });
 
@@ -8367,7 +8348,7 @@
     try {
       await saveManagerWithAreas(newManager, getCheckedAreaIds(elements.scorerForm), catalogType, periodId);
     } catch (error) {
-      showToast(error.message || "Không lưu được người phụ trách zone.", true);
+      showToast("Không lưu được người phụ trách zone. Vui lòng thử lại.", true);
       return;
     }
     await Promise.all([
@@ -9135,7 +9116,7 @@
         try {
           await saveManagerWithAreas({ ...manager, name }, formData.getAll("areaIds"), catalogType, periodId, { periodOnly: true });
         } catch (error) {
-          showToast(error.message || "Không lưu được phân công Zone.", true);
+          showToast("Không lưu được phân công Zone. Vui lòng thử lại.", true);
           return false;
         }
         await Promise.all([
@@ -11236,7 +11217,6 @@
       showToast("Đã đổi kỳ đánh giá.");
       renderAll();
     } catch (error) {
-      console.error(error);
       showToast("Lỗi khi lưu kỳ đánh giá.", true);
     }
   }
@@ -11567,7 +11547,6 @@
           showToast("Đã xóa kỳ đánh giá.");
           renderAll();
         } catch (error) {
-          console.error(error);
           showToast("Lỗi khi xóa.", true);
         }
       },
@@ -12412,8 +12391,7 @@
       downloadFile(getPageJsonFilename(page, bundle), JSON.stringify(bundle, null, 2), "application/json;charset=utf-8");
       showToast("Đã export dữ liệu JSON.");
     } catch (error) {
-      console.error(error);
-      showToast(error.message || "Lỗi khi export dữ liệu JSON.", true);
+      showToast("Không export được dữ liệu. Vui lòng thử lại.", true);
     }
   }
 
@@ -12604,8 +12582,7 @@
       showToast(`Đã import ${importedRows} bản ghi JSON. Có thể bấm Hoàn tác nếu import nhầm.`);
       renderAll();
     } catch (error) {
-      console.error(error);
-      showToast(error.message || "Lỗi khi import dữ liệu JSON.", true);
+      showToast("Không import được dữ liệu. Vui lòng kiểm tra tệp và thử lại.", true);
     }
   }
 
@@ -12813,7 +12790,7 @@
       });
       result = await response.json().catch(() => ({}));
       if (!response.ok) {
-        throw new Error(result.error || "Không gửi được báo cáo.");
+        throw new Error("Không gửi được báo cáo. Vui lòng thử lại.");
       }
     }
 
@@ -13209,7 +13186,6 @@
     try {
       const response = await fetch(src, {
         credentials: "include",
-        headers: isInternalPhotoUrl(src) && currentAuthToken ? { Authorization: `Bearer ${currentAuthToken}` } : {},
       });
       if (!response.ok) {
         return null;
@@ -13219,7 +13195,6 @@
       const extension = String(name).split(".").pop()?.toLowerCase() || "jpg";
       return { name, bytes, rowNumber, columnNumber, toColumnNumber, toRowNumber, extension };
     } catch (error) {
-      console.warn("Không nhúng được ảnh vào Excel:", error);
       return null;
     }
   }
@@ -15366,7 +15341,6 @@
 
       showToast(successMessage);
     } catch (error) {
-      console.error(error);
       const recipientTextarea = document.getElementById("safety-recipient-emails");
       recipientTextarea?.focus();
       recipientTextarea?.select();
@@ -16027,7 +16001,6 @@
       try {
         return await renderChartTargetToPng(target);
       } catch (svgError) {
-        console.warn("Pure SVG canvas render failed, falling back to DOM wrapper:", svgError);
       }
     }
 
@@ -16109,7 +16082,6 @@
       try {
         blob = await renderReportTargetToPng(target);
       } catch (renderError) {
-        console.error("Lỗi render ảnh biểu đồ:", renderError);
         showToast("Không thể tạo ảnh biểu đồ để copy.", true);
         return;
       }
@@ -16121,7 +16093,6 @@
         await navigator.clipboard.write([new ClipboardItem({ "image/png": blob })]);
         showToast("Đã copy biểu đồ dưới dạng ảnh.");
       } catch (clipboardError) {
-        console.warn("Clipboard write failed, showing fallback modal:", clipboardError);
         showReportImageFallback(blob);
         showToast("Trình duyệt chặn copy ảnh trực tiếp, app đã mở ảnh để tải hoặc copy thủ công.");
       }
@@ -16149,7 +16120,6 @@
 
       showToast("Đã copy bảng.");
     } catch (error) {
-      console.error(error);
       if (fallbackSelectCopy(target)) {
         showToast("Đã copy bảng.");
       } else {
@@ -16245,8 +16215,7 @@
       "export-summary-period": () => confirmExportExcel(id),
       "export-safety-period": () => confirmExportSafetyExcel(id, { areaId: "" }),
       "send-safety-report-mail": () => sendSafetyReportMail(periodId || getActivePeriodId(SAFETY_PERIOD_TYPE), { areaId: sourceElement?.dataset.areaId || "" }).catch((error) => {
-        console.error(error);
-        showToast(error.message || "Lỗi khi gửi báo cáo.", true);
+        showToast("Không gửi được báo cáo. Vui lòng thử lại.", true);
       }),
       "copy-safety-report-summary": () => {
         const text = document.getElementById("safety-report-summary-text")?.value || "";
@@ -16283,7 +16252,6 @@
       "show-problem-zone-emails": () => showProblemZoneEmails(),
       "edit-five-s-chart-target": () => editFiveSChartTarget(id),
       "copy-report-target": () => copyReportTarget(sourceElement?.dataset.copyTarget || id).catch((error) => {
-        console.error(error);
         showToast("Lỗi khi copy bảng/biểu đồ.", true);
       }),
       "show-edit-history": () => openEditHistoryModal(),
@@ -16382,7 +16350,7 @@
     window.addEventListener("local-data-sync-status", handleLocalDataSyncStatus);
     dataStore?.getOfflineQueueCount?.()
       .then((pending) => handleLocalDataSyncStatus({ detail: { pending, syncing: false, online: navigator.onLine } }))
-      .catch((error) => console.warn("Không đọc được trạng thái dữ liệu offline:", error));
+      .catch(() => {});
     document.addEventListener("dblclick", (event) => {
       const image = event.target?.closest?.("img");
       if (!image || image.closest(".brand-line,.cyber-brand,.safety-logo-cell")) {
@@ -16782,7 +16750,6 @@
       const targetInput = event.target?.closest?.("[data-safety-target-input]");
       if (targetInput) {
         updateSafetyZoneTarget(targetInput.dataset.periodId || "", targetInput.dataset.areaId || "", targetInput.value).catch((error) => {
-          console.error(error);
           showToast("Lỗi khi cập nhật mục tiêu/tháng.", true);
           renderActiveTab();
         });
@@ -16794,7 +16761,6 @@
         const year = progressTargetInput.dataset.year || "";
         const month = progressTargetInput.dataset.month || "";
         updateSafetyMonthlyTarget(year, month, progressTargetInput.value).catch((error) => {
-          console.error(error);
           showToast("Lỗi khi cập nhật mục tiêu.", true);
           renderActiveTab();
         });
@@ -16876,7 +16842,6 @@
       }
       syncRouteFromLocation();
     } catch (error) {
-      console.error("Local data init error:", error);
       if (elements_loading) {
         elements_loading.querySelector("p").textContent =
           "Không kết nối được dữ liệu nội bộ. Hãy chạy npm start rồi mở địa chỉ localhost được hiển thị.";

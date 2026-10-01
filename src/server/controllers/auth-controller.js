@@ -18,6 +18,12 @@ function clearSessionCookie(request) {
   return `${TOKEN_COOKIE_NAME}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0${secure}`;
 }
 
+function sendSession(response, payload, request) {
+  const { token, ...publicPayload } = payload;
+  response.setHeader("Set-Cookie", sessionCookie(token, request));
+  sendJson(response, 200, publicPayload);
+}
+
 class AuthController {
   constructor({ authService }) {
     this.authService = authService;
@@ -26,20 +32,17 @@ class AuthController {
   async handleLogin(request, response) {
     const credentials = await readJsonBody(request);
     const payload = await this.authService.login(credentials.username, credentials.password);
-    response.setHeader("Set-Cookie", sessionCookie(payload.token, request));
-    sendJson(response, 200, payload);
+    sendSession(response, payload, request);
   }
 
   async handleSession(request, response) {
     const payload = await this.authService.touchSession(request, { includeRoot: true });
-    response.setHeader("Set-Cookie", sessionCookie(payload.token, request));
-    sendJson(response, 200, payload);
+    sendSession(response, payload, request);
   }
 
   async handleTouchSession(request, response) {
     const payload = await this.authService.touchSession(request, { includeRoot: false });
-    response.setHeader("Set-Cookie", sessionCookie(payload.token, request));
-    sendJson(response, 200, payload);
+    sendSession(response, payload, request);
   }
 
   async handleLogout(request, response) {

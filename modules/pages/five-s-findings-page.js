@@ -257,7 +257,7 @@
     }));
     host.querySelector("[data-finding-export]")?.addEventListener("click", () => {
       try { ctx.exportFiveSFindings(records.map((item) => item.id), view.periodId); }
-      catch (error) { message(host, error.message || "Không xuất được Excel.", true); }
+      catch (error) { message(host, "Không xuất được Excel. Vui lòng thử lại.", true); }
     });
     host.querySelectorAll("[data-open-finding]").forEach((button) => button.addEventListener("click", () => {
       view.selectedId = button.dataset.openFinding;
@@ -812,7 +812,7 @@
           message(host, editing ? "Đã cập nhật vấn đề 5S." : "Đã thêm vấn đề 5S.");
           return true;
         } catch (failure) {
-          error.textContent = failure.message || "Không lưu được vấn đề. Vui lòng thử lại.";
+          error.textContent = "Không lưu được vấn đề. Vui lòng thử lại.";
           return false;
         } finally {
           saving = false;
@@ -855,7 +855,7 @@
         render(host, view);
         message(host, "Đã xóa vấn đề 5S.");
       } catch (failure) {
-        error.textContent = failure.message || "Không xóa được vấn đề. Vui lòng thử lại.";
+        error.textContent = "Không xóa được vấn đề. Vui lòng thử lại.";
       } finally {
         saving = false;
         controls.forEach(([el, disabled]) => { el.disabled = disabled; });
@@ -1001,7 +1001,7 @@
     } catch (error) {
       view.busy = false;
       render(host, view);
-      message(host, error.message || "Không lưu được phiếu. Vui lòng thử lại.", true);
+      message(host, "Không lưu được phiếu. Vui lòng thử lại.", true);
     }
   }
 
