@@ -4946,7 +4946,7 @@
 
   function assertFiveSFindingAccess(sheet) {
     if (isAdminAccount(currentUser)) return;
-    if (!sheet || !(isDepartmentHeadAccount(currentUser) || (hasAccountAccessType(currentUser, FIVE_S_PERIOD_TYPE) && isZoneOwnerAccount(currentUser, FIVE_S_PERIOD_TYPE)))) {
+    if (!sheet || !(isDepartmentHeadAccount(currentUser) || isFiveSAssessor(currentUser) || (hasAccountAccessType(currentUser, FIVE_S_PERIOD_TYPE) && isZoneOwnerAccount(currentUser, FIVE_S_PERIOD_TYPE)))) {
       throw new Error("Bạn không có quyền thay đổi phiếu 5S.");
     }
     const periodId = window.FiveSFindingsPage.resolvePeriodId(sheet, getPeriodsByType(FIVE_S_PERIOD_TYPE));
@@ -6523,6 +6523,10 @@
     } catch (error) {
       if (error?.status === 401) {
         showToast("Sai tài khoản hoặc mật khẩu.", true);
+      } else if (!navigator.onLine || !error?.status) {
+        showToast("Không kết nối được máy chủ. Kiểm tra Wi-Fi và địa chỉ đang mở rồi thử lại.", true);
+      } else if (error.status >= 500) {
+        showToast("Máy chủ đang gặp sự cố. Vui lòng thử lại sau.", true);
       } else {
         showToast("Không đăng nhập được. Vui lòng thử lại.", true);
       }

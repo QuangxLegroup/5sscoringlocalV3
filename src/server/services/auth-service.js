@@ -912,8 +912,12 @@ class AuthService {
   }
 
   assertFiveSFindingWriteAllowed(root, account, command) {
-    if (!isDepartmentHeadAccount(account) && !(hasAccountAccessType(account, FIVE_S_PERIOD_TYPE) && getAccountRoleForType(account, FIVE_S_PERIOD_TYPE) === ROLE_ZONE_OWNER)) {
-      throw createHttpError("Chỉ quản lý Zone, Trưởng bộ phận và admin được thay đổi phiếu 5S.", 403);
+    const hasFiveSAssessorAccess = hasAccountAccessType(account, FIVE_S_PERIOD_TYPE)
+      && getAccountRoleForType(account, FIVE_S_PERIOD_TYPE) === ROLE_ASSESSOR_5S;
+    const hasZoneOwnerAccess = hasAccountAccessType(account, FIVE_S_PERIOD_TYPE)
+      && getAccountRoleForType(account, FIVE_S_PERIOD_TYPE) === ROLE_ZONE_OWNER;
+    if (!isDepartmentHeadAccount(account) && !hasZoneOwnerAccess && !hasFiveSAssessorAccess) {
+      throw createHttpError("Chỉ assessor 5S, quản lý Zone, Trưởng bộ phận và admin được thay đổi phiếu 5S.", 403);
     }
     const parts = pathParts(command.path);
     // Scope checks require a complete record, never a collection or nested patch.

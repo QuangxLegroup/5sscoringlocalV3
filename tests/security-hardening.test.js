@@ -73,6 +73,11 @@ test("logging in on a second device replaces the previous session and accepts th
   await assert.rejects(service.authenticateRequest(requestFor(first.token)), (error) => error.statusCode === 401);
   const activeSession = await service.authenticateRequest(requestFor(second.token));
   assert.equal(activeSession.payload.sid, second.sessionId);
+
+  await service.logout(requestFor(second.token));
+  const afterLogout = await service.login("tester", "password");
+  const loggedInAfterLogout = await service.authenticateRequest(requestFor(afterLogout.token));
+  assert.equal(loggedInAfterLogout.payload.sid, afterLogout.sessionId);
 });
 
 test("session replacement immediately closes only the previous device stream", () => {

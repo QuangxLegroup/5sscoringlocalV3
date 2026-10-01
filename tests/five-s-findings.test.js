@@ -61,7 +61,7 @@ for (const role of ["admin", "departmentHead", "deptHead", "zoneOwner", "manager
   });
 }
 
-for (const role of ["viewer", "assessor5s", "assessorSafety"]) {
+for (const role of ["viewer", "assessorSafety"]) {
   test(`${role} can read but cannot write through any data command shape`, async () => {
     const { service } = fixture();
     await service.writeData({ operation: "set", path: "fiveSFindings/sheet-1", value: sheet }, { account: { role: "admin" } });
@@ -77,6 +77,27 @@ for (const role of ["viewer", "assessor5s", "assessorSafety"]) {
     assert.deepEqual((await service.readData(auth)).fiveSFindings["sheet-1"], sheet);
   });
 }
+
+test("5S assessors can manage findings only in Zones assigned for 5S", async () => {
+  const { service } = fixture();
+  const auth = { account: { id: "assessor", role: "assessor5s", accessTypes: ["5s"], fiveSAreaIds: ["z26"] } };
+  const other = { ...sheet, id: "foreign", areaId: "other", area: "Zone 19" };
+
+  await service.writeData({ operation: "set", path: "fiveSFindings/sheet-1", value: sheet }, auth);
+  await service.writeData({ operation: "update", path: "fiveSFindings/sheet-1", value: { inspector: "Updated" } }, auth);
+  assert.equal((await service.readData()).fiveSFindings["sheet-1"].inspector, "Updated");
+
+  for (const command of [
+    { operation: "set", path: "fiveSFindings/foreign", value: other },
+    { operation: "update", path: "fiveSFindings/sheet-1", value: { areaId: "other" } },
+  ]) {
+    await assert.rejects(service.writeData(command, auth), { statusCode: 403 });
+  }
+
+  assert.deepEqual(Object.keys((await service.readData()).fiveSFindings), ["sheet-1"]);
+  await service.writeData({ operation: "remove", path: "fiveSFindings/sheet-1" }, auth);
+  assert.deepEqual((await service.readData()).fiveSFindings, {});
+});
 
 test("anonymous writes fail, and department heads cannot alter other collections in a batch", async () => {
   const { service } = fixture();
