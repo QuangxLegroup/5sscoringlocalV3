@@ -1,44 +1,259 @@
 {
   "accounts": {
-    "admin": {
-      "id": "admin",
-      "username": "admin",
+    "account-admin-001": {
+      "id": "account-admin-001",
       "role": "admin",
-      "passwordHash": "pbkdf2-sha256$210000$5t-GaLrMlouppTOnlIhWpQ$LQ66OBpsrz4dbJ3VUrhKBq46wfbQjRaQjUcBhdgIwsM"
-    },
-    "old": {
-      "id": "old-account",
-      "username": "old",
-      "role": "zoneOwner",
-      "scorerId": "old",
-      "fiveSAreaIds": [
-        "z1",
-        "z2"
+      "name": "Đường Bích Ngọc",
+      "username": "duongbichngoc",
+      "accessTypes": [
+        "5s",
+        "safety"
       ],
-      "passwordHash": "pbkdf2-sha256$210000$TlvqsUj9WXIDqdrLmJOQBA$11tIxPMu19IQ69Ayj8ZgHObu6SlCSJSGzOp2PP6rbxo"
+      "rolesByType": {
+        "5s": "admin",
+        "safety": "admin"
+      },
+      "passwordHash": "pbkdf2-sha256$210000$BcS7xRCRXdaI6MiRNgDQjQ$VGXt0JNQKWKjisKHsagu0aX7w-ROcfkWlljUlaVtZUY"
     },
-    "account-muky0hmr-vf1lq9": {
-      "id": "account-muky0hmr-vf1lq9",
+    "account-mtwjtdvp-0gswir": {
+      "id": "account-mtwjtdvp-0gswir",
+      "role": "assessorSafety",
+      "name": "MrNgocDB",
+      "accessTypes": [
+        "safety"
+      ],
+      "rolesByType": {
+        "safety": "assessorSafety"
+      },
+      "username": "msngocdb",
+      "createdAt": "2026-09-11T06:01:39.205Z",
+      "assessorId": "assessor-wgvjbk",
+      "areaIds": [
+        "area-1"
+      ],
+      "safetyAssessorId": "assessor-mtkepzm9-leo6og",
+      "safetyAreaIds": [
+        "area-1"
+      ],
+      "displayName": "MsNgoc",
+      "passwordHash": "pbkdf2-sha256$210000$2H5OJ_L4mG7TOcT4vMBDsg$2iVJiNp75h5tIBnGyK6Znkhfo4IoTDEABfMAtI70sIg"
+    },
+    "account-mu3kgvpw-mtp8b3": {
+      "id": "account-mu3kgvpw-mtp8b3",
+      "role": "assessor5s",
+      "name": "MrHuy",
+      "accessTypes": [
+        "safety",
+        "5s"
+      ],
+      "rolesByType": {
+        "safety": "assessorSafety",
+        "5s": "assessor5s"
+      },
+      "username": "mrhuy",
+      "createdAt": "2026-09-16T03:54:18.644Z",
+      "displayName": "MrHuy",
+      "safetyAssessorId": "safety-assessor-mu3kfb79-ah1yf2",
+      "safetyAreaIds": [
+        "area-1",
+        "area-2",
+        "area-3",
+        "area-4",
+        "area-5",
+        "area-6",
+        "area-7",
+        "area-8",
+        "area-9",
+        "area-10",
+        "area-11",
+        "area-12",
+        "area-13",
+        "area-14",
+        "area-15",
+        "area-16",
+        "area-17",
+        "area-18",
+        "area-19",
+        "area-20",
+        "area-21",
+        "area-22",
+        "area-23",
+        "area-24",
+        "area-25",
+        "area-26",
+        "area-27",
+        "area-28",
+        "area-safety-xiolum",
+        "area-safety-tjmjl8"
+      ],
+      "areaIds": [
+        "area-1",
+        "area-2",
+        "area-3",
+        "area-4",
+        "area-5",
+        "area-6",
+        "area-7",
+        "area-8",
+        "area-9",
+        "area-10",
+        "area-11",
+        "area-12",
+        "area-13",
+        "area-14",
+        "area-15",
+        "area-16",
+        "area-17",
+        "area-18",
+        "area-19",
+        "area-20",
+        "area-21",
+        "area-22",
+        "area-23",
+        "area-24",
+        "area-25",
+        "area-26",
+        "area-27",
+        "area-28",
+        "area-29",
+        "area-muntbdke-1sz7hg"
+      ],
+      "fiveSAssessorId": "assessor-1q0l6v",
+      "assessorId": "assessor-1q0l6v",
+      "fiveSAreaIds": [
+        "area-1",
+        "area-2",
+        "area-3",
+        "area-4",
+        "area-5",
+        "area-6",
+        "area-7",
+        "area-8",
+        "area-9",
+        "area-10",
+        "area-11",
+        "area-12",
+        "area-13",
+        "area-14",
+        "area-15",
+        "area-16",
+        "area-17",
+        "area-18",
+        "area-19",
+        "area-20",
+        "area-21",
+        "area-22",
+        "area-23",
+        "area-24",
+        "area-25",
+        "area-26",
+        "area-27",
+        "area-28",
+        "area-29",
+        "area-muntbdke-1sz7hg"
+      ],
+      "passwordHash": "pbkdf2-sha256$210000$mhFw4NlwLCmKQhsP6lAxbQ$ylDcggWD7l7VUlh80WPWJ2kF3ddSVNKalpcC0tOTwl8"
+    },
+    "account-mu6abokl-t7ozhv": {
+      "id": "account-mu6abokl-t7ozhv",
       "role": "zoneOwner",
-      "name": "New owner",
+      "name": "Mr Ánh",
       "accessTypes": [
         "5s"
       ],
       "rolesByType": {
         "5s": "zoneOwner"
       },
-      "username": "new-owner",
-      "createdAt": "2026-09-28T07:45:33.507Z",
-      "displayName": "new-owner",
-      "fiveSScorerId": "scorer-muky0hbv-b9z14k",
-      "scorerId": "scorer-muky0hbv-b9z14k",
+      "username": "mranh",
+      "createdAt": "2026-09-18T01:33:38.469Z",
+      "displayName": "mranh",
+      "fiveSScorerId": "scorer-25",
+      "scorerId": "scorer-25",
       "fiveSAreaIds": [
-        "z1"
+        "area-1",
+        "area-14",
+        "area-15",
+        "area-28"
       ],
       "areaIds": [
-        "z1"
+        "area-1",
+        "area-14",
+        "area-15",
+        "area-28"
       ],
-      "passwordHash": "pbkdf2-sha256$210000$4vBiy3kqMU-OTln4liciKA$i82UFCdJ2KF-EebQKBhTFApTDTrbAvr7ml2PHlWyPGA"
+      "passwordHash": "pbkdf2-sha256$210000$1MI2oRxEeHbC1I2k-Ly50Q$JF20zIWk5Bju_1ipWcIRvIkzSW87J1l5LHOAgQEQ9Ig"
+    },
+    "account-muku0b1t-bp4yyv": {
+      "id": "account-muku0b1t-bp4yyv",
+      "role": "viewer",
+      "accessTypes": [
+        "5s",
+        "safety"
+      ],
+      "rolesByType": {
+        "5s": "viewer",
+        "safety": "viewer"
+      },
+      "name": "MsVanAnh",
+      "position": "BGĐ",
+      "displayName": "MsVanAnh",
+      "username": "msvananh",
+      "areaIds": [],
+      "fiveSAreaIds": [],
+      "safetyAreaIds": [],
+      "createdAt": "2026-09-28T05:53:26.513Z",
+      "passwordHash": "pbkdf2-sha256$210000$9w8LVdPN4ZqeS4DTdDphsQ$b5bZ_Y1Yy0eT2JPegVxvI5npGHjXwvZff74ktJSwe6U"
+    },
+    "account-muku1g9t-meqjax": {
+      "id": "account-muku1g9t-meqjax",
+      "role": "departmentHead",
+      "accessTypes": [
+        "5s",
+        "safety"
+      ],
+      "rolesByType": {
+        "5s": "departmentHead",
+        "safety": "departmentHead"
+      },
+      "name": "Mr Cương",
+      "departmentHeadName": "Mr Cương",
+      "departmentHeadSource": "5s",
+      "displayName": "Mr Cương",
+      "username": "mrcuong",
+      "areaIds": [],
+      "fiveSAreaIds": [],
+      "safetyAreaIds": [],
+      "createdAt": "2026-09-28T05:54:19.937Z",
+      "passwordHash": "pbkdf2-sha256$210000$rw-HIB-l1FBtTTs7gU-EfA$8-513NnrjGLz56gpBGKYECirI6Tacwcx8kOgIMPFV3M"
+    },
+    "account-munscjbt-a4a6sl": {
+      "id": "account-munscjbt-a4a6sl",
+      "role": "assessor5s",
+      "name": "Mr Nam",
+      "accessTypes": [
+        "5s"
+      ],
+      "rolesByType": {
+        "5s": "assessor5s"
+      },
+      "username": "mrnam",
+      "createdAt": "2026-09-30T07:30:16.409Z",
+      "displayName": "mrnam",
+      "fiveSAssessorId": "assessor-munsahl6-ym01bd",
+      "assessorId": "assessor-munsahl6-ym01bd",
+      "fiveSAreaIds": [
+        "area-6",
+        "area-10",
+        "area-21",
+        "area-22"
+      ],
+      "areaIds": [
+        "area-6",
+        "area-10",
+        "area-21",
+        "area-22"
+      ],
+      "passwordHash": "pbkdf2-sha256$210000$xCJ5r6-Q3PVz28sHw0HKQg$M5if_QjGSJe-6H-n2g4tkjIJccogVbWd5EEVFhSdM1I"
     }
   }
 }

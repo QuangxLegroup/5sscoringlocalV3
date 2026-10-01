@@ -13,7 +13,7 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
-    <link rel="stylesheet" href="styles.css?v=2026092825">
+    <link rel="stylesheet" href="styles.css?v=2026100103">
   </head>
   <body>
     <section class="loading-screen" id="loading-screen">
@@ -97,6 +97,7 @@
             <div class="nav-group-title">An toàn lao động</div>
             <nav class="tabs" aria-label="Điều hướng An Toàn">
               <button class="tab-button" type="button" data-tab="five-s-findings" title="Vấn đề 5S"><span class="tab-icon">📝</span><span>Vấn đề 5S</span></button>
+              <button class="tab-button admin-only" type="button" data-tab="score-sheets" title="Phiếu chấm"><span class="tab-icon">📋</span><span>Phiếu chấm</span></button>
               <button class="tab-button safety-access-only" type="button" data-tab="safety" data-safety-report="assessment">
                 <span class="tab-icon">🛡️</span>
                 <span>Đánh giá an toàn</span>
@@ -161,6 +162,7 @@
               <span>Bảng Điểm 5S</span>
             </button>
             <button class="tab-button" type="button" data-tab="five-s-findings" title="Vấn đề 5S"><span class="tab-icon">📝</span><span>Vấn đề 5S</span></button>
+            <button class="tab-button admin-only" type="button" data-tab="score-sheets" title="Phiếu chấm"><span class="tab-icon">📋</span><span>Phiếu chấm</span></button>
             <button class="tab-button safety-access-only" type="button" data-tab="safety" data-safety-report="assessment" title="Đánh giá an toàn">
               <span class="tab-icon">🛡️</span>
               <span>Đánh giá AT</span>
@@ -292,6 +294,34 @@
 
           <!-- TAB SAFETY -->
           <section class="tab-panel" id="tab-five-s-findings"></section>
+          <section class="tab-panel admin-only" id="tab-score-sheets">
+            <div class="toolbar compact-toolbar assessor-toolbar">
+              <label>
+                <span>Loại phiếu</span>
+                <select id="admin-score-sheet-source">
+                  <option value="assessor">Assessor chấm</option>
+                  <option value="self">Quản lý zone tự chấm</option>
+                </select>
+              </label>
+              <label>
+                <span>Kỳ đánh giá</span>
+                <select id="admin-score-sheet-period"></select>
+              </label>
+              <label>
+                <span>Zone đánh giá</span>
+                <select id="admin-score-sheet-area"></select>
+              </label>
+              <button class="btn-export-excel-gradient" id="export-admin-score-sheet-button" type="button"><i class="fa-solid fa-file-excel"></i> <span>Xuất Excel</span></button>
+            </div>
+            <section class="sheet-panel">
+              <div class="section-heading">
+                <h2 id="admin-score-sheet-title">Phiếu chấm 5S</h2>
+                <div class="permission-note" id="admin-score-sheet-progress"></div>
+                <button class="table-fullscreen-button" type="button" data-action="fullscreen-table" data-id="score-sheets" title="Phóng to phiếu chấm" aria-label="Phóng to phiếu chấm"><span aria-hidden="true">⤢</span></button>
+              </div>
+              <div class="assessor-sheet" id="admin-score-sheet"></div>
+            </section>
+          </section>
           <section class="tab-panel safety-access-only" id="tab-safety">
             <div class="toolbar safety-toolbar">
               <label>
@@ -320,6 +350,7 @@
               </label>
               <div class="safety-actions">
                 <button class="primary-button safety-access-only" id="add-safety-record-button" type="button">Thêm ĐG AT</button>
+                <span class="findings-readonly" id="safety-readonly-badge" hidden>Chỉ xem</span>
                 <button class="secondary-button admin-only" id="edit-safety-meta-button" type="button">Thiết lập báo cáo</button>
                 <button class="btn-export-excel-gradient" id="export-safety-excel-button" type="button"><i class="fa-solid fa-file-excel"></i> <span>Xuất ĐG AT</span></button>
                 <button class="secondary-button admin-only" type="button" data-action="import-page-json">Import</button>
@@ -415,12 +446,12 @@
                     <div class="section-heading catalog-section-heading">
                       <div>
                         <span class="section-step">Bước 2</span>
-                        <h2>Người phụ trách zone / người được đánh giá</h2>
+                        <h2>Người phụ trách zone</h2>
                       </div>
                     </div>
                     <form class="stacked-form" id="scorer-form">
                       <label>
-                        <span>Tên người phụ trách zone / người được đánh giá</span>
+                        <span>Tên người phụ trách zone</span>
                         <input id="scorer-name" type="text" autocomplete="off" required>
                       </label>
                       <div class="form-field">
@@ -474,7 +505,7 @@
                         <input id="area-summary-group" type="text" autocomplete="off">
                       </label>
                       <label>
-                        <span>Người phụ trách zone / người được đánh giá</span>
+                        <span>Người phụ trách zone</span>
                         <select id="area-scorer" required></select>
                       </label>
                       <label id="area-assessor-field">
@@ -683,13 +714,13 @@
     </div>
 
     <div class="toast" id="toast" role="status" aria-live="polite"></div>
-    <script src="modules/local-data-api.js"></script>
+    <script src="modules/local-data-api.js?v=2026100101"></script>
     <script src="modules/core/page-registry.js"></script>
     <script src="modules/core/safety-timeline.js?v=2026092823"></script>
-    <script src="modules/pages/admin-home-page.js"></script>
+    <script src="modules/pages/admin-home-page.js?v=2026100101"></script>
     <script src="modules/pages/assessor-page.js"></script>
     <script src="modules/pages/summary-page.js"></script>
-    <script src="modules/pages/safety-page.js?v=2026092824"></script>
+    <script src="modules/pages/safety-page.js?v=2026092825"></script>
     <script src="modules/pages/issue-stats-page.js"></script>
     <script src="modules/pages/catalog-page.js"></script>
     <script src="modules/pages/accounts-page.js"></script>
@@ -697,7 +728,7 @@
     <script src="modules/pages/five-s-findings-page.js?v=2026092828"></script>
     <script src="modules/pages/mobile-prototype.js?v=2026092828"></script>
     <script src="standards.js"></script>
-    <script src="app.js?v=2026092832"></script>
+    <script src="app.js?v=2026100106"></script>
   
     <script>
       (() => {

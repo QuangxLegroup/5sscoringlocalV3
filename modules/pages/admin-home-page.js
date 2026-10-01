@@ -293,6 +293,7 @@
         ...(canScoreFiveS ? [navButton({ icon: "📝", label: "Phiếu chấm", title: "Phiếu chấm điểm 5S", tab: "assessor" })] : []),
         ...(hasFiveSAccess ? [navButton({ icon: "📊", label: "Bảng Điểm 5S", title: "Tổng hợp điểm 5S", tab: "summary" })] : []),
         navButton({ icon: "📝", label: "Vấn đề 5S", title: "Vấn đề 5S", tab: "five-s-findings" }),
+        ...(isAdmin ? [navButton({ icon: "📋", label: "Phiếu chấm", title: "Phiếu chấm 5S theo zone", tab: "score-sheets" })] : []),
       ],
       [
         ...(hasSafetyAccess ? [
@@ -300,12 +301,6 @@
           navButton({ icon: "⚠️", label: "Nhận diện", title: "Tổng hợp nhận diện nguy cơ mất an toàn", report: "identification" }),
           navButton({ icon: "🏭", label: "Nguy cơ NM", title: "Tổng hợp nguy cơ mất an toàn nhà máy", report: "factory" }),
           navButton({ icon: "📈", label: "Thống kê AT", title: "Thống kê an toàn", tab: "issue-stats" }),
-        ] : []),
-      ],
-      [
-        ...(isAdmin ? [
-          navButton({ icon: "🗂️", label: "Danh mục", title: "Danh mục", tab: "catalog" }),
-          navButton({ icon: "👥", label: "Tài khoản", title: "Cấp tài khoản", tab: "accounts" }),
         ] : []),
       ],
     ].filter((section) => section.length);

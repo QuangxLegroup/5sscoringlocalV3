@@ -203,7 +203,7 @@
     return rootCache;
   }
 
-  async function applyOfflineWrite(operation, path, value) {
+  async function applyOfflineWrite(operation, path, value, writeOptions = {}) {
     const currentRoot = clone(rootCache) || await readOfflineRoot() || {};
     let nextRoot;
 
@@ -224,6 +224,7 @@
       operation,
       path: path || "",
       value: clone(value),
+      allowZoneManagerReassignment: writeOptions.allowZoneManagerReassignment === true,
     });
     notifyAll();
     return rootCache;
@@ -610,6 +611,7 @@
               operation: entry.operation,
               path: entry.path || "",
               value,
+              allowZoneManagerReassignment: entry.allowZoneManagerReassignment === true,
             }),
           });
           rememberRoot(root);
@@ -927,7 +929,7 @@
     }
   }
 
-  async function write(operation, path, value) {
+  async function write(operation, path, value, writeOptions = {}) {
     if (demoMode) {
       return applyDemoWrite(operation, path, value);
     }
@@ -935,7 +937,12 @@
     try {
       const root = await request("/api/data/write", {
         method: "POST",
-        body: JSON.stringify({ operation, path: path || "", value }),
+        body: JSON.stringify({
+          operation,
+          path: path || "",
+          value,
+          allowZoneManagerReassignment: writeOptions.allowZoneManagerReassignment === true,
+        }),
       });
       rememberRoot(root);
     } catch (error) {
@@ -944,6 +951,9 @@
       }
       if (isNetworkLikeError(error)) {
         await notifyConnectionLost(error);
+        throw error;
+      }
+      if (Number.isFinite(Number(error?.status))) {
         throw error;
       }
       enterDemoMode(error);
@@ -1011,12 +1021,12 @@
         return createSnapshot(valueAtPath(root, path));
       },
 
-      set(value) {
-        return write("set", path, value);
+      set(value, options) {
+        return write("set", path, value, options);
       },
 
-      update(value) {
-        return write("update", path, value);
+      update(value, options) {
+        return write("update", path, value, options);
       },
 
       remove() {

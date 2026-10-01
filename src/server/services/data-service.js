@@ -128,24 +128,27 @@ function createHttpError(message, statusCode) {
   return error;
 }
 
-function assertZoneManagersNotReplaced(previousRoot, nextRoot) {
+function assertZoneManagersNotReplaced(previousRoot, nextRoot, allowZoneManagerReassignment = false) {
   const values = (collection) => Object.values(collection || {}).filter(Boolean);
-  const check = (before, after) => {
+  const managerIds = (collection) => new Set(values(collection).map((manager) => manager.id).filter(Boolean));
+  const check = (before, after, managers) => {
     const previous = new Map(values(before).map((area) => [area.id, area]));
+    const permittedManagerIds = allowZoneManagerReassignment ? managerIds(managers) : new Set();
     for (const area of values(after)) {
       const old = previous.get(area.id);
-      if (old?.scorerId && area.scorerId && old.scorerId !== area.scorerId) {
+      if (old?.scorerId && area.scorerId && old.scorerId !== area.scorerId && !permittedManagerIds.has(area.scorerId)) {
         throw createHttpError(`Zone ${area.code || old.code || area.id} đã có người quản lý. Không thể thêm hoặc thay thế người quản lý của Zone này.`, 409);
       }
     }
   };
-  check(previousRoot?.areas, nextRoot?.areas);
-  check(previousRoot?.safetyAreas, nextRoot?.safetyAreas);
+  check(previousRoot?.areas, nextRoot?.areas, nextRoot?.managers);
+  check(previousRoot?.safetyAreas, nextRoot?.safetyAreas, nextRoot?.safetyManagers || nextRoot?.managers);
   const previousPeriods = new Map(values(previousRoot?.periods).map((period) => [period.id, period]));
   for (const period of values(nextRoot?.periods)) {
-    const previous = previousPeriods.get(period.id)?.settingsSnapshot;
-    check(previous?.areas, period.settingsSnapshot?.areas);
-    check(previous?.safetyAreas, period.settingsSnapshot?.safetyAreas);
+    const previous = previousPeriods.get(period.id)?.settingsSnapshot || {};
+    const next = period.settingsSnapshot || {};
+    check(previous.areas, next.areas, next.managers);
+    check(previous.safetyAreas, next.safetyAreas, next.safetyManagers || next.managers);
   }
 }
 
@@ -318,7 +321,7 @@ class DataService {
         throw error;
       }
 
-      assertZoneManagersNotReplaced(currentRoot, nextRoot);
+      assertZoneManagersNotReplaced(currentRoot, nextRoot, command.allowZoneManagerReassignment === true);
       const previousRecords = new Map(Object.entries(currentRoot?.safetyRecords || {}).map(([key, record]) => [record?.id || key, record]));
       // Full collection imports may contain historical records without actual dates.
       // Keep them intact; reports explicitly flag missing dates instead of inferring them.

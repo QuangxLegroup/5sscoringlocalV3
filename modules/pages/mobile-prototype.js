@@ -235,10 +235,6 @@
               <input type="date" id="modalDetailCompletionDate" class="modal-form-input" value="${escapeHtml(item.completionDate ? item.completionDate.split('T')[0] : '')}">
             </div>
           </div>
-          <div class="modal-form-grid-2">
-            <div class="modal-form-group"><label class="modal-form-label">Ngày thực tế triển khai đối sách</label><input type="date" id="modalDetailCountermeasureDate" class="modal-form-input" value="${escapeHtml(item.countermeasureDate || '')}"></div>
-            <div class="modal-form-group"><label class="modal-form-label">Ngày hoàn thành thực tế</label><input type="date" id="modalDetailCompletedDate" class="modal-form-input" value="${escapeHtml(item.completedDate || '')}"></div>
-          </div>
 
           <!-- Improvement / Countermeasure Details -->
           <div class="modal-form-group">
@@ -449,8 +445,8 @@
       const actionOwner = modal.querySelector("#modalDetailActionOwner")?.value?.trim() || "";
       const actionPlan = modal.querySelector("#modalDetailActionPlan")?.value?.trim() || "";
       const completionDate = modal.querySelector("#modalDetailCompletionDate")?.value || "";
-      const countermeasureDate = modal.querySelector("#modalDetailCountermeasureDate")?.value || "";
-      const completedDate = modal.querySelector("#modalDetailCompletedDate")?.value || "";
+      const countermeasureDate = modal.querySelector("#modalDetailCountermeasureDate")?.value || item.countermeasureDate || "";
+      const completedDate = modal.querySelector("#modalDetailCompletedDate")?.value || item.completedDate || "";
 
       if (!countermeasureOnly && !note) {
         showMobileToast("Vui lòng nhập mô tả Mối nguy hiểm!", true);
@@ -1150,10 +1146,6 @@
           </div>
 
           <!-- Submit Button -->
-          <div class="form-grid-2">
-            <div class="form-group"><label class="form-label">Ngày thực tế triển khai đối sách</label><input type="date" id="mobileSafetyCountermeasureDate" class="form-control" value="${escapeHtml(editingRecord?.countermeasureDate || '')}"></div>
-            <div class="form-group"><label class="form-label">Ngày hoàn thành thực tế</label><input type="date" id="mobileSafetyCompletedDate" class="form-control" value="${escapeHtml(editingRecord?.completedDate || '')}"></div>
-          </div>
           <div class="form-submit-row mobile-fixed-save">
             <button type="submit" id="mobileSubmitSafetyBtn" class="btn-primary-gradient">
               <i class="fa-solid ${editingRecord ? 'fa-floppy-disk' : 'fa-paper-plane'}"></i>
@@ -1438,8 +1430,8 @@
         const actionOwner = screen.querySelector("#mobileSafetyActionOwner")?.value?.trim() || defaultActionOwner;
         const actionPlan = screen.querySelector("#mobileSafetyActionPlan")?.value?.trim() || "";
         const completionDate = screen.querySelector("#mobileSafetyCompletionDate")?.value || "";
-        const countermeasureDate = screen.querySelector("#mobileSafetyCountermeasureDate")?.value || "";
-        const completedDate = screen.querySelector("#mobileSafetyCompletedDate")?.value || "";
+        const countermeasureDate = screen.querySelector("#mobileSafetyCountermeasureDate")?.value || existingRecord?.countermeasureDate || "";
+        const completedDate = screen.querySelector("#mobileSafetyCompletedDate")?.value || existingRecord?.completedDate || "";
 
         if (!areaId) {
           showMobileToast("Vui lòng chọn Khu vực / Zone!", true);

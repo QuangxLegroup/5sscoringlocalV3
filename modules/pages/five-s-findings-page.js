@@ -3,20 +3,63 @@
 
   const views = new WeakMap();
   const ROWS_PER_PAGE = 10;
-  const STOP6 = [["A", "Kẹp kẹt"], ["B", "Vật nặng"], ["C", "Xe cộ"], ["D", "Rơi ngã"], ["E", "Điện giật"], ["F", "Cháy nổ"]];
-  const fields = ["problem", "stop6", "fiveS", "location", "shift", "countermeasure", "owner", "dueDate", "progress"];
-  const headings = ["Vấn đề / Problem", "Stop 6", "5 S", "Vị trí", "Ca / Shift", "Biện pháp khắc phục / CM", "Bởi / By", "Hạn / Due date", "Tiến độ / Progress"];
+  const FINDING_CATEGORIES = [
+    ["A1", "A1 - Đường đi bộ"],
+    ["A2", "A2 - Cây nước"],
+    ["A3", "A3 - Khu vực rửa tay, nhà vệ sinh"],
+    ["B1", "B1 - Khu để dầu, hóa chất, sơn (các loại dd hóa chất)"],
+    ["B2", "B2 - Hàng lưu kho, hàng lỗi"],
+    ["B3", "B3 - Nơi để vật tư, vật liệu, găng tay, giẻ lau"],
+    ["C1", "C1 - Nơi làm việc"],
+    ["C2", "C2 - Thiết bị máy móc sản xuất"],
+    ["C3", "C3 - Bàn thao tác"],
+    ["C4", "C4 - Nơi để đồ gá, Jig, tủ dụng cụ"],
+    ["C5", "C5 - Bảng quản lý trong dây chuyền"],
+    ["D1", "D1 - Khu vực nghỉ"],
+    ["D2", "D2 - Bàn quản lý (GL)"],
+    ["D3", "D3 - Khu để tư liệu, tài liệu"],
+    ["E1", "E1 - Tự giác của tổ viên"],
+    ["E2", "E2 - Tự giác của người giám sát"],
+  ];
+  function findingCategoryNormalized(val) {
+    if (!val) return "";
+    const clean = String(val).trim().toUpperCase();
+    const match = FINDING_CATEGORIES.find(([id, label]) => id.toUpperCase() === clean || clean.startsWith(id.toUpperCase() + " ") || clean.startsWith(id.toUpperCase() + "-") || label.toUpperCase() === clean);
+    return match ? match[0] : "";
+  }
+  function findingCategoryLabel(val) {
+    if (!val) return "";
+    const clean = String(val).trim();
+    const match = FINDING_CATEGORIES.find(([id, label]) => id.toUpperCase() === clean.toUpperCase() || clean.toUpperCase().startsWith(id.toUpperCase() + " ") || clean.toUpperCase().startsWith(id.toUpperCase() + "-") || label.toLowerCase() === clean.toLowerCase());
+    return match ? match[1] : clean;
+  }
+  function parseInspectors(val) {
+    if (!val) return [];
+    if (Array.isArray(val)) return val.map((s) => String(s || "").trim().slice(0, 20)).filter(Boolean).slice(0, 2);
+    return String(val)
+      .split(/,|\n|·|\/|;/)
+      .map((s) => s.trim().slice(0, 20))
+      .filter(Boolean)
+      .slice(0, 2);
+  }
+  function formatInspectors(n1, n2) {
+    const p1 = String(n1 || "").trim().slice(0, 20);
+    const p2 = String(n2 || "").trim().slice(0, 20);
+    return [p1, p2].filter(Boolean).slice(0, 2).join(", ");
+  }
+  const fields = ["location", "problem", "fiveS", "shift", "countermeasure", "dueDate", "progress"];
+  const headings = ["Vị trí", "Vấn đề / Problem", "Hạng mục", "Ca / Shift", "Biện pháp khắc phục / CM", "Hạn / Due date", "Tiến độ / Progress"];
   const clone = (value) => JSON.parse(JSON.stringify(value));
   const canEdit = (ctx) => Boolean(ctx.currentUser && (ctx.isAdminAccount(ctx.currentUser) || ctx.isDepartmentHeadAccount(ctx.currentUser) || (ctx.hasAccountAccessType(ctx.currentUser, ctx.FIVE_S_PERIOD_TYPE) && ctx.isZoneOwnerAccount(ctx.currentUser, ctx.FIVE_S_PERIOD_TYPE))));
-  const canEditPeriod = (ctx, periodId) => canEdit(ctx) && (ctx.isAdminAccount(ctx.currentUser) || Boolean(periodId && ctx.getPeriod(periodId) && !ctx.getPeriod(periodId).archived && ctx.getActivePeriodId(ctx.FIVE_S_PERIOD_TYPE) === periodId));
+  const canEditPeriod = (ctx, periodId) => canEdit(ctx) && Boolean(periodId && ctx.getPeriod(periodId) && !ctx.getPeriod(periodId).archived && (typeof ctx.isPeriodOpen === "function" ? ctx.isPeriodOpen(periodId, ctx.FIVE_S_PERIOD_TYPE) : ctx.getActivePeriodId(ctx.FIVE_S_PERIOD_TYPE) === periodId));
   const sortedAreas = (ctx, periodId) => [...ctx.getAreasForPeriod(periodId)].sort((a, b) => String(a.code).localeCompare(String(b.code), "vi", { numeric: true }));
   const editableAreas = (ctx, periodId) => sortedAreas(ctx, periodId).filter((area) => canEditPeriod(ctx, periodId) && (ctx.isAdminAccount(ctx.currentUser) || ctx.getAllowedAreaIds(ctx.currentUser, periodId).has(area.id)));
   const canEditSheet = (ctx, sheet) => {
     if (!canEdit(ctx) || !sheet) return false;
-    if (ctx.isAdminAccount(ctx.currentUser)) return true;
     const periodId = resolvePeriodId(sheet, ctx.getPeriodsByType(ctx.FIVE_S_PERIOD_TYPE));
+    if (!canEditPeriod(ctx, periodId)) return false;
     const areas = editableAreas(ctx, periodId);
-    return Boolean(resolveAreaId(sheet, areas));
+    return ctx.isAdminAccount(ctx.currentUser) || Boolean(resolveAreaId(sheet, areas));
   };
   const blankRow = () => Object.fromEntries(fields.map((key) => [key, key === "progress" ? "0" : ""]));
   const UNASSIGNED = "unassigned";
@@ -112,13 +155,48 @@
     view.selectedId = saved?.id || "";
     const sheet = view.draft || (saved ? { ...saved, periodId: resolvePeriodId(saved, periods) } : { periodId: view.periodId, area: "", inspector: "", inspectionDate: "", rows: defaultRows() });
     const editing = Boolean(view.draft && canEditPeriod(ctx, view.draft.periodId));
-    const combined = !mobile && !editing && records.length > 1;
+    const isAllZones = !view.zoneFilter;
+    const combined = !mobile && !editing && (isAllZones || records.length > 1);
     const rowSources = combined ? records.flatMap((record) => (record.rows || []).map((row, index) => ({ record, index, row })).filter(({ row }) => rowHasContent(row))) : [];
     const tableRows = editing ? sheet.rows : defaultRows(combined ? rowSources.map(({ row }) => row) : sheet.rows);
     if (!tableRows.length) tableRows.push(blankRow());
     const rowPageCount = Math.max(1, Math.ceil(tableRows.length / ROWS_PER_PAGE));
     view.rowPage = Math.max(0, Math.min(view.rowPage || 0, rowPageCount - 1));
     const firstRow = view.rowPage * ROWS_PER_PAGE;
+    const zoneInspectors = [...new Set(records.flatMap((item) => parseInspectors(item.inspector)))].slice(0, 2);
+    const displayInspectors = isAllZones ? [] : zoneInspectors;
+    const canEditCurrentZone = Boolean(!isAllZones && canEditPeriod(ctx, view.periodId) && (ctx.isAdminAccount(ctx.currentUser) || editableAreas(ctx, view.periodId).some((a) => `id:${a.id}` === view.zoneFilter)));
+    const isEditingHeader = Boolean(view.editingHeader && canEditCurrentZone);
+    const currentInspectionDate = isAllZones ? "" : (sheet.inspectionDate || records.find((item) => item.inspectionDate)?.inspectionDate || "");
+    const headerHtml = isEditingHeader
+      ? `<div class="findings-inspection is-editing">
+          <label><span>Người kiểm tra</span>
+            <div class="findings-inspectors-inputs">
+              <input name="headerInspector1" maxlength="20" placeholder="Người kiểm tra 1" value="${esc(zoneInspectors[0] || "")}" required>
+              <input name="headerInspector2" maxlength="20" placeholder="Người kiểm tra 2" value="${esc(zoneInspectors[1] || "")}">
+            </div>
+          </label>
+          <label><span>Ngày kiểm tra</span>
+            ${dateEditor(currentInspectionDate || ctx.todayIsoDate(), 'name="headerInspectionDate"', true, esc, true)}
+          </label>
+          <div class="findings-header-actions">
+            <button type="button" class="btn-save-header" data-finding-action="save-header">Lưu</button>
+            <button type="button" class="btn-cancel-header" data-finding-action="cancel-header">Hủy</button>
+          </div>
+        </div>`
+      : `<div class="findings-inspection ${canEditCurrentZone ? "is-editable" : ""}">
+          ${canEditCurrentZone ? `<button type="button" class="findings-header-edit-btn" data-finding-action="edit-header" title="Sửa trực tiếp người kiểm tra và ngày kiểm tra"><i class="fa-solid fa-pen-to-square"></i> Sửa</button>` : ""}
+          <label><span>Người kiểm tra</span>
+            <div class="findings-inspectors-display" ${canEditCurrentZone ? 'data-finding-action="edit-header" role="button" tabindex="0" title="Nhấp để sửa trực tiếp"' : ""}>
+              ${displayInspectors.length ? displayInspectors.map((name) => `<span class="findings-inspector-name">${esc(name)}</span>`).join("") : '<span class="findings-inspector-name is-empty">&nbsp;</span>'}
+            </div>
+          </label>
+          <label><span>Ngày kiểm tra</span>
+            <div class="findings-date-display" ${canEditCurrentZone ? 'data-finding-action="edit-header" role="button" tabindex="0" title="Nhấp để sửa trực tiếp"' : ""}>
+              <span class="findings-date-text">${esc(displayDate(currentInspectionDate)) || "&nbsp;"}</span>
+            </div>
+          </label>
+        </div>`;
     const button = (action, label) => `<button type="button" data-finding-action="${action}">${label}</button>`;
     const valueInput = (name, value, type = "text", required = false) => type === "date"
       ? dateEditor(value, `name="${name}"`, editing, esc, required)
@@ -141,13 +219,11 @@
         ${mobile ? mobileForm(sheet, ctx, editing, view, valueInput) : `<div class="findings-paper">
           <div class="findings-heading">
             <h2>Các vấn đề về 5S phát hiện<span>5S find out</span></h2>
-            <div class="findings-inspection"><label>Người kiểm tra${valueInput("inspector", combined ? [...new Set(records.map((item) => item.inspector))].join(", ") : sheet.inspector, "text", true)}</label><label>Ngày kiểm tra${valueInput("inspectionDate", combined && new Set(records.map((item) => item.inspectionDate)).size > 1 ? "" : sheet.inspectionDate, "date", true)}</label></div>
+            ${headerHtml}
           </div>
-          <div class="findings-subheading"><label>Khu vực (Zone):${combined ? valueInput("areaId", view.zoneFilter ? zoneOptions.get(view.zoneFilter) : "Tất cả Zone") : zoneInput(sheet, ctx, editing, esc)}</label>
-            <div class="findings-legend"><strong>Ký hiệu<br>Stop 6</strong><div>${STOP6.map(([code, label]) => `<span>(${code}) ${label}</span>`).join("")}</div></div>
-          </div>
+          <div class="findings-subheading"><label>Khu vực (Zone):${editing ? zoneInput(sheet, ctx, editing, esc) : valueInput("areaId", isAllZones ? "Tất cả Zone" : (zoneOptions.get(view.zoneFilter) || shortZoneLabel(sheet.area)))}</label></div>
           <div class="findings-table-scroll" tabindex="0" role="region" aria-label="Bảng các vấn đề 5S, cuộn ngang để xem đủ cột">
-            <table class="findings-table"><colgroup>${[80, 250, 80, 80, 105, 75, 245, 120, 140, 115].map((width) => `<col style="width:${width / 1290 * 100}%">`).join("")}</colgroup>
+            <table class="findings-table"><colgroup>${[80, 120, 290, 180, 75, 275, 140, 100].map((width) => `<col style="width:${width / 1260 * 100}%">`).join("")}</colgroup>
               <thead><tr><th scope="col">STT</th>${headings.map((heading) => `<th scope="col">${heading}</th>`).join("")}</tr></thead>
               <tbody>${tableRows.slice(firstRow, firstRow + ROWS_PER_PAGE).map((row, offset) => {
                 const index = firstRow + offset;
@@ -166,8 +242,6 @@
         </nav>` : ""}
         ${editing ? `<div class="findings-bottom"><button type="button" data-finding-action="add-row">＋ Thêm vấn đề 5S</button><button type="submit">Lưu phiếu</button></div>` : ""}
       </form>
-      <p class="findings-hint">Tiến độ: 0%, 25%, 50%, 75%, 100% (hoàn thành). Quản lý Zone và Trưởng bộ phận chỉ được đánh giá Zone được phân công; admin được đánh giá tất cả Zone.</p>
-      <p class="findings-message" role="status" aria-live="polite"></p>
     </div>`;
 
     const form = host.querySelector("form");
@@ -206,6 +280,7 @@
       view.rowPage = 0;
       view.showDetail = false;
       view.notice = null;
+      view.editingHeader = false;
       render(host, view);
     });
     host.querySelector("[data-finding-zone]").addEventListener("change", (event) => {
@@ -214,6 +289,7 @@
       view.rowPage = 0;
       view.showDetail = false;
       view.notice = null;
+      view.editingHeader = false;
       render(host, view);
     });
     form.querySelectorAll(".findings-date-editor").forEach((wrap) => {
@@ -263,12 +339,85 @@
         circle?.style.setProperty("--progress", `${event.target.value}%`);
       }
     });
+    if (isEditingHeader) {
+      form.querySelectorAll('[name="headerInspector1"], [name="headerInspector2"], [name="headerInspectionDate"]').forEach((inp) => {
+        inp.addEventListener("keydown", (e) => {
+          if (e.key === "Enter") {
+            e.preventDefault();
+            host.querySelector('[data-finding-action="save-header"]')?.click();
+          }
+        });
+      });
+    }
     host.querySelectorAll("[data-finding-action]").forEach((el) => el.addEventListener("click", async () => {
       const action = el.dataset.findingAction;
       if (view.busy) return;
       if (action === "back") { view.showDetail = false; render(host, view); return; }
       if (!canEdit(ctx)) return;
       view.notice = null;
+      if (action === "edit-header") {
+        view.editingHeader = true;
+        render(host, view);
+        host.querySelector('[name="headerInspector1"]')?.focus();
+        return;
+      }
+      if (action === "cancel-header") {
+        view.editingHeader = false;
+        render(host, view);
+        return;
+      }
+      if (action === "save-header") {
+        const inp1 = form.elements.headerInspector1 ? form.elements.headerInspector1.value.trim().slice(0, 20) : "";
+        const inp2 = form.elements.headerInspector2 ? form.elements.headerInspector2.value.trim().slice(0, 20) : "";
+        if (!inp1 && !inp2) {
+          ctx.showToast("Vui lòng nhập người kiểm tra (tối đa 2 người, mỗi người tối đa 20 chữ cái).", true);
+          form.elements.headerInspector1?.focus();
+          return;
+        }
+        const dateInput = form.elements.headerInspectionDate ? form.elements.headerInspectionDate.value.trim() : "";
+        const dateIso = ctx.parseDisplayDateToIso(dateInput);
+        if (!dateIso) {
+          ctx.showToast("Vui lòng nhập ngày kiểm tra hợp lệ theo định dạng dd/mm/yyyy.", true);
+          form.elements.headerInspectionDate?.focus();
+          return;
+        }
+        const newInspector = formatInspectors(inp1, inp2);
+        const targetAreaId = areas.find((a) => `id:${a.id}` === view.zoneFilter)?.id || (areas.length === 1 ? areas[0].id : "");
+        const targetRecords = periodRecords.filter((item) => resolveAreaId(item, areas) === targetAreaId);
+        await perform(host, view, async () => {
+          if (targetRecords.length > 0) {
+            const updates = targetRecords.map((r) => ({
+              ...clone(r),
+              inspector: newInspector,
+              inspectionDate: dateIso,
+              updatedAt: new Date().toISOString(),
+              updatedBy: ctx.currentUser.id,
+            }));
+            if (updates.length > 1) {
+              await ctx.saveFiveSFindingsBatch(updates);
+            } else {
+              await ctx.saveFiveSFinding(updates[0]);
+            }
+            ctx.state.fiveSFindings = ctx.state.fiveSFindings.map((item) => {
+              const u = updates.find((x) => x.id === item.id);
+              return u || item;
+            });
+          } else {
+            const targetArea = areas.find((a) => a.id === targetAreaId);
+            const data = fresh(ctx, view.periodId);
+            data.areaId = targetAreaId;
+            data.area = targetArea ? zoneLabel(targetArea) : "";
+            data.inspector = newInspector;
+            data.inspectionDate = dateIso;
+            data.updatedAt = new Date().toISOString();
+            data.updatedBy = ctx.currentUser.id;
+            await ctx.saveFiveSFinding(data);
+            ctx.state.fiveSFindings = [...(ctx.state.fiveSFindings || []), data];
+          }
+          view.editingHeader = false;
+        }, "Đã cập nhật người kiểm tra và ngày kiểm tra.");
+        return;
+      }
       if (action === "new") { openIssueModal(host, view); return; }
       if (action === "edit" && canEditSheet(ctx, saved)) { openIssueModal(host, view, saved, view.issueIndex); return; }
       if (action === "cancel") { view.draft = null; view.addingIssues = false; view.appendExisting = false; view.editIssueIndex = null; }
@@ -304,7 +453,7 @@
         return;
       }
       render(host, view);
-      if (action === "new" || action === "add-row") host.querySelector(`[data-row="${view.openRow}"][data-field="problem"]`)?.focus();
+      if (action === "new" || action === "add-row") (host.querySelector(`[data-row="${view.openRow}"][data-field="location"]`) || host.querySelector(`[data-row="${view.openRow}"][data-field="problem"]`))?.focus();
     }));
     host.querySelectorAll("[data-remove-row]").forEach((el) => el.addEventListener("click", () => {
       if (view.busy || !view.draft || !canEdit(ctx)) return;
@@ -378,12 +527,31 @@
     const areas = sortedAreas(ctx, periodId);
     const zoneOptions = new Map(areas.map((area) => [area.id, zoneLabel(area)]));
     records.forEach((record) => { const id = resolveAreaId(record, areas) || record.areaId || shortZoneLabel(record.area); if (!zoneOptions.has(id)) zoneOptions.set(id, shortZoneLabel(record.area)); });
+    const getMobileAreaInspectors = (targetAreaId) => {
+      if (!targetAreaId) return [];
+      const targetRecords = records.filter((item) => resolveAreaId(item, areas) === targetAreaId);
+      return [...new Set(targetRecords.flatMap((item) => parseInspectors(item.inspector)))].slice(0, 2);
+    };
+    const getMobileAreaDate = (targetAreaId) => {
+      if (!targetAreaId) return "";
+      const targetRecords = records.filter((item) => resolveAreaId(item, areas) === targetAreaId);
+      return targetRecords.find((item) => item.inspectionDate)?.inspectionDate || targetRecords[0]?.inspectionDate || "";
+    };
     const reset = (areaId = "") => {
       view.mobileEdit = null;
       view.mobileDraft = fresh(ctx, periodId, true);
       const allowed = editableAreas(ctx, periodId);
       const area = allowed.find((item) => item.id === areaId) || (allowed.length === 1 ? allowed[0] : null);
-      if (area) { view.mobileDraft.areaId = area.id; view.mobileDraft.area = zoneLabel(area); }
+      if (area) {
+        view.mobileDraft.areaId = area.id;
+        view.mobileDraft.area = zoneLabel(area);
+        const areaInspectors = getMobileAreaInspectors(area.id);
+        if (areaInspectors.length) {
+          view.mobileDraft.inspector = formatInspectors(areaInspectors[0], areaInspectors[1]);
+        }
+        const areaDate = getMobileAreaDate(area.id);
+        if (areaDate) view.mobileDraft.inspectionDate = areaDate;
+      }
     };
     if (!view.mobileDraft || view.mobileDraft.periodId !== periodId) reset();
     const draft = view.mobileDraft;
@@ -393,15 +561,20 @@
       ? dateEditor(value, `name="${name}"`, writable && !view.mobileEdit, esc, required)
       : `<input name="${name}" value="${esc(value || "")}" maxlength="200" ${required ? "required" : ""} ${!writable || view.mobileEdit ? "disabled" : ""}>`;
     const field = (label, html, wide = false) => `<label class="findings-mobile-field ${wide ? "is-wide" : ""}"><span>${label}</span>${html}</label>`;
-    const labels = ["Vấn đề 5S *", "Phân loại Stop 6", "Phân loại 5S", "Vị trí", "Ca làm việc", "Biện pháp khắc phục", "Đảm nhiệm (PIC)", "Hạn hoàn thành", "Tiến độ"];
+    const labels = ["Vị trí", "Vấn đề 5S *", "Hạng mục", "Ca làm việc", "Biện pháp khắc phục", "Hạn hoàn thành", "Tiến độ"];
     host.innerHTML = `<div class="findings-page findings-mobile findings-mobile-single">
       <form class="findings-form mobile-safety-form" data-mobile-issue-form>
         <div class="mobile-info-banner"><strong>${view.mobileEdit ? writable ? "Sửa vấn đề 5S" : "Thông tin vấn đề 5S" : "Thông tin vấn đề 5S"}</strong><span>${periodId ? esc(ctx.periodLabel(ctx.getPeriod(periodId))) : "Chưa có kỳ đánh giá đang mở"}</span></div>
         <div class="findings-mobile-grid">
           ${field("Khu vực (Zone) *", zoneInput(draft, ctx, writable, esc))}
           ${field("Ngày kiểm tra *", input("inspectionDate", draft.inspectionDate, "date", true))}
-          ${field("Người kiểm tra *", input("inspector", draft.inspector, "text", true), true)}
-          ${fields.map((key, index) => field(labels[index], cell(draft.rows[0], key, 0, labels[index], writable, esc, true), ["problem", "countermeasure", "owner"].includes(key))).join("")}
+          ${field("Người kiểm tra *", `
+            <div class="findings-inspectors-inputs">
+              <input name="inspector1" value="${esc(parseInspectors(draft.inspector)[0] || "")}" maxlength="20" placeholder="Người kiểm tra 1" required ${!writable || view.mobileEdit ? "disabled" : ""}>
+              <input name="inspector2" value="${esc(parseInspectors(draft.inspector)[1] || "")}" maxlength="20" placeholder="Người kiểm tra 2" ${!writable || view.mobileEdit ? "disabled" : ""}>
+            </div>
+          `, true)}
+          ${fields.map((key, index) => field(labels[index], cell(draft.rows[0], key, 0, labels[index], writable, esc, true), ["location", "problem", "countermeasure"].includes(key))).join("")}
         </div>
         <div class="findings-mobile-submit">${writable ? `<div class="mobile-fixed-save"><button type="submit">${view.mobileEdit ? "LƯU THAY ĐỔI" : "LƯU VẤN ĐỀ 5S"}</button></div>` : '<span class="findings-readonly">Chỉ xem — bạn không có quyền thêm, sửa, xóa vấn đề 5S trong kỳ hoặc Zone này.</span><div class="mobile-fixed-save"><button type="button" data-findings-denied>LƯU VẤN ĐỀ 5S</button></div>'}
         ${view.mobileEdit ? `<button type="button" data-mobile-reset>${writable ? "Hủy sửa" : "Đóng chi tiết"}</button>${writable ? '<button type="button" class="findings-remove-issue" data-mobile-delete>Xóa vấn đề</button>' : ""}` : ""}</div>
@@ -419,7 +592,9 @@
       if (!writable) return;
       draft.areaId = form.elements.areaId.value;
       draft.area = zoneOptions.get(draft.areaId) || "";
-      draft.inspector = form.elements.inspector.value.trim();
+      const n1 = form.elements.inspector1 ? form.elements.inspector1.value.trim().slice(0, 20) : "";
+      const n2 = form.elements.inspector2 ? form.elements.inspector2.value.trim().slice(0, 20) : "";
+      draft.inspector = formatInspectors(n1, n2);
       draft.inspectionDate = ctx.parseDisplayDateToIso(form.elements.inspectionDate.value) || form.elements.inspectionDate.value.trim();
       form.querySelectorAll("[data-field]").forEach((input) => { draft.rows[0][input.dataset.field] = input.dataset.field === "dueDate" ? ctx.parseDisplayDateToIso(input.value) || input.value.trim() : input.value.trim(); });
     };
@@ -427,6 +602,20 @@
     form.addEventListener("change", (event) => {
       capture();
       if (event.target.dataset.field === "progress") event.target.parentElement.querySelector(".findings-progress")?.style.setProperty("--progress", `${event.target.value}%`);
+    });
+    form.elements.areaId?.addEventListener("change", (event) => {
+      const selectedId = event.target.value;
+      if (!selectedId) return;
+      const [m1, m2] = getMobileAreaInspectors(selectedId);
+      if (form.elements.inspector1) form.elements.inspector1.value = m1 || String(ctx.currentUser?.name || ctx.currentUser?.username || "").trim().slice(0, 20);
+      if (form.elements.inspector2) form.elements.inspector2.value = m2 || "";
+      const date = getMobileAreaDate(selectedId) || ctx.todayIsoDate();
+      if (form.elements.inspectionDate) {
+        form.elements.inspectionDate.value = displayDate(date);
+        const cal = form.querySelector(".findings-date-calendar");
+        if (cal) cal.value = date;
+      }
+      capture();
     });
     form.querySelectorAll(".findings-date-editor").forEach((wrap) => {
       const input = wrap.querySelector("[data-finding-date]");
@@ -462,6 +651,9 @@
       const row = clone(draft.rows[0]);
       if (!deleting && !row.problem) return message(host, "Vui lòng nhập vấn đề 5S.", true);
       const date = ctx.parseDisplayDateToIso(displayDate(draft.inspectionDate));
+      const n1 = form.elements.inspector1 ? form.elements.inspector1.value.trim() : "";
+      const n2 = form.elements.inspector2 ? form.elements.inspector2.value.trim() : "";
+      if (!deleting && (n1.length > 20 || n2.length > 20)) return message(host, "Mỗi tên người kiểm tra tối đa 20 chữ cái.", true);
       if (!deleting && (!date || !draft.inspector)) return message(host, "Vui lòng nhập người kiểm tra và ngày hợp lệ (dd/mm/yyyy).", true);
       if (!deleting && row.dueDate && !ctx.parseDisplayDateToIso(displayDate(row.dueDate))) return message(host, "Hạn hoàn thành không hợp lệ (dd/mm/yyyy).", true);
       row.dueDate = row.dueDate ? ctx.parseDisplayDateToIso(displayDate(row.dueDate)) : "";
@@ -498,6 +690,37 @@
     const areas = writable ? editableAreas(ctx, periodId) : sortedAreas(ctx, periodId);
     const esc = ctx.escapeHtml;
     const areaId = editing ? resolveAreaId(record, areas) : areas.find((area) => `id:${area.id}` === view.zoneFilter)?.id || (areas.length === 1 ? areas[0].id : "");
+    const periodRecords = sheets(ctx).filter((item) => resolvePeriodId(item, ctx.getPeriodsByType(ctx.FIVE_S_PERIOD_TYPE)) === periodId);
+    const getAreaInspectors = (targetAreaId) => {
+      if (!targetAreaId) return [];
+      const targetRecords = periodRecords.filter((item) => resolveAreaId(item, areas) === targetAreaId);
+      return [...new Set(targetRecords.flatMap((item) => parseInspectors(item.inspector)))].slice(0, 2);
+    };
+    const getAreaInspectionDate = (targetAreaId) => {
+      if (!targetAreaId) return "";
+      const targetRecords = periodRecords.filter((item) => resolveAreaId(item, areas) === targetAreaId);
+      return targetRecords.find((item) => item.inspectionDate)?.inspectionDate || targetRecords[0]?.inspectionDate || "";
+    };
+    let initN1 = "";
+    let initN2 = "";
+    if (editing && record?.inspector) {
+      const parsed = parseInspectors(record.inspector);
+      initN1 = parsed[0] || "";
+      initN2 = parsed[1] || "";
+      if (!initN2) {
+        const areaInspectors = getAreaInspectors(areaId);
+        const second = areaInspectors.find((n) => n.toLowerCase() !== initN1.toLowerCase());
+        if (second) initN2 = second;
+      }
+    } else {
+      const areaInspectors = getAreaInspectors(areaId);
+      initN1 = areaInspectors[0] || "";
+      initN2 = areaInspectors[1] || "";
+      if (!initN1 && !initN2) {
+        initN1 = String(ctx.currentUser?.name || ctx.currentUser?.username || "").trim().slice(0, 20);
+      }
+    }
+    const initialDate = (editing ? record?.inspectionDate : null) || getAreaInspectionDate(areaId) || ctx.todayIsoDate();
     const originalRow = editing ? clone(record.rows[rowIndex]) : null;
     const originalMetadata = editing ? JSON.stringify([record.areaId, record.area, record.inspectionDate, record.inspector, record.periodId]) : null;
     const hasChanged = (target) => !target || JSON.stringify(target.rows?.[rowIndex]) !== JSON.stringify(originalRow)
@@ -513,8 +736,13 @@
         <div class="findings-page"><div class="safety-record-entry-wrap"><table class="safety-record-entry-table findings-issue-entry-table">
           <thead><tr><th>Zone</th><th>Ngày kiểm tra</th><th>Người kiểm tra</th>${headings.map((heading) => `<th>${heading}</th>`).join("")}</tr></thead>
           <tbody><tr><td data-label="Zone"><select name="areaId" required ${writable ? "" : "disabled"}><option value="">Chọn Zone 5S</option>${areas.map((area) => `<option value="${esc(area.id)}" ${area.id === areaId ? "selected" : ""}>${esc(zoneLabel(area))}</option>`).join("")}</select></td>
-          <td data-label="Ngày kiểm tra">${dateEditor(editing ? record.inspectionDate : ctx.todayIsoDate(), 'name="inspectionDate"', writable, esc, true)}</td>
-          <td data-label="Người kiểm tra"><input name="inspector" required maxlength="200" value="${esc(editing ? record.inspector : ctx.currentUser.name || ctx.currentUser.username || "")}" ${writable ? "" : "disabled"}></td>
+          <td data-label="Ngày kiểm tra">${dateEditor(initialDate, 'name="inspectionDate"', writable, esc, true)}</td>
+          <td data-label="Người kiểm tra">
+            <div class="findings-inspectors-inputs">
+              <input name="inspector1" required maxlength="20" placeholder="Người kiểm tra 1" value="${esc(initN1)}" ${writable ? "" : "disabled"}>
+              <input name="inspector2" maxlength="20" placeholder="Người kiểm tra 2" value="${esc(initN2)}" ${writable ? "" : "disabled"}>
+            </div>
+          </td>
           ${fields.map((key, index) => `<td data-label="${esc(headings[index])}">${cell(row, key, 0, headings[index], writable, esc, mobile)}</td>`).join("")}</tr></tbody>
         </table></div></div><p class="findings-modal-error" role="alert"></p>`,
       async onSubmit(_formData, form) {
@@ -527,13 +755,24 @@
         const inspectionDate = ctx.parseDisplayDateToIso(form.elements.inspectionDate.value);
         if (!selected || !editableAreas(ctx, periodId).some((area) => area.id === selected.id)) { error.textContent = "Vui lòng chọn Zone được phân công."; return false; }
         if (!issue.problem) { error.textContent = "Vui lòng nhập vấn đề 5S."; form.querySelector('[data-field="problem"]').focus(); return false; }
-        if (!inspectionDate || !form.elements.inspector.value.trim()) { error.textContent = "Vui lòng nhập người kiểm tra và ngày hợp lệ (dd/mm/yyyy)."; return false; }
+        const n1 = form.elements.inspector1 ? form.elements.inspector1.value.trim().slice(0, 20) : "";
+        const n2 = form.elements.inspector2 ? form.elements.inspector2.value.trim().slice(0, 20) : "";
+        if (!n1 && !n2) {
+          error.textContent = "Vui lòng nhập người kiểm tra (tối đa 2 người, mỗi người tối đa 20 chữ cái).";
+          form.elements.inspector1?.focus();
+          return false;
+        }
+        if ((form.elements.inspector1 && form.elements.inspector1.value.trim().length > 20) || (form.elements.inspector2 && form.elements.inspector2.value.trim().length > 20)) {
+          error.textContent = "Mỗi tên người kiểm tra tối đa 20 chữ cái.";
+          return false;
+        }
+        const inspector = formatInspectors(n1, n2);
+        if (!inspectionDate || !inspector) { error.textContent = "Vui lòng nhập người kiểm tra và ngày hợp lệ (dd/mm/yyyy)."; return false; }
         if (issue.dueDate && !ctx.parseDisplayDateToIso(issue.dueDate)) { error.textContent = "Hạn hoàn thành không hợp lệ (dd/mm/yyyy)."; return false; }
         issue.dueDate = issue.dueDate ? ctx.parseDisplayDateToIso(issue.dueDate) : "";
-        const target = editing ? ctx.state.fiveSFindings.find((item) => item.id === record.id) : findMatchingSheet(ctx, periodId, selected.id, form.elements.inspector.value.trim(), inspectionDate);
+        const target = editing ? ctx.state.fiveSFindings.find((item) => item.id === record.id) : findMatchingSheet(ctx, periodId, selected.id, inspector, inspectionDate);
         if (editing && hasChanged(target)) { error.textContent = "Vấn đề đã thay đổi. Đóng cửa sổ và mở lại để sửa dữ liệu mới nhất."; return false; }
         if (target && !canEditSheet(ctx, target)) { error.textContent = "Bạn không có quyền thay đổi Zone này."; return false; }
-        const inspector = form.elements.inspector.value.trim();
         const metadataChanged = editing && (resolveAreaId(target, areas) !== selected.id || target.inspector !== inspector || target.inspectionDate !== inspectionDate);
         // Legacy records share inspection details across rows. Split only the edited
         // issue when those details change, and persist both records atomically.
@@ -630,10 +869,23 @@
       calendar.addEventListener("input", () => { input.value = displayDate(calendar.value); });
       calendar.addEventListener("change", () => { input.value = displayDate(calendar.value); });
     });
+    form.elements.areaId?.addEventListener("change", (event) => {
+      const selectedId = event.target.value;
+      if (!selectedId) return;
+      const [n1, n2] = getAreaInspectors(selectedId);
+      if (form.elements.inspector1) form.elements.inspector1.value = n1 || String(ctx.currentUser?.name || ctx.currentUser?.username || "").trim().slice(0, 20);
+      if (form.elements.inspector2) form.elements.inspector2.value = n2 || "";
+      const date = getAreaInspectionDate(selectedId) || ctx.todayIsoDate();
+      if (form.elements.inspectionDate) {
+        form.elements.inspectionDate.value = displayDate(date);
+        const calendar = form.querySelector(".findings-date-calendar");
+        if (calendar) calendar.value = date;
+      }
+    });
     form.querySelector('[data-field="progress"]')?.addEventListener("change", (event) => {
       event.target.parentElement.querySelector(".findings-progress")?.style.setProperty("--progress", `${event.target.value}%`);
     });
-    if (writable && (editing || areaId) && !mobile) form.querySelector('[data-field="problem"]').focus();
+    if (writable && (editing || areaId) && !mobile) (form.querySelector('[data-field="location"]') || form.querySelector('[data-field="problem"]'))?.focus();
   }
 
   function mobileList(records, periodRecords, esc) {
@@ -655,7 +907,7 @@
   function mobileForm(sheet, ctx, editing, view, valueInput) {
     const esc = ctx.escapeHtml;
     const field = (label, input, wide = false) => `<label class="findings-mobile-field ${wide ? "is-wide" : ""}"><span>${label}</span>${input}</label>`;
-    const labels = ["Vấn đề phát hiện", "Phân loại Stop 6", "Phân loại 5S", "Vị trí", "Ca làm việc", "Biện pháp khắc phục", "Người thực hiện", "Hạn hoàn thành", "Tiến độ"];
+    const labels = ["Vị trí", "Vấn đề phát hiện", "Hạng mục", "Ca làm việc", "Biện pháp khắc phục", "Hạn hoàn thành", "Tiến độ"];
     const selectedIndex = editing ? view.editIssueIndex : view.issueIndex;
     const rows = (sheet.rows || []).map((row, index) => ({ row, index }))
       .filter(({ row, index }) => (editing || rowHasContent(row)) && (!Number.isInteger(selectedIndex) || index === selectedIndex));
@@ -664,13 +916,18 @@
       <div class="findings-mobile-grid">
         ${field("Khu vực (Zone) *", zoneInput(sheet, ctx, editing, esc))}
         ${field("Ngày kiểm tra *", valueInput("inspectionDate", sheet.inspectionDate, "date", true))}
-        ${field("Người kiểm tra *", valueInput("inspector", sheet.inspector, "text", true), true)}
+        ${field("Người kiểm tra *", `
+          <div class="findings-inspectors-inputs">
+            <input name="inspector1" value="${esc(parseInspectors(sheet.inspector)[0] || "")}" maxlength="20" placeholder="Người kiểm tra 1" required ${editing ? "" : "disabled"}>
+            <input name="inspector2" value="${esc(parseInspectors(sheet.inspector)[1] || "")}" maxlength="20" placeholder="Người kiểm tra 2" ${editing ? "" : "disabled"}>
+          </div>
+        `, true)}
       </div>
     </div>
     <div class="findings-list-heading"><h3>VẤN ĐỀ PHÁT HIỆN</h3><span>${rows.length} vấn đề</span></div>
     <div class="findings-issue-list">${rows.map(({ row, index }) => `<details class="findings-issue-card" ${!editing || Number.isInteger(selectedIndex) || index === (view.openRow || 0) ? "open" : ""}>
       <summary><span class="findings-issue-number">${index + 1}</span><span>${esc(row.problem || "Vấn đề mới")}</span><span class="findings-status ${Number(row.progress) === 100 ? "is-done" : ""}">${Number(row.progress) || 0}%</span></summary>
-      <div class="findings-mobile-grid">${fields.map((key, col) => field(labels[col], cell(row, key, index, labels[col], editing, esc, true), ["problem", "countermeasure"].includes(key))).join("")}</div>
+      <div class="findings-mobile-grid">${fields.map((key, col) => field(labels[col], cell(row, key, index, labels[col], editing, esc, true), ["location", "problem", "countermeasure"].includes(key))).join("")}</div>
       ${editing ? `<button type="button" class="findings-remove-issue" data-remove-row="${index}" aria-label="Xóa vấn đề ${index + 1}">Xóa vấn đề</button>` : ""}
     </details>`).join("")}</div>`;
   }
@@ -684,16 +941,26 @@
       return `<div class="findings-progress" style="--progress:${progress}%" aria-hidden="true"></div>${editing ? `<select ${attrs}>${options(["0", "25", "50", "75", "100"].map((v) => [v, v + "%"]))}</select>` : `<span>${progress}%</span>`}`;
     }
     if (key === "dueDate") return dateEditor(value, attrs, editing, esc);
-    if (!editing) return `<span>${esc(value)}</span>`;
-    if (key === "stop6") return `<select ${attrs}>${options([["", "Chưa chọn"], ...STOP6.map(([id, text]) => [id, mobile ? `${id} · ${text}` : id])])}</select>`;
-    if (key === "fiveS") return `<select ${attrs}>${options([["", "Chưa chọn"], ...["S1", "S2", "S3", "S4", "S5"].map((v) => [v, v])])}</select>`;
-    if (mobile && ["location", "shift", "owner"].includes(key)) return `<input type="text" ${attrs} value="${esc(value)}" maxlength="2000">`;
+    if (!editing) {
+      if (key === "fiveS") return `<span>${esc(findingCategoryLabel(value))}</span>`;
+      return `<span>${esc(value)}</span>`;
+    }
+    if (key === "fiveS") {
+      const selectedId = findingCategoryNormalized(value);
+      return `<select ${attrs}><option value="">Chưa chọn</option>${FINDING_CATEGORIES.map(([id, text]) => `<option value="${esc(text)}" ${selectedId === id || value === text ? "selected" : ""}>${esc(text)}</option>`).join("")}</select>`;
+    }
+    if (mobile && ["location", "shift"].includes(key)) return `<input type="text" ${attrs} value="${esc(value)}" maxlength="2000">`;
     return `<textarea ${attrs} rows="3" maxlength="2000">${esc(value)}</textarea>`;
   }
 
   function collect(form, view) {
     if (!view.draft) return;
-    for (const key of ["areaId", "inspector", "periodId"]) view.draft[key] = form.elements[key].value.trim();
+    for (const key of ["areaId", "periodId"]) view.draft[key] = form.elements[key] ? form.elements[key].value.trim() : (view.draft[key] || "");
+    if (form.elements.inspector1) {
+      view.draft.inspector = formatInspectors(form.elements.inspector1.value, form.elements.inspector2?.value);
+    } else if (form.elements.inspector) {
+      view.draft.inspector = form.elements.inspector.value.trim();
+    }
     const area = view.ctx.getAreasForPeriod(view.draft.periodId).find((item) => item.id === view.draft.areaId);
     if (area) view.draft.area = `Zone ${area.code}`;
     const readDate = (input) => view.ctx.parseDisplayDateToIso(input.value) || input.value.trim();
@@ -712,9 +979,14 @@
   function message(host, text, error = false) {
     const view = views.get(host);
     if (view) view.notice = { text, error };
+    if (view?.ctx?.showToast && text && text !== "Đang lưu...") {
+      view.ctx.showToast(text, error);
+    }
     const el = host.querySelector(".findings-message");
-    el.textContent = text;
-    el.classList.toggle("is-error", error);
+    if (el) {
+      el.textContent = text;
+      el.classList.toggle("is-error", error);
+    }
   }
 
   async function perform(host, view, action, success) {
@@ -733,6 +1005,6 @@
     }
   }
 
-  window.FiveSFindingsPage = { mount, resolvePeriodId, resolveAreaId };
+  window.FiveSFindingsPage = { mount, resolvePeriodId, resolveAreaId, findingCategoryLabel, FINDING_CATEGORIES, parseInspectors, formatInspectors };
   window.PageRegistry.register({ id: "five-s-findings", title: "Vấn đề 5S", render: (ctx) => mount(document.getElementById("tab-five-s-findings"), ctx) });
 })();

@@ -208,7 +208,16 @@
     setFieldVisible(elements.safetyDepartmentFilter, false);
 
     const isAdmin = Boolean(context.isAdminAccount?.(context.currentUser));
-    setButtonVisible(elements.addSafetyRecordButton, isAssessment, context);
+    const activePeriodId = elements.safetyPeriodSelect?.value || context.getActivePeriodId(context.SAFETY_PERIOD_TYPE) || "";
+    const isPeriodOpen = Boolean(activePeriodId && !context.isPeriodArchived(activePeriodId, context.SAFETY_PERIOD_TYPE) && (typeof context.isPeriodOpen === "function" ? context.isPeriodOpen(activePeriodId, context.SAFETY_PERIOD_TYPE) : activePeriodId === context.getActivePeriodId(context.SAFETY_PERIOD_TYPE)));
+    const canAdd = isAssessment && isPeriodOpen && context.canUseSafety(context.currentUser);
+
+    setButtonVisible(elements.addSafetyRecordButton, canAdd, context);
+    if (elements.safetyReadonlyBadge) {
+      const showReadonly = isAssessment && !isPeriodOpen;
+      elements.safetyReadonlyBadge.classList.toggle(SAFETY_REPORT_HIDDEN_CLASS, !showReadonly);
+      elements.safetyReadonlyBadge.hidden = !showReadonly;
+    }
     setButtonVisible(elements.editSafetyMetaButton, isAssessment && isAdmin, context);
     setButtonVisible(elements.sendSafetyMailButton, isAssessment && isAdmin, context);
     const canShowExport = Boolean(reportId);
@@ -645,16 +654,32 @@
   }
 
   function buildRankMatrix(yearRows, context) {
-    return RANK_COLUMNS.map((column) => {
+    const rankDefs = [
+      { value: "A", label: "Rank A" },
+      { value: "B", label: "Rank B" },
+      { value: "C", label: "Rank C" },
+    ];
+    const rankRows = rankDefs.map((column) => {
       const monthly = MONTHS.map((month) => sumIssueCounts(yearRows.filter((row) => {
-        return monthOf(row, context) === month && (!column.value || context.isSafetyLevelSelected(row.score, column.value));
+        return monthOf(row, context) === month && context.isSafetyLevelSelected(row.score, column.value);
       }), context));
       return {
         name: column.label,
+        value: column.value,
         monthly,
         total: monthly.reduce((sum, value) => sum + value, 0),
       };
     });
+
+    const factoryMonthly = MONTHS.map((_, index) => rankRows.reduce((sum, row) => sum + row.monthly[index], 0));
+    const factoryRow = {
+      name: "Nhà máy",
+      value: "",
+      monthly: factoryMonthly,
+      total: factoryMonthly.reduce((sum, value) => sum + value, 0),
+    };
+
+    return [factoryRow, ...rankRows];
   }
 
   function buildStop6Matrix(yearRows, context) {
@@ -740,12 +765,10 @@
 
   function renderRankSummaryTable(matrix, context) {
     const escapeHtml = context.escapeHtml;
-    const totals = MONTHS.map((_, index) => matrix.reduce((sum, row) => sum + row.monthly[index], 0));
-    const grandTotal = totals.reduce((sum, value) => sum + value, 0);
     const rows = matrix.map((row) => '<tr><th class="row-label-cell rank-col-label">' + escapeHtml(row.name) + '</th>' + row.monthly.map((value) => '<td>' + countCell(value) + '</td>').join("") + '<td class="col-total-cell">' + countCell(row.total) + '</td></tr>').join("");
     return '<div class="dashboard-table-wrap rank-summary-wrap" data-drag-scroll><table class="rank-summary-table factory-styled-table">' +
       '<colgroup><col style="width: 74px; min-width: 68px;">' + MONTHS.map(() => '<col style="width: 30px; min-width: 25px;">').join("") + '<col style="width: 42px; min-width: 38px;"></colgroup>' +
-      '<thead><tr><th class="rank-col-label">Cấp bậc</th>' + MONTHS.map((month) => '<th>T' + month + '</th>').join("") + '<th>Tổng</th></tr></thead><tbody>' + rows + '<tr class="factory-total-row"><th class="row-label-cell rank-col-label">Tổng cộng</th>' + totals.map((v) => '<td>' + countCell(v) + '</td>').join("") + '<td class="col-total-cell">' + countCell(grandTotal) + '</td></tr></tbody></table></div>';
+      '<thead><tr><th class="rank-col-label">Cấp bậc</th>' + MONTHS.map((month) => '<th>T' + month + '</th>').join("") + '<th>Tổng</th></tr></thead><tbody>' + rows + '</tbody></table></div>';
   }
 
   function renderRankChart(matrix, context) {
@@ -1217,7 +1240,7 @@
     const completionRatePct = completionDenominator ? Math.round((totalCompletedYtd / completionDenominator) * 100) : 0;
     
     // High Risk Rank A
-    const rankARow = rankMatrix.find((r) => String(r.name).toUpperCase().includes("A"));
+    const rankARow = rankMatrix.find((r) => r.value === "A" || String(r.name).toUpperCase().includes("RANK A"));
     const rankACount = rankARow ? rankARow.total : 0;
     
     // Top STOP 6 hazard
@@ -1731,7 +1754,7 @@
 
     const activePeriod = getPeriod(elements.safetyPeriodSelect?.value || getActivePeriodId(SAFETY_PERIOD_TYPE));
     const activePeriodId = activePeriod?.id || "";
-    const isCurrentPeriodOpen = Boolean(activePeriodId) && activePeriodId === getActivePeriodId(SAFETY_PERIOD_TYPE);
+    const isCurrentPeriodOpen = Boolean(activePeriodId && !isPeriodArchived(activePeriodId, SAFETY_PERIOD_TYPE) && (typeof context.isPeriodOpen === "function" ? context.isPeriodOpen(activePeriodId, SAFETY_PERIOD_TYPE) : activePeriodId === getActivePeriodId(SAFETY_PERIOD_TYPE)));
     const isAdmin = Boolean(context.isAdminAccount?.(context.currentUser));
     const shouldUseAdminScope = activeReport === "assessment" || activeReport === "identification" || activeReport === "factory";
 
@@ -1766,15 +1789,21 @@
     const rawMonthRows = filterRowsByMonth(rawYearRows, filters.month, context);
     const yearRows = isAdmin || shouldUseAdminScope ? rawYearRows : rawYearRows.filter((row) => row.score.periodId === activePeriodId);
     const monthRows = isAdmin || shouldUseAdminScope ? rawMonthRows : rawMonthRows.filter((row) => row.score.periodId === activePeriodId);
-    const canAdd = canUseSafety(context.currentUser) && !isPeriodArchived(activePeriodId) && (isAdmin || isCurrentPeriodOpen);
+    const canAdd = activeReport === "assessment" && canUseSafety(context.currentUser) && isCurrentPeriodOpen;
 
+    setButtonVisible(elements.addSafetyRecordButton, canAdd, context);
     if (elements.addSafetyRecordButton) {
       elements.addSafetyRecordButton.disabled = !canAdd;
       elements.addSafetyRecordButton.title = canAdd ? "Thêm báo cáo an toàn" : "Chỉ xem";
     }
+    if (elements.safetyReadonlyBadge) {
+      const showReadonly = activeReport === "assessment" && !isCurrentPeriodOpen;
+      elements.safetyReadonlyBadge.classList.toggle(SAFETY_REPORT_HIDDEN_CLASS, !showReadonly);
+      elements.safetyReadonlyBadge.hidden = !showReadonly;
+    }
     if (elements.editSafetyMetaButton) {
-      elements.editSafetyMetaButton.disabled = !canAdd;
-      elements.editSafetyMetaButton.title = canAdd ? "Thiết lập báo cáo" : "Chỉ xem";
+      elements.editSafetyMetaButton.disabled = !isCurrentPeriodOpen;
+      elements.editSafetyMetaButton.title = isCurrentPeriodOpen ? "Thiết lập báo cáo" : "Chỉ xem";
     }
 
     const safetyTimeline = context.getSafetyTimeline(filters.year, visibleAreaIds);

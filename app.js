@@ -281,6 +281,13 @@
     summaryScoreSource: document.getElementById("summary-score-source"),
     summaryTable: document.getElementById("summary-table"),
     summaryTitle: document.getElementById("summary-title"),
+    adminScoreSheetSource: document.getElementById("admin-score-sheet-source"),
+    adminScoreSheetPeriod: document.getElementById("admin-score-sheet-period"),
+    adminScoreSheetArea: document.getElementById("admin-score-sheet-area"),
+    adminScoreSheet: document.getElementById("admin-score-sheet"),
+    adminScoreSheetTitle: document.getElementById("admin-score-sheet-title"),
+    adminScoreSheetProgress: document.getElementById("admin-score-sheet-progress"),
+    exportAdminScoreSheetButton: document.getElementById("export-admin-score-sheet-button"),
     exportExcelButton: document.getElementById("export-excel-button"),
     safetyPeriodSelect: document.getElementById("safety-period-select"),
     safetyYearFilter: document.getElementById("safety-year-filter"),
@@ -292,6 +299,7 @@
     safetyTable: document.getElementById("safety-table"),
     safetyAssessmentCaption: document.getElementById("safety-assessment-caption"),
     addSafetyRecordButton: document.getElementById("add-safety-record-button"),
+    safetyReadonlyBadge: document.getElementById("safety-readonly-badge"),
     editSafetyMetaButton: document.getElementById("edit-safety-meta-button"),
     exportSafetyExcelButton: document.getElementById("export-safety-excel-button"),
     sendSafetyMailButton: document.getElementById("send-safety-mail-button"),
@@ -439,6 +447,7 @@
     assessor: "/assessor",
     summary: "/summary",
     "five-s-findings": "/5s-findings",
+    "score-sheets": "/score-sheets",
     "mobile-findings": "/mobile/5s-findings",
     safety: "/safety",
     "issue-stats": "/issue-stats",
@@ -1655,12 +1664,12 @@
     await dbRef("safetyDepartmentGroups").set(payload);
   }
 
-  async function savePeriodSnapshot(period) {
+  async function savePeriodSnapshot(period, writeOptions) {
     if (!period?.id || !period.settingsSnapshot) {
       return;
     }
 
-    await dbRef(`periods/${period.id}/settingsSnapshot`).set(period.settingsSnapshot);
+    await dbRef(`periods/${period.id}/settingsSnapshot`).set(period.settingsSnapshot, writeOptions);
   }
 
   async function ensurePeriodSnapshot(periodId) {
@@ -2038,6 +2047,34 @@
     }
 
     return normalized.sort((a, b) => a.name.localeCompare(b.name, "vi"));
+  }
+
+  function renameDepartmentHeadContact(beforeName, afterName, contacts, type = FIVE_S_PERIOD_TYPE) {
+    const beforeKey = departmentHeadKey(beforeName);
+    const afterKey = departmentHeadKey(afterName);
+    if (!afterKey || normalizeDepartmentHeadName(beforeName) === normalizeDepartmentHeadName(afterName)) return;
+
+    const beforeIndex = contacts.findIndex((contact) => departmentHeadKey(contact.name) === beforeKey);
+    const targetIndex = contacts.findIndex((contact) => departmentHeadKey(contact.name) === afterKey);
+    if (beforeIndex >= 0) {
+      const beforeContact = contacts[beforeIndex];
+      const targetContact = targetIndex >= 0 ? contacts[targetIndex] : null;
+      beforeContact.name = normalizeDepartmentHeadName(afterName);
+      if (targetContact && targetContact !== beforeContact) {
+        beforeContact.emails = mergeEmailLists(beforeContact.emails, targetContact.emails);
+        contacts.splice(targetIndex, 1);
+      }
+      return;
+    }
+
+    if (targetIndex < 0) {
+      contacts.push({
+        id: makeStableId(normalizeCatalogType(type) === SAFETY_PERIOD_TYPE ? "safety-department-head" : "department-head", afterName),
+        name: normalizeDepartmentHeadName(afterName),
+        emails: [],
+        createdAt: new Date().toISOString(),
+      });
+    }
   }
 
   function getPeriods() {
@@ -3469,12 +3506,25 @@
     });
   }
 
-  function areaCheckboxListHtml(selectedIds = [], type = activeAccountScope, periodId = getActivePeriodId(type)) {
+  function areaCheckboxListHtml(selectedIds = [], type = activeAccountScope, periodId = getActivePeriodId(type), managerFilter = null) {
     const catalogType = normalizeCatalogType(type);
     const selected = new Set((selectedIds || []).filter(Boolean));
-    const areas = getAreasForPeriod(periodId).filter((area) => catalogType !== SAFETY_PERIOD_TYPE || isReportableSafetyArea(area));
+    const periodAreas = getAreasForPeriod(periodId)
+      .filter((area) => catalogType !== SAFETY_PERIOD_TYPE || isReportableSafetyArea(area));
+    const areas = periodAreas
+      .filter((area) => {
+        if (!managerFilter) return true;
+        if (!area.scorerId && !area.responsibleName && !area.scorerName) return true;
+        if (managerFilter.managerId && area.scorerId === managerFilter.managerId) return true;
+        const manager = managerFilter.managerId ? getPeriodCatalogManager(periodId, managerFilter.managerId) : null;
+        const assignedName = area.responsibleName || area.scorerName || "";
+        return Boolean(manager && !area.scorerId && assignedName.toLocaleLowerCase("vi") === manager.name.toLocaleLowerCase("vi"));
+      });
     if (!areas.length) {
-      return '<p class="field-hint" style="padding: 10px 12px; margin: 0;">Chưa có zone. Hãy thêm zone ở Danh mục trước.</p>';
+      const message = managerFilter && periodAreas.length
+        ? "Tất cả zone đã có người phụ trách."
+        : "Chưa có zone. Hãy thêm zone ở Danh mục trước.";
+      return `<p class="field-hint" style="padding: 10px 12px; margin: 0;">${escapeHtml(message)}</p>`;
     }
 
     const allChecked = areas.length > 0 && areas.every((area) => selected.has(area.id));
@@ -3554,7 +3604,7 @@
     return getAreasForPeriod(periodId).filter((area) => area.scorerId === managerId).map((area) => area.id);
   }
 
-  async function saveManagerWithAreas(manager, targetAreaIds, type, periodId) {
+  async function saveManagerWithAreas(manager, targetAreaIds, type, periodId, { periodOnly = false } = {}) {
     if (!isAdminAccount(currentUser)) throw new Error("Chỉ admin được phân công Zone.");
     const period = getPeriod(periodId);
     if (!period) throw new Error("Vui lòng mở kỳ đánh giá trước khi phân công Zone.");
@@ -3578,6 +3628,11 @@
     snapshot.managers = [...getPeriodCatalogManagers(type, periodId).filter((item) => item.id !== manager.id), { ...manager }];
     if (snapshot.safetyAreas) snapshot.safetyAreas = cloneValue(snapshot.areas);
     if (snapshot.safetyManagers) snapshot.safetyManagers = cloneValue(snapshot.managers);
+    if (periodOnly) {
+      period.settingsSnapshot = snapshot;
+      await dbRef(`periods/${periodId}/settingsSnapshot`).set(snapshot);
+      return;
+    }
     const rootAreas = getMutableAreas(type).map(assign);
     const rootManagers = [...getMutableManagers(type).filter((item) => item.id !== manager.id), { ...manager }];
     await dbRef("").update({
@@ -4003,13 +4058,18 @@
     table.innerHTML = "";
     table.dataset.periodId = periodId;
 
+    const zoneColumnWidth = 68;
+    const columnWidths = ["46px", "112px", "88px", ...areas.map(() => `${zoneColumnWidth}px`), "66px"];
     const colgroup = document.createElement("colgroup");
-    [["46px"], ["112px"], ["88px"], ...areas.map(() => ["43px"]), ["66px"]].forEach(([width]) => {
+    columnWidths.forEach((width) => {
       const col = document.createElement("col");
       col.style.width = width;
       colgroup.appendChild(col);
     });
     table.appendChild(colgroup);
+    table.style.tableLayout = "fixed";
+    table.style.width = `${columnWidths.reduce((sum, width) => sum + Number.parseFloat(width), 0)}px`;
+    table.style.minWidth = table.style.width;
 
     const titleRow = document.createElement("tr");
     const titleText = "Điểm Chi Tiết Theo Từng Hạng Mục - " + getScoreSourceLabel(scoreSource) + " (" + periodLabel(period) + ")";
@@ -4071,7 +4131,7 @@
         button.dataset.action = "edit-area-responsible";
         button.dataset.id = area.id;
         button.dataset.periodId = periodId;
-        button.title = "Sửa người phụ trách zone / người được đánh giá";
+        button.title = "Sửa người phụ trách zone";
         cell.appendChild(button);
       } else {
         cell.textContent = getAreaResponsibleNameForPeriod(periodId, area);
@@ -4590,6 +4650,7 @@
 
   function getAppTitle() {
     if (["five-s-findings", "mobile-findings"].includes(activeTab)) return "Vấn đề 5S";
+    if (activeTab === "score-sheets") return "Phiếu chấm";
     if (activeTab === "safety" || activeTab === "mobile-safety") {
       const report = SAFETY_REPORT_BY_ID[activeSafetyReport];
       if (report?.id === "identification") {
@@ -4777,6 +4838,7 @@
     if (!currentUser) {
       return false;
     }
+    if (tab === "score-sheets") return isAdminAccount(currentUser);
     if (["five-s-findings", "mobile-findings", "mobile-5s", "mobile-safety"].includes(tab)) return true;
 
     if (isViewerAccount(currentUser)) {
@@ -5047,6 +5109,7 @@
         assessor: renderAssessorTab,
         catalog: renderCatalogTab,
         data: renderDataTab,
+        "score-sheets": renderAdminScoreSheetTab,
       },
     };
   }
@@ -5078,11 +5141,12 @@
     const safetyActive = getActivePeriodId(SAFETY_PERIOD_TYPE);
     const isAdmin = isAdminAccount(currentUser);
     const canViewAllPeriods = isAdmin || isViewerAccount(currentUser) || isDepartmentHeadAccount(currentUser);
+    const canViewAllSafetyPeriods = canViewAllPeriods || canUseSafety(currentUser);
 
     const visibleFiveSPeriods = canViewAllPeriods
       ? fiveSPeriods
       : fiveSPeriods.filter((period) => period.id === fiveSActive);
-    const visibleSafetyPeriods = canViewAllPeriods
+    const visibleSafetyPeriods = canViewAllSafetyPeriods
       ? safetyPeriods
       : safetyPeriods.filter((period) => period.id === safetyActive);
     const currentSafetyPeriods = safetyPeriods.filter((period) => period.id === safetyActive);
@@ -5092,22 +5156,42 @@
       select.innerHTML = makeOptions(visibleFiveSPeriods);
       select.value = visibleFiveSPeriods.some((period) => period.id === fiveSActive) ? fiveSActive : visibleFiveSPeriods[0]?.id || "";
     });
+    if (elements.adminScoreSheetPeriod) {
+      const selectedPeriodId = elements.adminScoreSheetPeriod.value;
+      const adminPeriods = isAdmin ? fiveSPeriods : [];
+      elements.adminScoreSheetPeriod.innerHTML = makeOptions(adminPeriods);
+      elements.adminScoreSheetPeriod.value = adminPeriods.some((period) => period.id === selectedPeriodId)
+        ? selectedPeriodId
+        : adminPeriods.some((period) => period.id === fiveSActive)
+          ? fiveSActive
+          : adminPeriods[0]?.id || "";
+    }
     if (elements.safetyPeriodSelect) {
-      const safetySelectPeriods = canViewAllPeriods ? visibleSafetyPeriods : currentSafetyPeriods;
+      const currentSelected = elements.safetyPeriodSelect.value;
+      const safetySelectPeriods = canViewAllSafetyPeriods ? visibleSafetyPeriods : currentSafetyPeriods;
       elements.safetyPeriodSelect.innerHTML = safetySelectPeriods.length
         ? makeOptions(safetySelectPeriods)
         : "<option value=\"\">" + escapeHtml(currentDateDisplay()) + "</option>";
-      elements.safetyPeriodSelect.value = safetySelectPeriods.some((period) => period.id === safetyActive) ? safetyActive : safetySelectPeriods[0]?.id || "";
-      elements.safetyPeriodSelect.disabled = !canViewAllPeriods;
-      elements.safetyPeriodSelect.title = canViewAllPeriods
+      if (currentSelected && safetySelectPeriods.some((period) => period.id === currentSelected)) {
+        elements.safetyPeriodSelect.value = currentSelected;
+      } else {
+        elements.safetyPeriodSelect.value = safetySelectPeriods.some((period) => period.id === safetyActive) ? safetyActive : safetySelectPeriods[0]?.id || "";
+      }
+      elements.safetyPeriodSelect.disabled = !canViewAllSafetyPeriods;
+      elements.safetyPeriodSelect.title = canViewAllSafetyPeriods
         ? "Chọn kỳ đánh giá an toàn để xem"
         : currentSafetyPeriods[0]
           ? "Kỳ đánh giá an toàn đang mở hiện tại"
           : "Chưa có kỳ đánh giá an toàn đang mở";
     }
     if (elements.issueStatsPeriodSelect) {
+      const currentSelected = elements.issueStatsPeriodSelect.value;
       elements.issueStatsPeriodSelect.innerHTML = makeOptions(visibleSafetyPeriods);
-      elements.issueStatsPeriodSelect.value = visibleSafetyPeriods.some((period) => period.id === safetyActive) ? safetyActive : visibleSafetyPeriods[0]?.id || "";
+      if (currentSelected && visibleSafetyPeriods.some((period) => period.id === currentSelected)) {
+        elements.issueStatsPeriodSelect.value = currentSelected;
+      } else {
+        elements.issueStatsPeriodSelect.value = visibleSafetyPeriods.some((period) => period.id === safetyActive) ? safetyActive : visibleSafetyPeriods[0]?.id || "";
+      }
     }
 
     const today = todayIsoDate();
@@ -5229,7 +5313,7 @@
 
   function renderCatalogAssessorZoneList() {
     if (elements.scorerZoneList) {
-      elements.scorerZoneList.innerHTML = areaCheckboxListHtml([], activeCatalogScope, getActivePeriodId(activeCatalogScope));
+      elements.scorerZoneList.innerHTML = areaCheckboxListHtml([], activeCatalogScope, getActivePeriodId(activeCatalogScope), { managerId: "" });
       refreshSelectAllStates(elements.scorerZoneList);
     }
     if (!elements.catalogAssessorZoneList) {
@@ -5508,7 +5592,59 @@
     });
   }
 
-  function renderAssessorFourMTable(table, { periodId, area, scoreSource = SCORE_SOURCE_ASSESSOR, editable = false }) {
+  function populateAdminScoreSheetAreas() {
+    const periodId = elements.adminScoreSheetPeriod?.value || "";
+    const areas = getAreasForPeriod(periodId);
+    const selectedAreaId = elements.adminScoreSheetArea?.value || "";
+    if (!elements.adminScoreSheetArea) return areas;
+    elements.adminScoreSheetArea.innerHTML = areas
+      .map((area) => `<option value="${escapeHtml(area.id)}">Zone ${escapeHtml(area.code)} · ${escapeHtml(getAreaResponsibleNameForPeriod(periodId, area))}</option>`)
+      .join("");
+    elements.adminScoreSheetArea.value = areas.some((area) => area.id === selectedAreaId) ? selectedAreaId : areas[0]?.id || "";
+    return areas;
+  }
+
+  function renderAdminScoreSheetTab() {
+    if (!elements.adminScoreSheet) return;
+    const periodId = elements.adminScoreSheetPeriod?.value || "";
+    const period = getPeriod(periodId);
+    const scoreSource = normalizeScoreSource(elements.adminScoreSheetSource?.value || SCORE_SOURCE_ASSESSOR);
+    const areas = populateAdminScoreSheetAreas();
+    const area = areas.find((entry) => entry.id === elements.adminScoreSheetArea?.value) || null;
+
+    if (!period || !area) {
+      elements.adminScoreSheetTitle.textContent = "Phiếu chấm 5S";
+      elements.adminScoreSheetProgress.textContent = "Kỳ đánh giá này chưa có zone.";
+      elements.adminScoreSheet.innerHTML = "";
+      return;
+    }
+
+    const evaluatorName = scoreSource === SCORE_SOURCE_SELF
+      ? getAreaResponsibleNameForPeriod(periodId, area)
+      : getSignatureName(periodId, area, scoreSource) || "Chưa phân công";
+    const completed = getCompletedCellCount(periodId, area, scoreSource);
+    const required = getRequiredCellsForArea(area);
+    elements.adminScoreSheetTitle.textContent = `Phiếu chấm 5S - Zone ${area.code} - ${periodLabel(period)}`;
+    elements.adminScoreSheetProgress.textContent = `Đã chấm ${completed}/${required} ô. Điểm TB zone: ${formatNumber(areaAverage(periodId, area, scoreSource), 2)}`;
+    elements.adminScoreSheet.innerHTML = '<div class="assessor-4m-wrap" data-drag-scroll><table class="matrix-table standard-reference-table assessor-4m-table"></table></div>';
+    renderAssessorFourMTable(elements.adminScoreSheet.querySelector(".assessor-4m-table"), {
+      periodId,
+      area,
+      scoreSource,
+      editable: false,
+      evaluatorName,
+      evaluatorLabel: scoreSource === SCORE_SOURCE_SELF ? "Người phụ trách zone" : "Đánh giá viên",
+    });
+  }
+
+  function renderAssessorFourMTable(table, {
+    periodId,
+    area,
+    scoreSource = SCORE_SOURCE_ASSESSOR,
+    editable = false,
+    evaluatorName = null,
+    evaluatorLabel = "Đánh giá viên",
+  }) {
     if (!table || !area) {
       return;
     }
@@ -5536,7 +5672,10 @@
     const metaRow = document.createElement("tr");
     metaRow.appendChild(setColSpan(createCell("td", "Zone: " + area.code + "\n" + getAreaResponsibleNameForPeriod(periodId, area), "standard-reference-meta-cell assessor-4m-meta"), 2));
     metaRow.appendChild(setColSpan(createCell("td", "Kỳ: " + periodLabel(period) + "\nNguồn: " + getScoreSourceLabel(normalizedSource), "standard-reference-meta-cell assessor-4m-meta"), 2));
-    metaRow.appendChild(setColSpan(createCell("td", "Đánh giá viên:\n" + getAccountDisplayName(currentUser, FIVE_S_PERIOD_TYPE, periodId), "standard-reference-meta-cell assessor-4m-meta"), 3));
+    const displayedEvaluatorName = evaluatorName === null
+      ? getAccountDisplayName(currentUser, FIVE_S_PERIOD_TYPE, periodId)
+      : evaluatorName;
+    metaRow.appendChild(setColSpan(createCell("td", evaluatorLabel + ":\n" + displayedEvaluatorName, "standard-reference-meta-cell assessor-4m-meta"), 3));
     const metaAverageCell = setColSpan(createCell("td", "Điểm TB:\n" + formatNumber(areaAverage(periodId, area, normalizedSource), 2), "standard-reference-meta-cell assessor-4m-meta assessor-4m-average"), 2);
     metaAverageCell.dataset.averageKind = "area";
     metaAverageCell.dataset.periodId = periodId;
@@ -7491,6 +7630,17 @@
     };
   }
 
+  async function restoreAccountRecords(records) {
+    const writes = (records || []).filter((record) => record?.id).map((record) => {
+      const restored = cloneValue(record);
+      const index = state.accounts.findIndex((account) => account.id === restored.id);
+      if (index >= 0) state.accounts[index] = restored;
+      else state.accounts.push(restored);
+      return dbRef(`accounts/${restored.id}`).set(restored);
+    });
+    await Promise.all(writes);
+  }
+
   async function restoreCatalogState(catalogType, catalogData) {
     if (!catalogData) return;
     const type = catalogType || activeCatalogScope || FIVE_S_PERIOD_TYPE;
@@ -7699,6 +7849,9 @@
         if (beforeCatalog) {
           await restoreCatalogState(catalogType, beforeCatalog);
         }
+        if (Array.isArray(action.beforeAccounts)) {
+          await restoreAccountRecords(action.beforeAccounts);
+        }
         redoStack.push(action);
         showToast(`Hoàn tác: ${action.description || "Thông tin danh mục/tên"}`);
         renderAll();
@@ -7813,6 +7966,9 @@
         }
         if (afterCatalog) {
           await restoreCatalogState(catalogType, afterCatalog);
+        }
+        if (Array.isArray(action.afterAccounts)) {
+          await restoreAccountRecords(action.afterAccounts);
         }
         undoStack.push(action);
         showToast(`Làm lại: ${action.description || "Thông tin danh mục/tên"}`);
@@ -8959,10 +9115,10 @@
     openFormModal({
       title: "Sửa người phụ trách zone",
       html: "<label>" +
-        "<span>Tên người phụ trách zone / người được đánh giá</span>" +
+        "<span>Tên người phụ trách zone</span>" +
         "<input name=\"name\" type=\"text\" value=\"" + escapeHtml(manager.name) + "\" required>" +
       "</label>" +
-      '<div class="form-field"><span>Zone quản lý và tự chấm điểm</span><div class="zone-check-list">' + areaCheckboxListHtml(getManagerAreaIds(id, periodId), catalogType, periodId) + '</div></div>',
+      '<div class="form-field"><span>Zone quản lý và tự chấm điểm</span><div class="zone-check-list">' + areaCheckboxListHtml(getManagerAreaIds(id, periodId), catalogType, periodId, { managerId: id }) + '</div></div>',
       async onSubmit(formData) {
         const name = String(formData.get("name") || "").trim();
         if (!name) {
@@ -8971,14 +9127,13 @@
         }
 
         const beforeSnapshot = capturePeriodSnapshot(periodId);
-        const beforeCatalog = captureCatalogState(catalogType);
         const beforeName = manager.name;
         if (getPeriodCatalogManagers(catalogType, periodId).some((item) => item.id !== id && item.name.toLocaleLowerCase("vi") === name.toLocaleLowerCase("vi"))) {
           showToast("Người phụ trách zone này đã tồn tại trong kỳ đang mở.", true);
           return false;
         }
         try {
-          await saveManagerWithAreas({ ...manager, name }, formData.getAll("areaIds"), catalogType, periodId);
+          await saveManagerWithAreas({ ...manager, name }, formData.getAll("areaIds"), catalogType, periodId, { periodOnly: true });
         } catch (error) {
           showToast(error.message || "Không lưu được phân công Zone.", true);
           return false;
@@ -8995,7 +9150,6 @@
           }),
         ]);
         const afterSnapshot = capturePeriodSnapshot(periodId);
-        const afterCatalog = captureCatalogState(catalogType);
         pushUndoAction({
           type: "catalogOrSettings",
           description: `Sửa người phụ trách: ${beforeName} → ${name}`,
@@ -9003,8 +9157,6 @@
           catalogType,
           beforeSnapshot,
           afterSnapshot,
-          beforeCatalog,
-          afterCatalog,
         });
         showToast("Đã cập nhật người phụ trách zone.");
         renderAll();
@@ -9084,25 +9236,41 @@
       return;
     }
 
-    if (getAreasForPeriod(periodId).some((area) => area.scorerId === id)) {
-      showToast("Người phụ trách zone đang được gán zone trong kỳ này, hãy đổi zone trước khi xóa.", true);
-      return;
-    }
+    const assignedZoneCount = getAreasForPeriod(periodId).filter((area) => area.scorerId === id).length;
 
     openConfirmModal({
       title: "Xóa người phụ trách zone",
-      message: `Xóa ${manager.name}?`,
+      message: assignedZoneCount
+        ? `Xóa ${manager.name}? Phân công của người này trên ${assignedZoneCount} zone sẽ được gỡ.`
+        : `Xóa ${manager.name}?`,
       confirmText: "Xóa",
       danger: true,
       async onConfirm() {
         const beforeSnapshot = capturePeriodSnapshot(periodId);
         const beforeCatalog = captureCatalogState(catalogType);
+        const periodAreas = getMutablePeriodAreas(catalogType, periodId);
+        const rootAreas = getMutableAreas(catalogType);
+        const unassignAreas = (areas) => areas.forEach((area) => {
+          if (area.scorerId !== id) return;
+          area.scorerId = "";
+          area.scorerName = "";
+          area.responsibleName = "";
+        });
+        unassignAreas(periodAreas);
+        unassignAreas(rootAreas);
         const index = managers.findIndex((item) => item.id === id);
         if (index >= 0) {
           managers.splice(index, 1);
         }
+        const rootManagers = getMutableManagers(catalogType);
+        if (rootManagers !== managers) {
+          const rootIndex = rootManagers.findIndex((item) => item.id === id);
+          if (rootIndex >= 0) rootManagers.splice(rootIndex, 1);
+        }
         await Promise.all([
           saveCatalogPeriodSnapshot(catalogType, periodId),
+          dbRef(catalogDbPath(catalogType, "areas")).set(rootAreas),
+          dbRef(`${catalogDbPath(catalogType, "managers")}/${id}`).remove(),
           logAdminChange({
             subjectLabel: "Người phụ trách zone",
             beforeLabel: manager.name,
@@ -9260,35 +9428,57 @@
       return;
     }
 
-    const usedByZones = getAreasForPeriod(periodId).filter((area) => area.assessorId === id);
+    const usedByZones = getAreasForPeriod(periodId).filter((area) => (
+      area.assessorId === id || (Array.isArray(area.assessorIds) && area.assessorIds.includes(id))
+    ));
     const usedByAccounts = state.accounts.filter((account) => hasAccountAccessType(account, catalogType) && getAccountPersonId(account, catalogType) === id);
-    if (usedByZones.length || usedByAccounts.length) {
-      const zones = usedByZones.map((area) => area.code).join(", ") || "không có";
-      const accounts = usedByAccounts.map((account) => account.username).join(", ") || "không có";
-      showToast(`Assessor đang được dùng. Zone: ${zones}; tài khoản: ${accounts}.`, true);
-      return;
-    }
 
     openConfirmModal({
       title: "Xóa assessor",
-      message: `Xóa assessor ${assessor.name}?`,
+      message: usedByZones.length || usedByAccounts.length
+        ? `Xóa assessor ${assessor.name}? Phân công trên ${usedByZones.length} zone và quyền zone của ${usedByAccounts.length} tài khoản sẽ được gỡ.`
+        : `Xóa assessor ${assessor.name}?`,
       confirmText: "Xóa",
       danger: true,
       async onConfirm() {
         const beforeSnapshot = capturePeriodSnapshot(periodId);
         const beforeCatalog = captureCatalogState(catalogType);
+        const beforeAccounts = cloneValue(usedByAccounts);
+        const removeAssessorFromAreas = (areas, areaPeriodId = "") => areas.forEach((area) => {
+          const assignedIds = new Set(Array.isArray(area.assessorIds) ? area.assessorIds : []);
+          if (area.assessorId) assignedIds.add(area.assessorId);
+          if (!assignedIds.has(id)) return;
+          assignedIds.delete(id);
+          area.assessorIds = [...assignedIds];
+          if (area.assessorId === id) {
+            area.assessorId = area.assessorIds[0] || "";
+            const nextAssessor = area.assessorId
+              ? areaPeriodId
+                ? getPeriodCatalogAssessor(areaPeriodId, area.assessorId) || getAssessor(area.assessorId, catalogType)
+                : getAssessor(area.assessorId, catalogType)
+              : null;
+            area.assessorName = nextAssessor?.name || "";
+          }
+        });
+        removeAssessorFromAreas(getMutablePeriodAreas(catalogType, periodId), periodId);
+        const rootAreas = getMutableAreas(catalogType);
+        removeAssessorFromAreas(rootAreas);
+        usedByAccounts.forEach((account) => setAccountAreaIds(account, catalogType, []));
         const index = assessors.findIndex((item) => item.id === id);
         if (index >= 0) {
           assessors.splice(index, 1);
         }
         const rootAssessors = getMutableAssessors(catalogType);
-        const rootIndex = rootAssessors.findIndex((item) => item.id === id);
-        if (rootIndex >= 0) {
-          rootAssessors.splice(rootIndex, 1);
+        if (rootAssessors !== assessors) {
+          const rootIndex = rootAssessors.findIndex((item) => item.id === id);
+          if (rootIndex >= 0) rootAssessors.splice(rootIndex, 1);
         }
+        const afterAccounts = cloneValue(usedByAccounts);
         await Promise.all([
           saveCatalogPeriodSnapshot(catalogType, periodId),
+          dbRef(catalogDbPath(catalogType, "areas")).set(rootAreas),
           dbRef(`${catalogDbPath(catalogType, "assessors")}/${id}`).remove(),
+          ...usedByAccounts.map((account) => dbRef(`accounts/${account.id}`).set(account)),
           logAdminChange({
             subjectLabel: "Assessor",
             beforeLabel: assessor.name,
@@ -9309,6 +9499,8 @@
           afterSnapshot,
           beforeCatalog,
           afterCatalog,
+          beforeAccounts,
+          afterAccounts,
         });
         showToast("Đã xóa assessor.");
       },
@@ -9433,10 +9625,42 @@
       `,
       async onSubmit(formData, form) {
         const beforeSnapshot = capturePeriodSnapshot(targetPeriodId);
-        const beforeCatalog = captureCatalogState(catalogType);
+        const beforeCatalog = isSnapshotEdit ? null : captureCatalogState(catalogType);
+        const previousScorerId = area.scorerId || "";
+        const previousResponsibleName = getAreaResponsibleNameForPeriod(targetPeriodId, area);
+        const previousAssessorId = area.assessorId || "";
+        const previousAssessorName = getAreaConfiguredAssessorNameForPeriod(targetPeriodId, area);
         const previousDepartmentHead = String(area.departmentHead || "").trim();
         const previousSummaryGroup = String(area.summaryGroup || "").trim();
-        const beforeLabel = `${area.code} · ${area.departmentHead || "-"} · ${area.summaryGroup || "-"} · ${getAreaResponsibleNameForPeriod(targetPeriodId, area)} · Assessor: ${getAreaConfiguredAssessorNameForPeriod(targetPeriodId, area) || "-"}`;
+        const mutableAreas = isSnapshotEdit ? getMutablePeriodAreas(catalogType, targetPeriodId) : getMutableAreas(catalogType);
+        const managers = getMutablePeriodManagers(catalogType, targetPeriodId);
+        const assessors = getMutablePeriodAssessors(catalogType, targetPeriodId);
+        const managerToRename = managers.find((manager) => manager.id === previousScorerId)
+          || managers.find((manager) => manager.name.toLocaleLowerCase("vi") === String(previousResponsibleName || "").toLocaleLowerCase("vi"))
+          || null;
+        const assessorToRename = assessors.find((assessor) => assessor.id === previousAssessorId)
+          || assessors.find((assessor) => assessor.name.toLocaleLowerCase("vi") === String(previousAssessorName || "").toLocaleLowerCase("vi"))
+          || null;
+        const scorerMode = String(formData.get("scorerMode") || "catalog");
+        const assessorMode = String(formData.get("assessorMode") || "catalog");
+        const customManagerName = String(formData.get("responsibleName") || "").trim();
+        const customAssessorName = String(formData.get("assessorName") || "").trim();
+        const duplicateManager = scorerMode === "custom" && managerToRename && managers.find((manager) => (
+          manager.id !== managerToRename.id && manager.name.toLocaleLowerCase("vi") === customManagerName.toLocaleLowerCase("vi")
+        ));
+        const duplicateAssessor = !isSafety && assessorMode === "custom" && assessorToRename && assessors.find((assessor) => (
+          assessor.id !== assessorToRename.id && assessor.name.toLocaleLowerCase("vi") === customAssessorName.toLocaleLowerCase("vi")
+        ));
+        if (customManagerName && duplicateManager) {
+          showToast("Tên người phụ trách zone đã được dùng bởi người khác trong kỳ này.", true);
+          return false;
+        }
+        if (customAssessorName && duplicateAssessor) {
+          showToast("Tên assessor đã được dùng bởi người khác trong kỳ này.", true);
+          return false;
+        }
+
+        const beforeLabel = `${area.code} · ${area.departmentHead || "-"} · ${area.summaryGroup || "-"} · ${previousResponsibleName} · Assessor: ${previousAssessorName || "-"}`;
         area.code = String(formData.get("code") || "").trim();
 
         const deptHeadMode = String(formData.get("deptHeadMode") || "catalog");
@@ -9446,18 +9670,52 @@
         } else {
           nextDepartmentHead = normalizeDepartmentHeadName(String(formData.get("departmentHeadCustom") || "").trim());
         }
-        area.departmentHead = nextDepartmentHead;
-
-        if (nextDepartmentHead) {
-          ensureDepartmentHeadContactForPeriod(nextDepartmentHead, catalogType, targetPeriodId);
-          ensureDepartmentHeadContact(nextDepartmentHead, catalogType);
+        const departmentHeadWasRenamed = deptHeadMode === "custom"
+          && previousDepartmentHead
+          && previousDepartmentHead !== nextDepartmentHead;
+        if (departmentHeadWasRenamed) {
+          mutableAreas.forEach((peer) => {
+            if (departmentHeadKey(peer.departmentHead) === departmentHeadKey(previousDepartmentHead)) {
+              peer.departmentHead = nextDepartmentHead;
+            }
+          });
+          const contacts = isSnapshotEdit
+            ? getMutableDepartmentHeadContactsForPeriod(catalogType, targetPeriodId)
+            : getDepartmentHeadContacts(catalogType);
+          renameDepartmentHeadContact(previousDepartmentHead, nextDepartmentHead, contacts, catalogType);
+        } else {
+          area.departmentHead = nextDepartmentHead;
         }
 
-        const submittedSummaryGroup = String(formData.get("summaryGroup") || "").trim();
+        if (nextDepartmentHead) {
+          if (isSnapshotEdit) {
+            ensureDepartmentHeadContactForPeriod(nextDepartmentHead, catalogType, targetPeriodId);
+          } else {
+            ensureDepartmentHeadContact(nextDepartmentHead, catalogType);
+          }
+        }
+
+        const rawSummaryGroup = String(formData.get("summaryGroup") || "").trim();
+        const submittedSummaryGroup = departmentHeadWasRenamed
+          && departmentHeadKey(previousSummaryGroup) === departmentHeadKey(previousDepartmentHead)
+          && departmentHeadKey(rawSummaryGroup) === departmentHeadKey(previousSummaryGroup)
+          ? nextDepartmentHead
+          : rawSummaryGroup;
         const allPeriodAreas = isSnapshotEdit ? getAreasForPeriod(targetPeriodId) : getAreas(catalogType);
         const otherPeerAreas = allPeriodAreas.filter((a) => a.id !== area.id);
+        const summaryGroupWasRenamed = previousSummaryGroup
+          && submittedSummaryGroup
+          && previousSummaryGroup !== submittedSummaryGroup
+          && (departmentHeadWasRenamed || departmentHeadKey(nextDepartmentHead) === departmentHeadKey(previousDepartmentHead));
 
-        if (nextDepartmentHead) {
+        if (summaryGroupWasRenamed) {
+          mutableAreas.forEach((peer) => {
+            if (departmentHeadKey(peer.summaryGroup) === departmentHeadKey(previousSummaryGroup)) {
+              peer.summaryGroup = submittedSummaryGroup;
+            }
+          });
+          area.summaryGroup = submittedSummaryGroup;
+        } else if (nextDepartmentHead) {
           const peerAreasOfNextDept = otherPeerAreas.filter((a) => (
             a.departmentHead && a.departmentHead.trim() === nextDepartmentHead
           ));
@@ -9486,43 +9744,75 @@
           area.summaryGroup = submittedSummaryGroup;
         }
 
-        const scorerMode = String(formData.get("scorerMode") || "catalog");
-        const managers = getMutablePeriodManagers(catalogType, targetPeriodId);
-
         if (scorerMode === "catalog") {
           const selectedScorerId = String(formData.get("scorerId") || "").trim();
           const selectedManager = selectedScorerId ? managers.find((m) => m.id === selectedScorerId) : null;
           if (selectedManager) {
             area.scorerId = selectedManager.id;
+            area.scorerName = selectedManager.name;
             area.responsibleName = selectedManager.name;
           } else {
             area.scorerId = "";
+            area.scorerName = "";
             area.responsibleName = "";
           }
         } else {
-          const customName = String(formData.get("responsibleName") || "").trim();
-          if (customName) {
-            const matchedManager = managers.find((m) => m.name.toLocaleLowerCase("vi") === customName.toLocaleLowerCase("vi"));
-            if (matchedManager) {
-              area.scorerId = matchedManager.id;
-              area.responsibleName = matchedManager.name;
-            } else {
-              const newManager = {
-                id: makeId(catalogType === SAFETY_PERIOD_TYPE ? "safety-scorer" : "scorer"),
-                name: customName,
+          if (customManagerName) {
+            let managerToUpdate = managerToRename;
+            if (!managerToUpdate && previousScorerId) {
+              managerToUpdate = {
+                id: previousScorerId,
+                name: customManagerName,
                 emails: [],
                 createdAt: new Date().toISOString(),
               };
-              managers.push(newManager);
-              const rootManagers = getMutableManagers(catalogType);
-              if (!rootManagers.some((m) => m.name.toLocaleLowerCase("vi") === customName.toLocaleLowerCase("vi"))) {
-                rootManagers.push({ ...newManager });
+              managers.push(managerToUpdate);
+            }
+
+            if (managerToUpdate) {
+              const previousNameKey = String(managerToUpdate.name || previousResponsibleName).toLocaleLowerCase("vi");
+              managerToUpdate.name = customManagerName;
+              mutableAreas.forEach((peer) => {
+                const sameManagerId = peer.scorerId === managerToUpdate.id;
+                const sameLegacyManagerName = !peer.scorerId
+                  && String(peer.responsibleName || peer.scorerName || "").toLocaleLowerCase("vi") === previousNameKey;
+                if (sameManagerId || sameLegacyManagerName) {
+                  peer.scorerId = managerToUpdate.id;
+                  peer.scorerName = customManagerName;
+                  peer.responsibleName = customManagerName;
+                }
+              });
+              area.scorerId = managerToUpdate.id;
+              area.scorerName = customManagerName;
+              area.responsibleName = customManagerName;
+            } else {
+              const matchedManager = managers.find((manager) => manager.name.toLocaleLowerCase("vi") === customManagerName.toLocaleLowerCase("vi"));
+              if (matchedManager) {
+                area.scorerId = matchedManager.id;
+                area.scorerName = matchedManager.name;
+                area.responsibleName = matchedManager.name;
+              } else {
+                const newManager = {
+                  id: makeId(catalogType === SAFETY_PERIOD_TYPE ? "safety-scorer" : "scorer"),
+                  name: customManagerName,
+                  emails: [],
+                  createdAt: new Date().toISOString(),
+                };
+                managers.push(newManager);
+                if (!isSnapshotEdit) {
+                  const rootManagers = getMutableManagers(catalogType);
+                  if (!rootManagers.some((manager) => manager.name.toLocaleLowerCase("vi") === customManagerName.toLocaleLowerCase("vi"))) {
+                    rootManagers.push({ ...newManager });
+                  }
+                }
+                area.scorerId = newManager.id;
+                area.scorerName = customManagerName;
+                area.responsibleName = customManagerName;
               }
-              area.scorerId = newManager.id;
-              area.responsibleName = customName;
             }
           } else {
             area.scorerId = "";
+            area.scorerName = "";
             area.responsibleName = "";
           }
         }
@@ -9564,9 +9854,6 @@
             await Promise.all(affectedAccounts.map((acc) => dbRef(`accounts/${acc.id}`).set(acc)));
           }
         } else {
-          const assessorMode = String(formData.get("assessorMode") || "catalog");
-          const assessors = getMutablePeriodAssessors(catalogType, targetPeriodId);
-
           if (assessorMode === "catalog") {
             const selectedAssessorId = String(formData.get("assessorId") || "").trim();
             const selectedAssessor = selectedAssessorId ? assessors.find((a) => a.id === selectedAssessorId) : null;
@@ -9578,26 +9865,53 @@
               area.assessorName = "";
             }
           } else {
-            const customAssessorName = String(formData.get("assessorName") || "").trim();
             if (customAssessorName) {
-              const matchedAssessor = assessors.find((a) => a.name.toLocaleLowerCase("vi") === customAssessorName.toLocaleLowerCase("vi"));
-              if (matchedAssessor) {
-                area.assessorId = matchedAssessor.id;
-                area.assessorName = matchedAssessor.name;
-              } else {
-                const newAssessor = {
-                  id: makeId(catalogType === SAFETY_PERIOD_TYPE ? "safety-assessor" : "assessor"),
+              let assessorToUpdate = assessorToRename;
+              if (!assessorToUpdate && previousAssessorId) {
+                assessorToUpdate = {
+                  id: previousAssessorId,
                   name: customAssessorName,
-                  emails: [],
                   createdAt: new Date().toISOString(),
                 };
-                assessors.push(newAssessor);
-                const rootAssessors = getMutableAssessors(catalogType);
-                if (!rootAssessors.some((a) => a.name.toLocaleLowerCase("vi") === customAssessorName.toLocaleLowerCase("vi"))) {
-                  rootAssessors.push({ ...newAssessor });
-                }
-                area.assessorId = newAssessor.id;
+                assessors.push(assessorToUpdate);
+              }
+
+              if (assessorToUpdate) {
+                const previousNameKey = String(assessorToUpdate.name || previousAssessorName).toLocaleLowerCase("vi");
+                assessorToUpdate.name = customAssessorName;
+                mutableAreas.forEach((peer) => {
+                  const sameAssessorId = peer.assessorId === assessorToUpdate.id;
+                  const sameLegacyAssessorName = !peer.assessorId
+                    && String(peer.assessorName || "").toLocaleLowerCase("vi") === previousNameKey;
+                  if (sameAssessorId || sameLegacyAssessorName) {
+                    peer.assessorId = assessorToUpdate.id;
+                    peer.assessorName = customAssessorName;
+                  }
+                });
+                area.assessorId = assessorToUpdate.id;
                 area.assessorName = customAssessorName;
+              } else {
+                const matchedAssessor = assessors.find((assessor) => assessor.name.toLocaleLowerCase("vi") === customAssessorName.toLocaleLowerCase("vi"));
+                if (matchedAssessor) {
+                  area.assessorId = matchedAssessor.id;
+                  area.assessorName = matchedAssessor.name;
+                } else {
+                  const newAssessor = {
+                    id: makeId(catalogType === SAFETY_PERIOD_TYPE ? "safety-assessor" : "assessor"),
+                    name: customAssessorName,
+                    emails: [],
+                    createdAt: new Date().toISOString(),
+                  };
+                  assessors.push(newAssessor);
+                  if (!isSnapshotEdit) {
+                    const rootAssessors = getMutableAssessors(catalogType);
+                    if (!rootAssessors.some((assessor) => assessor.name.toLocaleLowerCase("vi") === customAssessorName.toLocaleLowerCase("vi"))) {
+                      rootAssessors.push({ ...newAssessor });
+                    }
+                  }
+                  area.assessorId = newAssessor.id;
+                  area.assessorName = customAssessorName;
+                }
               }
             } else {
               area.assessorId = "";
@@ -9617,11 +9931,9 @@
             targetPeriod.settingsSnapshot?.areas,
             targetPeriod.settingsSnapshot?.managers,
           );
-          await savePeriodSnapshot(targetPeriod);
-          const rootManagerWrites = getManagers(catalogType).map((m) => dbRef(`${catalogDbPath(catalogType, "managers")}/${m.id}`).set(m));
-          const rootAssessorWrites = getAssessors(catalogType).map((a) => dbRef(`${catalogDbPath(catalogType, "assessors")}/${a.id}`).set(a));
-          const rootDeptHeadWrites = getDepartmentHeadContacts(catalogType).map((contact) => saveDepartmentHeadContact(contact, catalogType));
-          await Promise.all([...rootManagerWrites, ...rootAssessorWrites, ...rootDeptHeadWrites]);
+          await savePeriodSnapshot(targetPeriod, {
+            allowZoneManagerReassignment: Boolean(previousScorerId && area.scorerId && previousScorerId !== area.scorerId),
+          });
         } else {
           if (catalogType === SAFETY_PERIOD_TYPE) {
             state.safetyDepartmentHeadContacts = moveDepartmentHeadEmails(previousDepartmentHead, area.departmentHead, state.safetyDepartmentHeadContacts, state.safetyAreas, state.safetyManagers);
@@ -9634,10 +9946,14 @@
           const peerWrites = !isSnapshotEdit && deptHead
             ? allPeriodAreas.filter((a) => a.id !== area.id && a.departmentHead === deptHead).map((a) => dbRef(`${catalogDbPath(catalogType, "areas")}/${a.id}`).set(a))
             : [];
+          const managerChanged = Boolean(previousScorerId && area.scorerId && previousScorerId !== area.scorerId);
+          if (managerChanged) await Promise.all(managerWrites);
           await Promise.all([
-            dbRef(`${catalogDbPath(catalogType, "areas")}/${area.id}`).set(area),
+            dbRef(`${catalogDbPath(catalogType, "areas")}/${area.id}`).set(area, {
+              allowZoneManagerReassignment: managerChanged,
+            }),
             ...peerWrites,
-            ...managerWrites,
+            ...(managerChanged ? [] : managerWrites),
             ...assessorWrites,
             ...departmentHeadContactWrites,
             refreshLatestPeriodSnapshot(catalogType),
@@ -9657,7 +9973,7 @@
         ]);
 
         const afterSnapshot = capturePeriodSnapshot(targetPeriodId);
-        const afterCatalog = captureCatalogState(catalogType);
+        const afterCatalog = isSnapshotEdit ? null : captureCatalogState(catalogType);
         pushUndoAction({
           type: "catalogOrSettings",
           description: `Zone ${area.code}: Sửa thông tin zone`,
@@ -9686,9 +10002,15 @@
       if (!cleanName) return;
       const allPeriodAreas = isSnapshotEdit ? getAreasForPeriod(targetPeriodId) : getAreas(catalogType);
       const otherAreas = allPeriodAreas.filter((a) => a.id !== area.id);
-      const existingSummary = getDepartmentHeadSummaryGroup(cleanName, otherAreas);
+      const existingSummary = otherAreas.find((a) => (
+        departmentHeadKey(a.departmentHead) === departmentHeadKey(cleanName)
+        && String(a.summaryGroup || "").trim()
+      ))?.summaryGroup?.trim();
       if (existingSummary) {
         summaryGroupInput.value = existingSummary;
+      } else if (!String(area.summaryGroup || "").trim()
+        || departmentHeadKey(area.summaryGroup) === departmentHeadKey(area.departmentHead)) {
+        summaryGroupInput.value = cleanName;
       }
     }
 
@@ -11397,9 +11719,9 @@
       showToast("Bạn không có quyền thêm đánh giá an toàn.", true);
       return;
     }
-    const activeSafetyPeriodId = getActivePeriodId(SAFETY_PERIOD_TYPE);
-    if (!activeSafetyPeriodId || !isPeriodOpen(activeSafetyPeriodId, SAFETY_PERIOD_TYPE)) {
-      showToast("Hiện không có kỳ đánh giá an toàn nào đang mở.", true);
+    const selectedPeriodId = elements.safetyPeriodSelect?.value || getActivePeriodId(SAFETY_PERIOD_TYPE);
+    if (!selectedPeriodId || !isPeriodOpen(selectedPeriodId, SAFETY_PERIOD_TYPE)) {
+      showToast("Kỳ đánh giá an toàn này hiện không mở.", true);
       return;
     }
 
@@ -11477,10 +11799,15 @@
 
   function openSafetyRecordForm(record = null) {
     const isNew = !record;
-    const period = getPeriod(isNew ? getActivePeriodId(SAFETY_PERIOD_TYPE) : record.periodId);
+    const selectedPeriodId = elements.safetyPeriodSelect?.value || getActivePeriodId(SAFETY_PERIOD_TYPE);
+    const period = getPeriod(isNew ? selectedPeriodId : record.periodId);
     const periodId = period?.id || "";
     if (!periodId) {
       showToast("Hiện không có kỳ đánh giá an toàn nào đang mở.", true);
+      return;
+    }
+    if (isNew && !isPeriodOpen(periodId, SAFETY_PERIOD_TYPE)) {
+      showToast("Kỳ đánh giá an toàn này hiện không mở.", true);
       return;
     }
     if (blockIfArchivedPeriod(periodId, SAFETY_PERIOD_TYPE)) {
@@ -11509,7 +11836,7 @@
       : "";
     const defaultActionOwner = getAccountDisplayName(currentUser, SAFETY_PERIOD_TYPE, periodId) || currentUser?.name || currentUser?.username || "";
     const defaultCompletionDate = toIsoDate(record?.completionDate) || "";
-    const actualDateFields = `<label><span>Ngày thực tế triển khai đối sách</span><input name="countermeasureDate" type="date" value="${escapeHtml(record?.countermeasureDate || "")}"></label><label><span>Ngày hoàn thành thực tế</span><input name="completedDate" type="date" value="${escapeHtml(record?.completedDate || "")}"></label><small>Ngày cũ/dự kiến không dùng để tính thống kê thực tế. Để trống nếu chưa xác định được.</small>`;
+    const actualDateFields = "";
 
     if (countermeasureOnly) {
       openFormModal({
@@ -11549,8 +11876,8 @@
             actionOwner: String(formData.get("actionOwner") || "").trim() || defaultActionOwner,
             actionPlan: String(formData.get("actionPlan") || "").trim(),
             completionDate: String(formData.get("completionDate") || "").trim() || defaultCompletionDate,
-            countermeasureDate: String(formData.get("countermeasureDate") || ""),
-            completedDate: String(formData.get("completedDate") || ""),
+            countermeasureDate: String(formData.get("countermeasureDate") || record?.countermeasureDate || ""),
+            completedDate: String(formData.get("completedDate") || record?.completedDate || ""),
             updatedAt: new Date().toISOString(),
           });
           if (!hasSafetyRecordChanged(record, payload)) {
@@ -11680,8 +12007,8 @@
           actionOwner: String(formData.get("actionOwner") || "").trim() || defaultActionOwner,
           actionPlan: String(formData.get("actionPlan") || "").trim(),
           completionDate: String(formData.get("completionDate") || "").trim() || defaultCompletionDate,
-          countermeasureDate: String(formData.get("countermeasureDate") || ""),
-          completedDate: String(formData.get("completedDate") || ""),
+          countermeasureDate: String(formData.get("countermeasureDate") || record?.countermeasureDate || ""),
+          completedDate: String(formData.get("completedDate") || record?.completedDate || ""),
           completionLevelConfirm: getSafetyLevelConfirm({ issueLevel }),
           completionStop6Confirm: getSafetyStop6Confirm({ issueType }),
           scorerName: ownerName,
@@ -11740,49 +12067,52 @@
     const records = (state.fiveSFindings || []).filter((sheet) => selectedIds.has(sheet.id));
     if (!records.length) throw new Error("Không có phiếu đã lưu để xuất Excel.");
     const usedNames = new Set();
-    const fields = ["problem", "stop6", "fiveS", "location", "shift", "countermeasure", "owner", "dueDate", "progress"];
-    const headers = ["STT", "Vấn đề / Problem", "Stop 6", "5 S", "Vị trí", "Ca / Shift", "Biện pháp khắc phục / CM", "Bởi / By", "Hạn / Due date", "Tiến độ / Progress"];
-    const widths = [6, 38, 9, 9, 17, 11, 38, 21, 16, 14];
+    const fields = ["location", "problem", "fiveS", "shift", "countermeasure", "dueDate", "progress"];
+    const headers = ["STT", "Vị trí", "Vấn đề / Problem", "Hạng mục", "Ca / Shift", "Biện pháp khắc phục / CM", "Hạn / Due date", "Tiến độ / Progress"];
+    const widths = [6, 18, 42, 28, 11, 42, 16, 14];
     const worksheets = records.map((sheet, index) => {
       const period = getPeriod(sheet.periodId || periodId);
       const area = period ? getAreasForPeriod(period.id).find((item) => item.id === sheet.areaId) : null;
       const areaLabel = area ? `Zone ${area.code}` : String(sheet.area || "").split("·")[0].trim();
       const model = {
-        rows: new Map(), rowHeights: new Map(), merges: [], maxColumn: 10, maxRow: 7,
-        lastTableColumn: 10, tabColor: "FF059669",
+        rows: new Map(), rowHeights: new Map(), merges: [], maxColumn: 8, maxRow: 6,
+        lastTableColumn: 8, tabColor: "FF059669",
         columnsXml: widths.map((width, col) => `<col min="${col + 1}" max="${col + 1}" width="${width}" customWidth="1"/>`).join(""),
       };
       const merged = (row, start, end, value, style = 24) => {
         addModelCell(model, row, start, value, style);
         if (end > start) model.merges.push(`${cellRef(row, start)}:${cellRef(row, end)}`);
       };
-      merged(1, 1, 10, "VẤN ĐỀ 5S", 12);
-      merged(2, 1, 10, `5S Issues · ${periodLabel(period)}`, 24);
-      merged(3, 1, 6, `Khu vực: ${areaLabel}`, 31);
-      merged(3, 7, 10, `Người kiểm tra: ${sheet.inspector || ""}`, 31);
-      merged(4, 1, 6, `Kỳ đánh giá: ${periodLabel(period)}`, 31);
-      merged(4, 7, 10, `Ngày kiểm tra: ${formatDateDisplay(sheet.inspectionDate)}`, 31);
-      merged(5, 1, 10, "Ký hiệu Stop 6: (A) Kẹp kẹt · (B) Vật nặng · (C) Xe cộ · (D) Rơi ngã · (E) Điện giật · (F) Cháy nổ", 24);
+      merged(1, 1, 8, "VẤN ĐỀ 5S", 12);
+      merged(2, 1, 8, `5S Issues · ${periodLabel(period)}`, 24);
+      merged(3, 1, 4, `Khu vực: ${areaLabel}`, 31);
+      merged(3, 5, 8, `Người kiểm tra: ${sheet.inspector || ""}`, 31);
+      merged(4, 1, 4, `Kỳ đánh giá: ${periodLabel(period)}`, 31);
+      merged(4, 5, 8, `Ngày kiểm tra: ${formatDateDisplay(sheet.inspectionDate)}`, 31);
       model.rowHeights.set(1, 32);
-      for (const row of [2, 3, 4, 5]) model.rowHeights.set(row, 25);
-      model.rowHeights.set(7, 34);
-      headers.forEach((header, col) => addModelCell(model, 7, col + 1, header, 10));
+      for (const row of [2, 3, 4]) model.rowHeights.set(row, 25);
+      model.rowHeights.set(6, 34);
+      headers.forEach((header, col) => addModelCell(model, 6, col + 1, header, 10));
       const findingRows = [...(sheet.rows || [])];
       while (findingRows.length > 10 && !fields.some((key) => key === "progress" ? Number(findingRows.at(-1)[key]) > 0 : Boolean(findingRows.at(-1)[key]))) findingRows.pop();
       Array.from({ length: Math.max(10, findingRows.length) }, (_, rowIndex) => findingRows[rowIndex] || {}).forEach((row, rowIndex) => {
-        const excelRow = rowIndex + 8;
+        const excelRow = rowIndex + 7;
         addModelCell(model, excelRow, 1, rowIndex + 1, 24);
         fields.forEach((key, col) => {
-          const value = key === "dueDate" ? formatDateDisplay(row[key]) : key === "progress" ? Math.max(0, Math.min(100, Number(row[key]) || 0)) / 100 : String(row[key] || "");
+          let value = "";
+          if (key === "dueDate") value = formatDateDisplay(row[key]);
+          else if (key === "progress") value = Math.max(0, Math.min(100, Number(row[key]) || 0)) / 100;
+          else if (key === "fiveS") value = window.FiveSFindingsPage?.findingCategoryLabel ? window.FiveSFindingsPage.findingCategoryLabel(row[key]) : String(row[key] || "");
+          else value = String(row[key] || "");
           addModelCell(model, excelRow, col + 2, value, key === "progress" ? 28 : 31);
         });
         const lines = fields.reduce((max, key, col) => Math.max(max, String(row[key] || "").split("\n").reduce((sum, line) => sum + Math.max(1, Math.ceil(line.length / Math.max(5, widths[col + 1] - 3))), 0)), 1);
         model.rowHeights.set(excelRow, Math.min(409, Math.max(56, lines * 15 + 12)));
       });
-      fillRangeBorders(model, 1, 1, 5, 10);
+      fillRangeBorders(model, 1, 1, 4, 8);
       let xml = buildWorksheetXml(model);
       xml = xml.replace('</sheetPr>', '<pageSetUpPr fitToPage="1"/></sheetPr>');
-      xml = xml.replace('<sheetView workbookViewId="0"/>', '<sheetView workbookViewId="0"><pane ySplit="7" topLeftCell="A8" activePane="bottomLeft" state="frozen"/></sheetView>');
+      xml = xml.replace('<sheetView workbookViewId="0"/>', '<sheetView workbookViewId="0"><pane ySplit="6" topLeftCell="A7" activePane="bottomLeft" state="frozen"/></sheetView>');
       xml = xml.replace('</worksheet>', '<pageSetup paperSize="9" orientation="landscape" fitToWidth="1" fitToHeight="0"/></worksheet>');
       const name = uniqueWorksheetName(`${areaLabel || "Phiếu"} ${formatDateDisplay(sheet.inspectionDate) || index + 1}`, usedNames);
       return { name, xml };
@@ -12989,6 +13319,113 @@
     ]);
   }
 
+  function buildZoneScoreSheetWorksheetModel(periodId, area, scoreSource) {
+    const period = getPeriod(periodId);
+    const normalizedSource = normalizeScoreSource(scoreSource);
+    const evaluatorName = normalizedSource === SCORE_SOURCE_SELF
+      ? getAreaResponsibleNameForPeriod(periodId, area)
+      : getSignatureName(periodId, area, normalizedSource) || "Chưa phân công";
+    const rows = new Map();
+    const rowHeights = new Map();
+    const merges = [];
+    const model = {
+      rows,
+      rowHeights,
+      merges,
+      maxColumn: 9,
+      maxRow: 3,
+      lastTableColumn: 9,
+      columnsXml: [12, 28, 14, 9, 32, 32, 36, 32, 32]
+        .map((width, index) => `<col min="${index + 1}" max="${index + 1}" width="${width}" customWidth="1"/>`)
+        .join(""),
+    };
+    const add = (row, column, value, style = 24) => addModelCell(model, row, column, value, style);
+    const merge = (rowStart, columnStart, rowEnd, columnEnd) => {
+      if (rowStart !== rowEnd || columnStart !== columnEnd) {
+        merges.push(`${cellRef(rowStart, columnStart)}:${cellRef(rowEnd, columnEnd)}`);
+      }
+    };
+
+    rowHeights.set(1, 34);
+    add(1, 1, "BẢNG ĐÁNH GIÁ HOẠT ĐỘNG SHITSUKE + 4S NƠI LÀM VIỆC", 1);
+    merge(1, 1, 1, 9);
+    rowHeights.set(2, 42);
+    add(2, 1, `Zone: ${area.code}\n${getAreaResponsibleNameForPeriod(periodId, area)}`, 31);
+    merge(2, 1, 2, 2);
+    add(2, 3, `Kỳ: ${periodLabel(period)}\nNguồn: ${getScoreSourceLabel(normalizedSource)}`, 31);
+    merge(2, 3, 2, 4);
+    add(2, 5, `${normalizedSource === SCORE_SOURCE_SELF ? "Người phụ trách zone" : "Đánh giá viên"}:\n${evaluatorName}`, 31);
+    merge(2, 5, 2, 7);
+    add(2, 8, `Điểm TB:\n${formatNumber(areaAverage(periodId, area, normalizedSource), 2)}`, 31);
+    merge(2, 8, 2, 9);
+
+    ["Hạng mục", "Vị trí kiểm tra", "Khoản mục", "Điểm", ...SCORE_LEVEL_LABELS].forEach((label, index) => add(3, index + 1, label, 10));
+    rowHeights.set(3, 30);
+
+    let rowNumber = 4;
+    STANDARD_REFERENCE_SECTIONS.forEach((section) => {
+      const sectionSpan = section.items.reduce((total, entry) => total + (getItem(entry.id)?.criteria.length || 0), 0);
+      let firstSectionRow = true;
+      section.items.forEach((entry) => {
+        const item = getItem(entry.id);
+        if (!item) return;
+        const itemStartRow = rowNumber;
+        item.criteria.forEach((criterion, criterionIndex) => {
+          const record = getScoreRecord(periodId, area.id, item.id, criterion.id, normalizedSource);
+          const crossed = isScoreCrossed(record);
+          const scoreValue = crossed ? "X" : Number.isFinite(record?.score) ? record.score : "";
+          const descriptions = SCORE_GUIDE[item.id]?.[criterion.id] || [];
+          if (firstSectionRow) {
+            add(rowNumber, 1, section.label, 24);
+            firstSectionRow = false;
+          }
+          if (criterionIndex === 0) add(rowNumber, 2, entry.location || item.name, 31);
+          add(rowNumber, 3, entry.hideCriterion ? "" : criterion.label, 24);
+          add(rowNumber, 4, scoreValue, crossed ? 16 : Number.isFinite(record?.score) && record.score <= 2 ? 15 : 14);
+          descriptions.slice(0, 5).forEach((description, levelIndex) => add(rowNumber, 5 + levelIndex, description || "", 24));
+          const maxLines = descriptions.slice(0, 5).reduce((lineCount, description) => {
+            const lines = String(description || "").split("\n").reduce((sum, line) => sum + Math.max(1, Math.ceil(line.length / 36)), 0);
+            return Math.max(lineCount, lines);
+          }, 1);
+          rowHeights.set(rowNumber, Math.min(180, Math.max(30, maxLines * 15 + 8)));
+          rowNumber += 1;
+        });
+        if (item.criteria.length > 1) merge(itemStartRow, 2, rowNumber - 1, 2);
+      });
+      const sectionEndRow = rowNumber - 1;
+      if (sectionSpan > 1) merge(sectionEndRow - sectionSpan + 1, 1, sectionEndRow, 1);
+    });
+
+    const averageRow = rowNumber;
+    rowHeights.set(averageRow, 28);
+    add(averageRow, 1, `Điểm trung bình Zone ${area.code}`, 31);
+    merge(averageRow, 1, averageRow, 3);
+    add(averageRow, 4, areaAverage(periodId, area, normalizedSource), 19);
+    merge(averageRow, 5, averageRow, 9);
+    model.maxRow = averageRow;
+    fillRangeBorders(model, 1, 1, averageRow, 9);
+    return model;
+  }
+
+  function exportAdminZoneScoreSheet() {
+    if (!requireExportAction("Bạn không có quyền xuất phiếu chấm 5S.")) return;
+    const periodId = elements.adminScoreSheetPeriod?.value || "";
+    const period = getPeriod(periodId);
+    const area = getAreaForPeriod(periodId, elements.adminScoreSheetArea?.value || "");
+    if (!period || !area) {
+      showToast("Vui lòng chọn kỳ đánh giá và zone cần xuất.", true);
+      return;
+    }
+
+    const scoreSource = normalizeScoreSource(elements.adminScoreSheetSource?.value || SCORE_SOURCE_ASSESSOR);
+    const model = buildZoneScoreSheetWorksheetModel(periodId, area, scoreSource);
+    const sheetName = uniqueWorksheetName(`Zone ${area.code}`, new Set());
+    const bytes = buildWorkbookFromSheets([{ name: sheetName, xml: buildWorksheetXml(model) }]);
+    const sourceSlug = scoreSource === SCORE_SOURCE_SELF ? "quan-ly-tu-cham" : "assessor";
+    const safeName = `phieu-cham-5s-${sourceSlug}-zone-${area.code}-thang-${period.month || "x"}-${period.year || "x"}.xlsx`;
+    downloadFile(safeName, bytes, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+  }
+
   function getSafetyExcelFilters(safetyPeriod) {
     const fallbackYear = Number(safetyPeriod?.year) || new Date().getFullYear();
     const fallbackMonth = Number(safetyPeriod?.month) || new Date().getMonth() + 1;
@@ -13076,21 +13513,30 @@
   }
 
   function buildSafetyRankMatrixForExport(yearRows) {
-    const rankColumns = [
-      { value: "", label: "Nhà máy" },
+    const rankDefs = [
       { value: "A", label: "Rank A" },
       { value: "B", label: "Rank B" },
       { value: "C", label: "Rank C" },
     ];
-    return rankColumns.map((column) => {
+    const rankRows = rankDefs.map((column) => {
       const monthly = Array.from({ length: 12 }, (_, index) => {
         const month = index + 1;
         return sumSafetyIssueCounts(yearRows.filter((row) => {
-          return getSafetyIssueMonth(row) === month && (!column.value || isSafetyLevelSelected(row.score, column.value));
+          return getSafetyIssueMonth(row) === month && isSafetyLevelSelected(row.score, column.value);
         }));
       });
-      return { name: column.label, monthly, total: monthly.reduce((sum, value) => sum + value, 0) };
+      return { name: column.label, value: column.value, monthly, total: monthly.reduce((sum, value) => sum + value, 0) };
     });
+
+    const factoryMonthly = Array.from({ length: 12 }, (_, index) => rankRows.reduce((sum, row) => sum + row.monthly[index], 0));
+    const factoryRow = {
+      name: "Nhà máy",
+      value: "",
+      monthly: factoryMonthly,
+      total: factoryMonthly.reduce((sum, value) => sum + value, 0),
+    };
+
+    return [factoryRow, ...rankRows];
   }
 
   function buildSafetyStop6MatrixForExport(yearRows) {
@@ -15131,6 +15577,31 @@
   }
 
   function openFullscreenTable(tableKind = "") {
+    if (tableKind === "score-sheets") {
+      const sourceWrap = elements.adminScoreSheet?.querySelector(".assessor-4m-wrap");
+      if (!sourceWrap) {
+        showToast("Chưa có phiếu chấm để phóng to.", true);
+        return;
+      }
+
+      const clone = sourceWrap.cloneNode(true);
+      clone.classList.add("fullscreen-table-wrap");
+      clone.setAttribute("data-drag-scroll", "");
+      clone.querySelectorAll("[id]").forEach((node) => node.removeAttribute("id"));
+      syncFormControlValuesForHtml(clone);
+      openFormModal({
+        title: elements.adminScoreSheetTitle?.textContent || "Phiếu chấm 5S",
+        submitText: "Đóng",
+        submitClass: "secondary-button",
+        modalClass: "table-fullscreen-modal",
+        html: clone.outerHTML,
+        onSubmit() {
+          return true;
+        },
+      });
+      return;
+    }
+
     if (tableKind === "assessor") {
       const sourceTable = elements.assessorSheet?.querySelector(".assessor-4m-table");
       const periodId = sourceTable?.dataset.periodId || getActivePeriodId(FIVE_S_PERIOD_TYPE);
@@ -15931,7 +16402,17 @@
     };
     bindPeriodSelect(elements.assessorPeriodSelect, FIVE_S_PERIOD_TYPE);
     bindPeriodSelect(elements.summaryPeriodSelect, FIVE_S_PERIOD_TYPE);
-    bindPeriodSelect(elements.safetyPeriodSelect, SAFETY_PERIOD_TYPE);
+    elements.adminScoreSheetPeriod?.addEventListener("change", renderAdminScoreSheetTab);
+    elements.adminScoreSheetArea?.addEventListener("change", renderAdminScoreSheetTab);
+    elements.adminScoreSheetSource?.addEventListener("change", renderAdminScoreSheetTab);
+    elements.safetyPeriodSelect?.addEventListener("change", () => {
+      const selectedPeriod = getPeriod(elements.safetyPeriodSelect.value);
+      if (selectedPeriod) {
+        if (elements.safetyYearFilter && selectedPeriod.year) elements.safetyYearFilter.value = String(selectedPeriod.year);
+        if (elements.safetyMonthFilter && selectedPeriod.month) elements.safetyMonthFilter.value = String(selectedPeriod.month);
+      }
+      renderActiveTab();
+    });
     bindPeriodSelect(elements.issueStatsPeriodSelect, SAFETY_PERIOD_TYPE);
 
     elements.assessorAreaSelect?.addEventListener("change", renderAssessorTab);
@@ -15941,6 +16422,7 @@
     });
     elements.addSafetyRecordButton?.addEventListener("click", addSafetyRecord);
     elements.exportExcelButton?.addEventListener("click", () => confirmExportExcel(getActivePeriodId(FIVE_S_PERIOD_TYPE)));
+    elements.exportAdminScoreSheetButton?.addEventListener("click", exportAdminZoneScoreSheet);
     elements.editSafetyMetaButton?.addEventListener("click", editSafetyMeta);
     elements.exportSafetyExcelButton?.addEventListener("click", confirmExportActiveSafetyReportExcel);
     elements.sendSafetyMailButton?.addEventListener("click", () => openSendSafetyMailModal(getActivePeriodId(SAFETY_PERIOD_TYPE)));

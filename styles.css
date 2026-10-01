@@ -2029,7 +2029,7 @@ table {
 }
 
 .zone-code {
-  width: 43px;
+  width: 68px;
   font-size: 12px;
   font-weight: 700;
 }
@@ -2045,6 +2045,7 @@ table {
 }
 
 .pic-name {
+  width: 68px;
   height: 40px !important;
   font-size: 10px;
   line-height: 1.15;
@@ -2080,7 +2081,7 @@ table {
 
 .score-cell {
   position: relative;
-  width: 43px;
+  width: 68px;
   height: 21px;
   background: #ffffff;
   font-size: 17px;
@@ -6142,6 +6143,23 @@ body {
   gap: 8px !important;
   align-self: flex-end !important;
   margin-top: 4px !important;
+}
+
+.safety-actions .findings-readonly {
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  min-height: 38px !important;
+  height: 38px !important;
+  padding: 0 8px !important;
+  font-size: 0.88rem !important;
+  font-weight: 600 !important;
+  color: #cbd5e1 !important;
+  white-space: nowrap !important;
+}
+
+.is-light-theme .safety-actions .findings-readonly {
+  color: #64748b !important;
 }
 
 /* Reset all button widths and heights to compact horizontal format */
@@ -13731,6 +13749,37 @@ input[type="date"]::-webkit-calendar-picker-indicator {
   color: #ffffff !important;
 }
 
+.mobile-responsive-overlay.is-light-theme .level-chosen-tag {
+  min-height: 22px;
+  padding: 3px 7px;
+  font-size: 0.7rem;
+  line-height: 1.1;
+}
+
+.mobile-responsive-overlay.is-light-theme .level-chosen-tag.tag-low {
+  background: #fee2e2;
+  border-color: #fca5a5;
+  color: #991b1b;
+}
+
+.mobile-responsive-overlay.is-light-theme .level-chosen-tag.tag-mid {
+  background: #fef3c7;
+  border-color: #fcd34d;
+  color: #78350f;
+}
+
+.mobile-responsive-overlay.is-light-theme .level-chosen-tag.tag-high {
+  background: #d1fae5;
+  border-color: #6ee7b7;
+  color: #065f46;
+}
+
+.mobile-responsive-overlay.is-light-theme .level-chosen-tag.tag-na {
+  background: #e2e8f0;
+  border-color: #94a3b8;
+  color: #334155;
+}
+
 .mobile-responsive-overlay.is-light-theme .form-label {
   color: #334155 !important;
 }
@@ -14051,13 +14100,97 @@ input[type="date"]::-webkit-calendar-picker-indicator {
 .findings-desktop-toolbar .findings-actions { align-items: center; }
 .findings-desktop-toolbar .findings-actions > button { min-height: 38px; height: 38px; padding: 0 14px; font-size: 0.88rem; border-radius: 8px; }
 .findings-paper { background: #fffef9; color: #172b3b; padding: 24px; border: 1px solid #c6d0d7; border-radius: 6px; }
-.findings-heading { display: grid; grid-template-columns: 1fr 320px; gap: 28px; align-items: center; }
+.findings-heading { display: grid; grid-template-columns: 1fr minmax(360px, 460px); gap: 28px; align-items: center; }
 .findings-heading h2 { font-size: 23px; text-align: center; color: #172b3b; margin: 0; }
 .findings-heading h2 span { display: block; font-size: 19px; margin-top: 8px; }
-.findings-inspection { border: 1px solid #71818d; }
-.findings-inspection label { display: grid; grid-template-columns: 130px minmax(0, 1fr); align-items: center; padding-left: 8px; font-size: 14px; }
+.findings-inspection { position: relative; border: 1px solid #71818d; }
+.findings-inspection.is-editable .findings-inspectors-display,
+.findings-inspection.is-editable .findings-date-display { cursor: pointer; transition: background 0.15s ease; }
+.findings-inspection.is-editable .findings-inspectors-display:hover,
+.findings-inspection.is-editable .findings-date-display:hover { background: rgba(2, 132, 199, 0.06); }
+.findings-header-edit-btn {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  min-height: 26px !important;
+  height: 26px !important;
+  padding: 0 9px !important;
+  font-size: 11px !important;
+  font-weight: 700 !important;
+  border-radius: 5px !important;
+  background: #e0f2fe !important;
+  color: #0369a1 !important;
+  border: 1px solid #bae6fd !important;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  z-index: 5;
+  transition: all 0.15s ease;
+}
+.findings-header-edit-btn:hover {
+  background: #0284c7 !important;
+  color: #fff !important;
+  border-color: #0284c7 !important;
+  box-shadow: 0 2px 6px rgba(2, 132, 199, 0.25);
+}
+.findings-date-display {
+  display: flex;
+  align-items: center;
+  min-height: 44px;
+  padding: 6px 10px;
+  border-left: 1px solid #71818d;
+  box-sizing: border-box;
+  font-size: 14px;
+  font-weight: 700;
+  color: #172b3b;
+}
+.findings-inspection.is-editing {
+  border-color: #0284c7;
+  box-shadow: 0 0 0 2px rgba(2, 132, 199, 0.18);
+}
+.findings-header-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 6px 10px;
+  border-top: 1px solid #cbd5e1;
+  background: #f8fafc;
+}
+.findings-header-actions button {
+  min-height: 30px !important;
+  height: 30px !important;
+  padding: 0 14px !important;
+  font-size: 12px !important;
+  font-weight: 700 !important;
+  border-radius: 5px !important;
+  cursor: pointer;
+}
+.findings-header-actions .btn-save-header {
+  background: #0284c7 !important;
+  color: #fff !important;
+  border: 1px solid #0284c7 !important;
+}
+.findings-header-actions .btn-save-header:hover {
+  background: #0369a1 !important;
+}
+.findings-header-actions .btn-cancel-header {
+  background: #fff !important;
+  color: #475569 !important;
+  border: 1px solid #cbd5e1 !important;
+}
+.findings-header-actions .btn-cancel-header:hover {
+  background: #f1f5f9 !important;
+}
+.findings-inspection label { display: grid; grid-template-columns: 125px minmax(0, 1fr); align-items: center; padding-left: 8px; font-size: 14px; min-height: 44px; }
 .findings-inspection label + label { border-top: 1px solid #71818d; }
 .findings-inspection input { border-radius: 0; border-width: 0 0 0 1px; }
+.findings-inspectors-display { display: flex; flex-direction: column; justify-content: center; gap: 3px; min-height: 44px; padding: 6px 10px; border-left: 1px solid #71818d; box-sizing: border-box; background: transparent; }
+.findings-inspector-name { display: block; font-size: 13px; font-weight: 600; line-height: 1.35; color: #172b3b; white-space: normal; word-break: break-word; overflow-wrap: break-word; }
+.findings-inspector-name.is-empty { min-height: 18px; }
+.findings-inspectors-inputs { display: flex; flex-direction: column; gap: 6px; width: 100%; box-sizing: border-box; }
+.findings-inspection .findings-inspectors-inputs { border-left: 1px solid #71818d; padding: 4px; }
+.findings-inspection .findings-inspectors-inputs input { border: 1px solid #a8b8c4; border-radius: 3px; padding: 4px 8px; font-size: 13px; }
 .findings-date-editor { display: block; position: relative; min-width: 0; }
 .findings-page .findings-date-editor > input[type="text"]:not(:disabled) { padding-right: 32px; }
 .findings-page .findings-date-editor .findings-date-calendar { position: absolute; right: 0; top: 0; width: 30px; height: 100%; padding: 5px; border: 0; color: transparent; background: transparent; color-scheme: light; }
@@ -14086,7 +14219,10 @@ input[type="date"]::-webkit-calendar-picker-indicator {
 .findings-row-zone { display: block; font-size: 10px; overflow-wrap: anywhere; margin-top: 4px; }
 .findings-issue-entry-table { min-width: 1800px; }
 .findings-issue-entry-table td:first-child { min-width: 160px; }
-.findings-issue-entry-table td:nth-child(4), .findings-issue-entry-table td:nth-child(9) { min-width: 240px; }
+.findings-issue-entry-table td:nth-child(3), .findings-issue-entry-table td[data-label*="Người kiểm tra"] { min-width: 200px; }
+.findings-issue-entry-table .findings-inspectors-inputs { display: flex; flex-direction: column; gap: 6px; width: 100%; }
+.findings-issue-entry-table .findings-inspectors-inputs input { padding: 6px 8px; font-size: 13px; border-radius: 4px; }
+.findings-issue-entry-table td:nth-child(5), .findings-issue-entry-table td:nth-child(8), .findings-issue-entry-table td[data-label*="Vấn đề"], .findings-issue-entry-table td[data-label*="Biện pháp"] { min-width: 240px; }
 .findings-issue-entry-table .findings-date-editor { min-width: 140px; }
 .findings-issue-modal .safety-record-entry-wrap { overscroll-behavior: auto; touch-action: pan-x pan-y; cursor: auto; }
 .findings-issue-modal.is-mobile-detail .safety-record-entry-wrap { overflow: visible !important; }
@@ -14110,7 +14246,12 @@ input[type="date"]::-webkit-calendar-picker-indicator {
 .findings-issue-modal.is-mobile-detail .findings-issue-entry-table td::before { content: attr(data-label); display: block; font-weight: 600; margin-bottom: 6px; color: #334155; }
 .findings-issue-modal.is-mobile-detail .findings-issue-entry-table td:nth-child(3),
 .findings-issue-modal.is-mobile-detail .findings-issue-entry-table td:nth-child(4),
-.findings-issue-modal.is-mobile-detail .findings-issue-entry-table td:nth-child(9) { grid-column: 1 / -1; }
+.findings-issue-modal.is-mobile-detail .findings-issue-entry-table td:nth-child(5),
+.findings-issue-modal.is-mobile-detail .findings-issue-entry-table td:nth-child(8),
+.findings-issue-modal.is-mobile-detail .findings-issue-entry-table td[data-label*="Người kiểm tra"],
+.findings-issue-modal.is-mobile-detail .findings-issue-entry-table td[data-label*="Vị trí"],
+.findings-issue-modal.is-mobile-detail .findings-issue-entry-table td[data-label*="Vấn đề"],
+.findings-issue-modal.is-mobile-detail .findings-issue-entry-table td[data-label*="Biện pháp"] { grid-column: 1 / -1; }
 .findings-issue-modal.is-mobile-detail .findings-date-editor { min-width: 0; }
 .findings-issue-modal.is-mobile-detail .findings-page :is(input, select, textarea) { font-size: 0.76rem; font-weight: 400; }
 .findings-issue-modal.is-mobile-detail .findings-progress { display: none; }
@@ -14129,11 +14270,18 @@ input[type="date"]::-webkit-calendar-picker-indicator {
   .findings-issue-entry-table tr { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
   .findings-issue-entry-table td { display: block; min-width: 0 !important; padding: 0; border: 0; }
   .findings-issue-entry-table td::before { content: attr(data-label); display: block; font-weight: 600; margin-bottom: 6px; color: #334155; }
-  .findings-issue-entry-table td:nth-child(3), .findings-issue-entry-table td:nth-child(4), .findings-issue-entry-table td:nth-child(9) { grid-column: 1 / -1; }
+  .findings-issue-entry-table td:nth-child(3),
+  .findings-issue-entry-table td:nth-child(4),
+  .findings-issue-entry-table td:nth-child(5),
+  .findings-issue-entry-table td:nth-child(8),
+  .findings-issue-entry-table td[data-label*="Người kiểm tra"],
+  .findings-issue-entry-table td[data-label*="Vị trí"],
+  .findings-issue-entry-table td[data-label*="Vấn đề"],
+  .findings-issue-entry-table td[data-label*="Biện pháp"] { grid-column: 1 / -1; }
   .findings-issue-entry-table .findings-date-editor { min-width: 0; }
   .findings-issue-modal.is-mobile-dark td::before { color: #cbd5e1; }
 }
-.findings-progress { width: 54px; height: 35px; margin: 6px auto; border: 1px solid #637887; border-radius: 50%; background: linear-gradient(90deg, transparent calc(50% - .5px), #637887 calc(50% - .5px), #637887 calc(50% + .5px), transparent calc(50% + .5px)), linear-gradient(transparent calc(50% - .5px), #637887 calc(50% - .5px), #637887 calc(50% + .5px), transparent calc(50% + .5px)), conic-gradient(#9cddbb var(--progress), transparent 0); }
+.findings-progress { width: 36px; height: 36px; aspect-ratio: 1 / 1; display: block; margin: 6px auto; border: 1px solid #637887; border-radius: 50%; box-sizing: border-box; background: linear-gradient(90deg, transparent calc(50% - .5px), #637887 calc(50% - .5px), #637887 calc(50% + .5px), transparent calc(50% + .5px)), linear-gradient(transparent calc(50% - .5px), #637887 calc(50% - .5px), #637887 calc(50% + .5px), transparent calc(50% + .5px)), conic-gradient(#9cddbb var(--progress), transparent 0); }
 .findings-bottom { justify-content: space-between; margin-top: 14px; }
 .findings-row-pager { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 12px; padding: 14px 0 0; font-size: 13px; }
 .findings-row-pager > span:first-child { margin-right: auto; }
@@ -14188,6 +14336,8 @@ input[type="date"]::-webkit-calendar-picker-indicator {
 .findings-mobile-field > span:first-child { font-size: 0.74rem; font-weight: 700; color: var(--finding-text); }
 .findings-mobile-field > span:last-child:not(:first-child):not(.findings-date-editor) { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 0.76rem; font-weight: 400; }
 .findings-mobile-field.is-wide { grid-column: 1 / -1; }
+.findings-mobile .findings-inspectors-inputs { display: flex; flex-direction: column; gap: 8px; width: 100%; }
+.findings-mobile .findings-inspectors-inputs input { min-height: 44px; }
 .findings-list-heading { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin: 6px 0 12px; color: var(--finding-muted); }
 .findings-list-heading h3 { margin: 0; font-size: 12px; color: inherit; }
 .findings-list-heading > span { font-size: 11px; border: 1px solid var(--finding-border); border-radius: 20px; padding: 3px 8px; }
@@ -14249,4 +14399,23 @@ input[type="date"]::-webkit-calendar-picker-indicator {
 @media (max-width: 360px) {
   .findings-record-icon { display: none; }
   .findings-mobile-grid { grid-template-columns: minmax(0, 1fr); }
+}
+
+#tab-score-sheets {
+  gap: 8px;
+  padding: 8px 10px !important;
+}
+#tab-score-sheets .assessor-toolbar {
+  grid-template-columns: minmax(150px, 190px) minmax(190px, 250px) minmax(190px, 1fr) auto;
+  gap: 8px;
+  padding: 8px 10px;
+}
+#tab-score-sheets .sheet-panel { padding: 8px !important; }
+#tab-score-sheets .section-heading { flex-wrap: wrap; }
+@media (max-width: 1120px) {
+  #tab-score-sheets .assessor-toolbar { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 680px) {
+  #tab-score-sheets .assessor-toolbar { grid-template-columns: minmax(0, 1fr); }
+  #tab-score-sheets .section-heading { align-items: stretch; flex-direction: column; }
 }
