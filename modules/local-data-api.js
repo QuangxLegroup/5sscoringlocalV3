@@ -5,13 +5,14 @@
   const POLL_INTERVAL_MS = 5000;
   const DEMO_STORAGE_KEY = "legroup-5s-demo-data";
   const OFFLINE_DB_NAME = "legroup-5s-offline";
-  const OFFLINE_DB_VERSION = 1;
+  const OFFLINE_DB_VERSION = 2;
   const OFFLINE_QUEUE_STORE = "queue";
   const OFFLINE_META_STORE = "meta";
   const OFFLINE_PHOTO_STORE = "photoMap";
+  const OFFLINE_SCORE_DRAFT_STORE = "scoreDrafts";
   const OFFLINE_ROOT_KEY = "root";
   const OFFLINE_SYNC_INTERVAL_MS = 12000;
-  const CONNECTION_LOST_MESSAGE = "Mất kết nối dữ liệu nội bộ. Phiên đăng nhập đã được đăng xuất để tránh ghi dữ liệu offline.";
+  const CONNECTION_LOST_MESSAGE = "Mất kết nối máy chủ. Điểm chưa đồng bộ được giữ thành bản nháp trên thiết bị.";
   const VOLATILE_ACCOUNT_FIELDS = new Set([
     "activeSessionId",
     "activeSessionAt",
@@ -296,8 +297,14 @@
           if (!db.objectStoreNames.contains(OFFLINE_PHOTO_STORE)) {
             db.createObjectStore(OFFLINE_PHOTO_STORE, { keyPath: "signature" });
           }
+          if (!db.objectStoreNames.contains(OFFLINE_SCORE_DRAFT_STORE)) {
+            db.createObjectStore(OFFLINE_SCORE_DRAFT_STORE, { keyPath: "id" });
+          }
         };
-        request.onsuccess = () => resolve(request.result);
+        request.onsuccess = () => {
+          request.result.onversionchange = () => request.result.close();
+          resolve(request.result);
+        };
         request.onerror = () => reject(request.error || new Error("Không mở được bộ nhớ offline."));
         request.onblocked = () => reject(new Error("Bộ nhớ offline đang bị khóa bởi tab khác."));
       }).catch((error) => {
@@ -364,7 +371,42 @@
 
   async function getOfflineQueueCount() {
     const entries = await getQueuedCommands();
-    return entries.length;
+    const scoreDraftCount = await withOfflineStore(OFFLINE_SCORE_DRAFT_STORE, "readonly", (store) => idbRequest(store.count()));
+    return entries.length + Number(scoreDraftCount || 0);
+  }
+
+  async function savePendingScoreDraft(draft = {}) {
+    if (!draft.id) {
+      throw new Error("Thiếu mã bản nháp điểm.");
+    }
+    const existing = await withOfflineStore(OFFLINE_SCORE_DRAFT_STORE, "readonly", (store) => idbRequest(store.get(draft.id)));
+    const historyEntries = new Map((existing?.historyEntries || []).map((entry) => [entry.id, entry]));
+    (draft.historyEntries || []).forEach((entry) => historyEntries.set(entry.id, entry));
+    const nextDraft = {
+      ...existing,
+      ...draft,
+      expectedValue: draft.rebaseExpected ? draft.expectedValue : existing ? existing.expectedValue : draft.expectedValue,
+      historyEntries: [...historyEntries.values()],
+      createdAt: existing?.createdAt || draft.createdAt || new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+    delete nextDraft.rebaseExpected;
+    const stored = await withOfflineStore(OFFLINE_SCORE_DRAFT_STORE, "readwrite", (store) => store.put(nextDraft));
+    if (stored === null) {
+      throw new Error("Không thể lưu bản nháp điểm trên thiết bị này.");
+    }
+    await dispatchOfflineStatus({ pending: await getOfflineQueueCount(), lastError: "" });
+    return nextDraft;
+  }
+
+  async function getPendingScoreDrafts() {
+    const drafts = await withOfflineStore(OFFLINE_SCORE_DRAFT_STORE, "readonly", (store) => idbRequest(store.getAll()));
+    return (Array.isArray(drafts) ? drafts : []).sort((a, b) => String(a.createdAt || "").localeCompare(String(b.createdAt || "")));
+  }
+
+  async function removePendingScoreDraft(id) {
+    await withOfflineStore(OFFLINE_SCORE_DRAFT_STORE, "readwrite", (store) => store.delete(id));
+    await dispatchOfflineStatus({ pending: await getOfflineQueueCount(), lastError: "" });
   }
 
   async function enqueueOfflineCommand(command) {
@@ -431,8 +473,12 @@
 
   async function dispatchOfflineStatus(overrides = {}) {
     const pending = Number.isFinite(overrides.pending) ? overrides.pending : await getOfflineQueueCount();
+    const scoreDrafts = Number.isFinite(overrides.scoreDrafts)
+      ? overrides.scoreDrafts
+      : await withOfflineStore(OFFLINE_SCORE_DRAFT_STORE, "readonly", (store) => idbRequest(store.count())).catch(() => 0);
     const detail = {
       pending,
+      scoreDrafts: Number(scoreDrafts || 0),
       syncing: offlineSyncing,
       online: navigator.onLine,
       lastError: "",
@@ -536,6 +582,7 @@
     if (!response.ok) {
       const error = new Error(publicApiErrorMessage(response.status));
       error.status = response.status;
+      error.payload = payload;
       error.referenceId = /^[a-zA-Z0-9-]{1,64}$/.test(String(payload?.referenceId || ""))
         ? payload.referenceId
         : "";
@@ -553,8 +600,7 @@
   }
 
   async function flushOfflineQueue() {
-    await clearQueuedCommands();
-    await dispatchOfflineStatus({ pending: 0, syncing: false, online: navigator.onLine, lastError: "" });
+    await dispatchOfflineStatus({ pending: await getOfflineQueueCount(), syncing: false, online: navigator.onLine, lastError: "" });
     return false;
     if (demoMode || offlineSyncing || !authSession) {
       return false;
@@ -668,17 +714,23 @@
   }
 
   async function notifyConnectionLost() {
-    const hadAuth = Boolean(authSession);
-    clearAuthSession();
-    await clearQueuedCommands().catch(() => {});
     await dispatchOfflineStatus({
-      pending: 0,
+      pending: await getOfflineQueueCount().catch(() => 0),
       syncing: false,
       online: false,
       lastError: CONNECTION_LOST_MESSAGE,
     });
-    if (hadAuth) {
-      notifyAuthRevoked();
+  }
+
+  async function notifyConnectionRestored({ retryPending = false } = {}) {
+    const wasOffline = lastOfflineStatus?.online === false || Boolean(lastOfflineStatus?.lastError);
+    await dispatchOfflineStatus({
+      pending: await getOfflineQueueCount().catch(() => 0),
+      online: true,
+      lastError: "",
+    });
+    if (retryPending && wasOffline) {
+      window.dispatchEvent(new CustomEvent("local-data-network-restored"));
     }
   }
 
@@ -817,6 +869,7 @@
       await clearQueuedCommands();
       const root = await request("/api/data");
       rememberRoot(root);
+      await notifyConnectionRestored({ retryPending: true });
     } catch (error) {
       if (isAuthError(error)) {
         throw error;
@@ -854,6 +907,7 @@
         rememberRoot(root);
         notifyAll();
       }
+      await notifyConnectionRestored({ retryPending: true });
       scheduleOfflineSync(500);
     } catch (error) {
       if (isAuthError(error)) {
@@ -909,9 +963,11 @@
         clearAuthSession();
         notifyAuthRevoked();
       });
+      stream.onopen = () => {
+        notifyConnectionRestored({ retryPending: true }).catch(() => {});
+      };
       stream.onerror = () => {
-        stopDataStream();
-        notifyConnectionLost().catch(() => {});
+        pollRoot();
       };
     } catch (error) {
       scheduleDataStreamReconnect();
@@ -931,9 +987,11 @@
           path: path || "",
           value,
           allowZoneManagerReassignment: writeOptions.allowZoneManagerReassignment === true,
+          ...(writeOptions.scoreConflict ? { scoreConflict: writeOptions.scoreConflict } : {}),
         }),
       });
       rememberRoot(root);
+      await notifyConnectionRestored();
     } catch (error) {
       if (isAuthError(error)) {
         throw error;
@@ -1018,8 +1076,8 @@
         return write("update", path, value, options);
       },
 
-      remove() {
-        return write("remove", path);
+      remove(options) {
+        return write("remove", path, null, options);
       },
 
       on(eventName, callback) {
@@ -1052,8 +1110,11 @@
     window.addEventListener("offline", () => {
       notifyConnectionLost().catch(() => {});
     });
-    clearQueuedCommands()
-      .then(() => dispatchOfflineStatus({ pending: 0, syncing: false, online: navigator.onLine }))
+    window.addEventListener("online", () => {
+      pollRoot();
+    });
+    getOfflineQueueCount()
+      .then((pending) => dispatchOfflineStatus({ pending, syncing: false, online: navigator.onLine }))
       .catch(() => {});
   }
 
@@ -1072,6 +1133,9 @@
     deletePhoto,
     flushOfflineQueue,
     getOfflineQueueCount,
+    savePendingScoreDraft,
+    getPendingScoreDrafts,
+    removePendingScoreDraft,
     isDemoMode() {
       return demoMode;
     },

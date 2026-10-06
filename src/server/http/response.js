@@ -30,6 +30,9 @@ function sendError(response, error, referenceId = "") {
       ? "Hệ thống đang gặp sự cố. Vui lòng thử lại sau."
       : safeMessages[statusCode] || "Không thể thực hiện yêu cầu.",
   };
+  if (statusCode === 409 && error.scoreConflict) {
+    payload.scoreConflict = error.scoreConflict;
+  }
   if (statusCode >= 500 && referenceId) {
     payload.referenceId = referenceId;
   }

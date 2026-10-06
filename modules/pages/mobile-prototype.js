@@ -174,7 +174,7 @@
           <div class="modal-form-group">
             <label class="modal-form-label"><i class="fa-solid fa-camera"></i> Ảnh hiện trường</label>
             <div class="modal-photo-upload-box" id="modalPhotoBox1">
-              <input type="file" id="modalPhotoInput1" accept="image/*" capture="environment" class="photo-file-input ${modalPhotoUrl ? 'is-hidden' : ''}" ${lockedAttr}>
+              <input type="file" id="modalPhotoInput1" accept="image/*" class="photo-file-input ${modalPhotoUrl ? 'is-hidden' : ''}" ${lockedAttr}>
               
               <div id="modalPhotoPlaceholder1" class="photo-placeholder ${modalPhotoUrl ? 'is-hidden' : ''}">
                 <div class="photo-icon-circle">
@@ -242,7 +242,7 @@
           <div class="modal-form-group">
             <label class="modal-form-label text-emerald-400"><i class="fa-solid fa-camera"></i> Ảnh sau cải tiến (nếu có)</label>
             <div class="modal-photo-upload-box" id="modalPhotoBox2">
-              <input type="file" id="modalPhotoInput2" accept="image/*" capture="environment" class="photo-file-input ${modalAfterPhotoUrl ? 'is-hidden' : ''}">
+              <input type="file" id="modalPhotoInput2" accept="image/*" class="photo-file-input ${modalAfterPhotoUrl ? 'is-hidden' : ''}">
               
               <div id="modalPhotoPlaceholder2" class="photo-placeholder ${modalAfterPhotoUrl ? 'is-hidden' : ''}">
                 <div class="photo-icon-circle">
@@ -966,7 +966,7 @@
             <label class="form-label">Hình ảnh minh họa hiện trường</label>
             
             <div id="mobilePhotoUploadBox" class="photo-upload-box">
-              <input type="file" id="mobileSafetyFileInput" accept="image/*" capture="environment" class="photo-file-input">
+              <input type="file" id="mobileSafetyFileInput" accept="image/*" class="photo-file-input">
               
               <div id="photoPlaceholder" class="photo-placeholder ${uploadedSafetyPhotoData ? 'is-hidden' : ''}">
                 <div class="photo-icon-circle">
@@ -1085,7 +1085,7 @@
           <div class="form-group">
             <label class="form-label">Ảnh sau cải tiến (nếu có)</label>
             <div id="mobilePhotoAfterUploadBox" class="photo-upload-box">
-              <input type="file" id="mobileSafetyAfterFileInput" accept="image/*" capture="environment" class="photo-file-input">
+              <input type="file" id="mobileSafetyAfterFileInput" accept="image/*" class="photo-file-input">
               
               <div id="photoAfterPlaceholder" class="photo-placeholder ${uploadedSafetyAfterPhotoData ? 'is-hidden' : ''}">
                 <div class="photo-icon-circle">
@@ -1167,7 +1167,6 @@
               const statusClass = item.issueStatus === "closed" ? "status-closed" : item.issueStatus === "in_progress" ? "status-progress" : item.issueStatus === "overdue" ? "status-overdue" : "status-open";
               const photoThumb = item.photoDataUrl || "images/Logo.jpg";
               const hasPhoto = Boolean(item.photoDataUrl);
-              const hasAfterPhoto = Boolean(item.afterPhotoDataUrl);
               const rawLevel = item.issueLevel || item.level || item.riskLevel || "";
               const issueLevel = String(rawLevel).trim().toUpperCase();
               const levelBadgeClass = issueLevel === "A" ? "pill-level-a" : issueLevel === "B" ? "pill-level-b" : issueLevel === "C" ? "pill-level-c" : "pill-level-none";
@@ -1197,12 +1196,6 @@
                     ${item.improvementContent ? `
                       <div class="history-countermeasure-note">
                         <i class="fa-solid fa-wrench"></i> ${escapeHtml(item.improvementContent)}
-                      </div>
-                    ` : ''}
-                    ${hasAfterPhoto ? `
-                      <div class="history-after-photo-tag">
-                        <img src="${item.afterPhotoDataUrl}" class="after-photo-mini cursor-pointer" data-preview-img="${item.afterPhotoDataUrl}" title="Ảnh sau cải tiến (chạm để phóng to)">
-                        <span>Ảnh sau cải tiến</span>
                       </div>
                     ` : ''}
                   </div>

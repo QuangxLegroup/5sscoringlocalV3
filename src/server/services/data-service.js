@@ -122,6 +122,65 @@ function updateAtPath(root, targetPath, updates) {
   return nextRoot;
 }
 
+const SCORE_COMPARE_FIELDS = [
+  "id", "periodId", "areaId", "itemId", "criterionId", "scoreSource", "score", "status",
+  "note", "photoDataUrl", "photoName", "issueType", "issueLevel", "issueStatus", "issueLocation",
+  "issueDay", "issueMonth", "issueCount", "issueFoundBy", "employeeCode", "issueItemLabel",
+  "foundChannel", "improvementContent", "afterPhotoDataUrl", "afterPhotoName", "actionOwner",
+  "actionPlan", "completionDate", "completionLevelConfirm", "completionStop6Confirm", "scorerName",
+  "accountUsername", "createdAt", "updatedAt",
+];
+
+function scoreForComparison(score) {
+  if (!isPlainObject(score)) return null;
+  const normalized = {};
+  SCORE_COMPARE_FIELDS.forEach((field) => {
+    let value = score[field];
+    if (field === "scoreSource") value = value === "self" ? "self" : "assessor";
+    else if (field === "score") value = value === null || value === undefined || value === "" ? null : Number(value);
+    else if (field === "status") value = value === "crossed" ? "crossed" : "";
+    else if (field === "issueCount") {
+      const count = Number(value);
+      value = Number.isInteger(count) && count >= 1 ? count : "";
+    } else if (field === "issueStatus") {
+      const normalizedStatus = String(value || "").trim().toLowerCase().replace(/[\s-]+/g, "_");
+      value = ["closed", "done", "da_xu_ly", "đã_xử_lý"].includes(normalizedStatus)
+        ? "closed"
+        : ["in_progress", "processing", "dang_xu_ly", "đang_xử_lý"].includes(normalizedStatus)
+          ? "in_progress"
+          : ["overdue", "qua_han", "quá_hạn"].includes(normalizedStatus)
+            ? "overdue"
+            : normalizedStatus || (score.note || score.photoDataUrl ? "open" : "");
+    } else if (field === "foundChannel") {
+      const channel = String(value || "").trim().toLowerCase().replace(/[\s_]+/g, "-");
+      value = ["worker", "member", "cong-nhan", "công-nhân"].includes(channel)
+        ? "worker"
+        : ["department-head", "internal-audit", "audit", "truong-bo-phan", "trưởng-bộ-phận", "to-truong", "tổ-trưởng"].includes(channel)
+          ? "department-head"
+          : ["assessor", "lean", "(lean)"].includes(channel) ? "assessor" : "";
+    } else {
+      value = value ?? "";
+    }
+    normalized[field] = value;
+  });
+  return normalized;
+}
+
+function sameScoreValue(left, right) {
+  return JSON.stringify(scoreForComparison(left)) === JSON.stringify(scoreForComparison(right));
+}
+
+function findScoreForSlot(root, slot = {}) {
+  return Object.values(root?.scores || {}).find((score) => (
+    score &&
+    String(score.periodId || "") === String(slot.periodId || "") &&
+    String(score.areaId || "") === String(slot.areaId || "") &&
+    String(score.itemId || "") === String(slot.itemId || "") &&
+    String(score.criterionId || "") === String(slot.criterionId || "") &&
+    (score.scoreSource === "self" ? "self" : "assessor") === (slot.scoreSource === "self" ? "self" : "assessor")
+  )) || null;
+}
+
 function createHttpError(message, statusCode) {
   const error = new Error(message);
   error.statusCode = statusCode;
@@ -304,6 +363,24 @@ class DataService {
 
     return this.repository.updateRoot((currentRoot) => {
       this.authService?.assertDataWriteAllowed(command, authContext, currentRoot);
+      const scoreConflict = command.scoreConflict;
+      if (scoreConflict) {
+        const slotFields = ["periodId", "areaId", "itemId", "criterionId", "scoreSource"];
+        const validSlot = slotFields.every((field) => typeof scoreConflict.slot?.[field] === "string" && Boolean(scoreConflict.slot[field]));
+        if (!targetPath.startsWith("scores/") || !validSlot || !["self", "assessor"].includes(scoreConflict.slot.scoreSource)) {
+          throw createHttpError("Yêu cầu kiểm tra xung đột điểm không hợp lệ.", 400);
+        }
+        const currentScore = findScoreForSlot(currentRoot, scoreConflict.slot);
+        const desiredScore = operation === "remove" ? null : command.value;
+        if (sameScoreValue(currentScore, desiredScore)) {
+          return currentRoot;
+        }
+        if (!sameScoreValue(currentScore, scoreConflict.expectedValue)) {
+          const error = createHttpError("Ô điểm đã được người khác thay đổi.", 409);
+          error.scoreConflict = { currentValue: currentScore };
+          throw error;
+        }
+      }
       let nextRoot;
       if (operation === "set") {
         nextRoot = setAtPath(currentRoot, targetPath, command.value);
@@ -341,4 +418,5 @@ class DataService {
 
 module.exports = {
   DataService,
+  sameScoreValue,
 };

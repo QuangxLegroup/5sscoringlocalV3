@@ -398,8 +398,6 @@
   let activeSafetyReport = "";
   let pendingSafetyReport = "";
   let toastTimer = 0;
-  let lastOfflinePending = 0;
-  let lastOfflineSyncing = false;
   let modalPreviewDirty = false;
   let modalSubmitSucceeded = false;
   let snapshotSeedPromise = null;
@@ -438,6 +436,8 @@
   let activeInlineScoreCell = null;
   let activeInlineScoreRestoreRaf = null;
   let pendingScoreUiRefreshRaf = null;
+  let pendingScoreDraftProcessing = false;
+  let modalCancelHandler = null;
   const SESSION_STORAGE_KEY = "legroup-5s-session";
   const SESSION_HEARTBEAT_MS = 30 * 1000;
   const LOGIN_ROUTE = "/login";
@@ -1407,8 +1407,242 @@
     await dbRef().set(stateToStorage(state));
   }
 
-  async function saveScore(score) {
-    await dbRef(`scores/${score.id}`).set(score);
+  function scoreSlotFor(score) {
+    return {
+      periodId: String(score?.periodId || ""),
+      areaId: String(score?.areaId || ""),
+      itemId: String(score?.itemId || ""),
+      criterionId: String(score?.criterionId || ""),
+      scoreSource: normalizeScoreSource(score?.scoreSource || ""),
+    };
+  }
+
+  function scoreDraftId(slot, accountId = currentUser?.id || "") {
+    return `score:${[accountId, slot.periodId, slot.areaId, slot.itemId, slot.criterionId, slot.scoreSource].map(encodeURIComponent).join("|")}`;
+  }
+
+  function isSameScoreSlot(score, slot) {
+    const candidate = scoreSlotFor(score);
+    return candidate.periodId === slot.periodId
+      && candidate.areaId === slot.areaId
+      && candidate.itemId === slot.itemId
+      && candidate.criterionId === slot.criterionId
+      && candidate.scoreSource === slot.scoreSource;
+  }
+
+  function applyScoreValueToState(slot, score) {
+    state.scores = (state.scores || []).filter((item) => !isSameScoreSlot(item, slot));
+    if (score) state.scores.push(score);
+    invalidateScoreRecordIndex();
+  }
+
+  function mergeScoreDraft(base, local, remote) {
+    if (!remote) return cloneValue(local);
+    if (!local) return null;
+    const merged = cloneValue(remote);
+    const keys = new Set([...Object.keys(base || {}), ...Object.keys(local)]);
+    keys.forEach((key) => {
+      if (JSON.stringify(local[key] ?? null) !== JSON.stringify(base?.[key] ?? null)) {
+        if (Object.prototype.hasOwnProperty.call(local, key)) merged[key] = cloneValue(local[key]);
+        else delete merged[key];
+      }
+    });
+    merged.id = remote.id || local.id;
+    merged.updatedAt = local.updatedAt || new Date().toISOString();
+    return merged;
+  }
+
+  function chooseScoreConflictVersion(draft, serverValue) {
+    const score = draft.score || draft.expectedValue;
+    const area = getAreaForPeriod(score?.periodId, score?.areaId);
+    const item = getItem(score?.itemId);
+    const criterion = getCriterion(item, score?.criterionId);
+    const context = [
+      area?.code ? `Zone ${area.code}` : score?.areaId,
+      item?.code || score?.itemId,
+      criterion?.label || score?.criterionId,
+    ].filter(Boolean).join(" · ");
+    const localLabel = draft.score ? formatScoreRecord(draft.score) || "Chưa chấm" : "Đã xóa điểm";
+    const serverLabel = serverValue ? formatScoreRecord(serverValue) || "Chưa chấm" : "Chưa có điểm trên máy chủ";
+
+    return new Promise((resolve) => {
+      openFormModal({
+        title: "Ô điểm đã được thay đổi",
+        submitText: "Dùng bản nháp",
+        submitClass: "primary-button",
+        extraActions: '<button class="secondary-button" type="button" id="score-conflict-keep-server">Giữ điểm trên máy chủ</button>',
+        html: `
+          <p>Ô ${escapeHtml(context)} đã được cập nhật sau khi bạn bắt đầu nhập. Chọn giá trị cần giữ.</p>
+          <div class="score-conflict-comparison">
+            <section><strong>Đang lưu trên máy chủ</strong><span>${escapeHtml(serverLabel)}</span><small>${escapeHtml(serverValue?.scorerName || serverValue?.accountUsername || "")}</small></section>
+            <section><strong>Bản nháp trên thiết bị</strong><span>${escapeHtml(localLabel)}</span><small>${escapeHtml(draft.score?.scorerName || draft.username || "")}</small></section>
+          </div>
+        `,
+        onCancel() {
+          resolve("later");
+        },
+        async onSubmit() {
+          modalCancelHandler = null;
+          resolve("draft");
+          return true;
+        },
+      });
+      elements.modalActions.querySelector("#score-conflict-keep-server")?.addEventListener("click", () => {
+        modalCancelHandler = null;
+        closeModal();
+        resolve("server");
+      }, { once: true });
+    });
+  }
+
+  function showScoreSaveError(error) {
+    if (error?.offlineDraftSaved) {
+      showToast("Mất kết nối. Bản nháp điểm đã được giữ trên thiết bị, chưa lưu lên máy chủ.");
+    } else if (error?.scoreConflictPending) {
+      showToast("Bản nháp vẫn được giữ. Mở trạng thái dữ liệu để xử lý xung đột.", true);
+    } else {
+      showToast("Không lưu được điểm. Vui lòng thử lại.", true);
+    }
+  }
+
+  function pendingDraftBelongsToCurrentUser(draft) {
+    if (draft.accountId) return draft.accountId === currentUser?.id;
+    return !draft.username || String(draft.username).toLowerCase() === String(currentUser?.username || "").toLowerCase();
+  }
+
+  async function overlayPendingScoreDrafts() {
+    const drafts = await dataStore?.getPendingScoreDrafts?.() || [];
+    const historyById = new Map((state.history || []).map((entry) => [entry.id, entry]));
+    for (const draft of drafts) {
+      if (!pendingDraftBelongsToCurrentUser(draft)) continue;
+      applyScoreValueToState(draft.slot, draft.score);
+      (draft.historyEntries || []).forEach((entry) => historyById.set(entry.id, entry));
+    }
+    state.history = [...historyById.values()].sort((left, right) => String(right.timestamp || "").localeCompare(String(left.timestamp || "")));
+  }
+
+  async function processPendingScoreDrafts() {
+    if (pendingScoreDraftProcessing || !currentUser || !navigator.onLine || dataStore?.isDemoMode?.()) return;
+    pendingScoreDraftProcessing = true;
+    document.getElementById("local-data-status-button")?.classList.add("is-syncing");
+    let savedCount = 0;
+    try {
+      const drafts = await dataStore.getPendingScoreDrafts();
+      for (const draft of drafts) {
+        if (!pendingDraftBelongsToCurrentUser(draft)) continue;
+        try {
+          const result = await commitPendingScoreDraft(draft);
+          if (result.status === "saved") savedCount += 1;
+        } catch (error) {
+          showScoreSaveError(error);
+          break;
+        }
+      }
+      if (savedCount > 0) showToast(`Đã đồng bộ ${savedCount} bản nháp điểm.`);
+    } catch (error) {
+      showToast("Không đọc được bản nháp điểm trên thiết bị.", true);
+    } finally {
+      pendingScoreDraftProcessing = false;
+      document.getElementById("local-data-status-button")?.classList.remove("is-syncing");
+    }
+  }
+
+  async function commitPendingScoreDraft(initialDraft) {
+    let draft = initialDraft;
+    if (!currentUser || !navigator.onLine) {
+      const error = new Error("Điểm chưa đồng bộ được. Bản nháp vẫn nằm trên thiết bị.");
+      error.offlineDraftSaved = true;
+      throw error;
+    }
+
+    for (let attempt = 0; attempt < 4; attempt += 1) {
+      try {
+        const scoreId = draft.score?.id || draft.expectedValue?.id;
+        const writeOptions = {
+          scoreConflict: {
+            slot: draft.slot,
+            expectedValue: draft.expectedValue || null,
+          },
+        };
+        if (draft.score) {
+          await dbRef(`scores/${scoreId}`).set(draft.score, writeOptions);
+        } else if (scoreId) {
+          await dbRef(`scores/${scoreId}`).remove(writeOptions);
+        }
+
+        for (const historyEntry of draft.historyEntries || []) {
+          await saveHistoryEntry(historyEntry);
+        }
+        await dataStore.removePendingScoreDraft(draft.id);
+        return { status: "saved" };
+      } catch (error) {
+        if (error?.status === 409 && error.payload?.scoreConflict) {
+          const serverValue = error.payload.scoreConflict.currentValue || null;
+          const choice = await chooseScoreConflictVersion(draft, serverValue);
+          if (choice === "server") {
+            applyScoreValueToState(draft.slot, serverValue);
+            const historyIds = new Set((draft.historyEntries || []).map((entry) => entry.id));
+            state.history = (state.history || []).filter((entry) => !historyIds.has(entry.id));
+            await dataStore.removePendingScoreDraft(draft.id);
+            renderAll();
+            return { status: "server-kept" };
+          }
+          if (choice === "later") {
+            error.scoreConflictPending = true;
+            throw error;
+          }
+
+          const mergedScore = mergeScoreDraft(draft.expectedValue, draft.score, serverValue);
+          if (mergedScore && serverValue?.id) mergedScore.id = serverValue.id;
+          draft = await dataStore.savePendingScoreDraft({
+            ...draft,
+            score: mergedScore,
+            expectedValue: serverValue,
+            rebaseExpected: true,
+          });
+          continue;
+        }
+
+        if (!error?.status || [502, 503, 504].includes(Number(error.status)) || !navigator.onLine) {
+          await dataStore.savePendingScoreDraft(draft);
+          error.offlineDraftSaved = true;
+          throw error;
+        }
+        throw error;
+      }
+    }
+
+    const error = new Error("Ô điểm tiếp tục thay đổi. Bản nháp được giữ để xử lý sau.");
+    error.scoreConflictPending = true;
+    throw error;
+  }
+
+  async function saveScore(score, options = {}) {
+    const expectedValue = Object.prototype.hasOwnProperty.call(options, "expectedValue")
+      ? options.expectedValue
+      : null;
+    const slot = options.slot || scoreSlotFor(score || expectedValue);
+    if (!slot.periodId || !slot.areaId || !slot.itemId || !slot.criterionId) {
+      throw new Error("Không xác định được ô điểm cần lưu.");
+    }
+    if (dataStore?.isDemoMode?.()) {
+      if (score) await dbRef(`scores/${score.id}`).set(score);
+      else if (expectedValue?.id) await dbRef(`scores/${expectedValue.id}`).remove();
+      for (const entry of options.historyEntries || []) await saveHistoryEntry(entry);
+      return { status: "saved" };
+    }
+
+    const draft = await dataStore.savePendingScoreDraft({
+      id: scoreDraftId(slot),
+      slot,
+      score: cloneValue(score),
+      expectedValue: cloneValue(expectedValue),
+      historyEntries: options.historyEntries || [],
+      accountId: currentUser?.id || "",
+      username: currentUser?.username || "",
+      createdAt: new Date().toISOString(),
+    });
+    return commitPendingScoreDraft(draft);
   }
 
   async function saveSafetyRecord(record) {
@@ -1418,7 +1652,10 @@
     await dbRef(`safetyRecords/${record.id}`).set(record);
   }
 
-  async function deleteScoreFromDb(scoreId) {
+  async function deleteScoreFromDb(scoreId, options = {}) {
+    if (Object.prototype.hasOwnProperty.call(options, "expectedValue")) {
+      return saveScore(null, { ...options, slot: options.slot || scoreSlotFor(options.expectedValue) });
+    }
     await dbRef(`scores/${scoreId}`).remove();
   }
 
@@ -6520,6 +6757,7 @@
 
       startDataWatch();
       renderAll({ replaceRoute: true });
+      window.setTimeout(() => processPendingScoreDrafts(), 0);
     } catch (error) {
       if (error?.status === 401) {
         showToast("Sai tài khoản hoặc mật khẩu.", true);
@@ -6637,7 +6875,7 @@
           rawScore,
           scoreSource,
         });
-        await setScore({
+        const result = await setScore({
           periodId,
           area,
           item,
@@ -6646,10 +6884,11 @@
           status: isCrossed ? SCORE_CROSSED : "",
           scoreSource,
         });
-        showToast("Đã lưu điểm.");
+        showToast(result?.status === "server-kept" ? "Đã giữ điểm đang lưu trên máy chủ." : "Đã lưu điểm.");
         renderAll();
         return true;
       },
+      onError: showScoreSaveError,
     });
 
     const scoreSelect = elements.modalBody.querySelector('select[name="score"]');
@@ -6678,11 +6917,11 @@
               danger: true,
               onConfirm() {
                 deleteScore({ periodId, area, item, criterion, record })
-                  .then(() => {
-                    showToast("Đã xóa điểm.");
+                  .then((result) => {
+                    showToast(result?.status === "server-kept" ? "Đã giữ điểm đang lưu trên máy chủ." : "Đã xóa điểm.");
                     renderAll();
                   })
-                  .catch(() => showToast("Lỗi khi xóa điểm.", true));
+                  .catch(showScoreSaveError);
               },
             });
           });
@@ -6741,7 +6980,7 @@
     });
     select.disabled = true;
     try {
-      await setScore({
+      const result = await setScore({
         periodId,
         area,
         item,
@@ -6750,6 +6989,12 @@
         status: isCrossed ? SCORE_CROSSED : "",
         scoreSource,
       });
+      const effectiveRecord = getScoreRecord(periodId, area.id, item.id, criterion.id, scoreSource);
+      const effectiveRawScore = result?.status === "server-kept"
+        ? isScoreCrossed(effectiveRecord)
+          ? SCORE_CROSSED
+          : Number.isFinite(effectiveRecord?.score) ? String(effectiveRecord.score) : ""
+        : rawScore;
       document.querySelectorAll(assessorScoreSelectSelector({
         periodId,
         areaId: area.id,
@@ -6757,7 +7002,7 @@
         criterionId: criterion.id,
         scoreSource,
       })).forEach((matchingSelect) => {
-        matchingSelect.dataset.savedValue = rawScore;
+        matchingSelect.dataset.savedValue = effectiveRawScore;
       });
       refreshAveragePreview({
         periodId,
@@ -6766,9 +7011,9 @@
         scoreSource,
       });
       scheduleAssessorScoreFocusRestore(focusContext);
-      showToast("Đã lưu điểm.");
+      showToast(result?.status === "server-kept" ? "Đã giữ điểm đang lưu trên máy chủ." : "Đã lưu điểm.");
     } catch (error) {
-      showToast("Không lưu được điểm. Vui lòng thử lại.", true);
+      showScoreSaveError(error);
       renderActiveTab();
     } finally {
       document.querySelectorAll(assessorScoreSelectSelector({
@@ -7035,7 +7280,7 @@
 
     input.dataset.saving = "true";
     try {
-      await setScore({
+      const result = await setScore({
         periodId,
         area,
         item,
@@ -7044,6 +7289,17 @@
         status: rawScore === SCORE_CROSSED ? SCORE_CROSSED : "",
         scoreSource,
       });
+      if (result?.status === "server-kept") {
+        const serverRecord = getScoreRecord(periodId, area.id, item.id, criterion.id, scoreSource);
+        const serverRawScore = isScoreCrossed(serverRecord)
+          ? SCORE_CROSSED
+          : Number.isFinite(serverRecord?.score) ? String(serverRecord.score) : "";
+        applyInlineScorePreview({ periodId, areaId: area.id, itemId: item.id, criterionId: criterion.id, rawScore: serverRawScore, scoreSource });
+        refreshAveragePreview({ periodId, areaId: area.id, scoreSource });
+        input.dataset.savedValue = serverRawScore;
+        showToast("Đã giữ điểm đang lưu trên máy chủ.");
+        return true;
+      }
       applyInlineScorePreview({
         periodId,
         areaId: area.id,
@@ -7064,7 +7320,7 @@
       }
       return true;
     } catch (error) {
-      showToast("Không lưu được điểm. Vui lòng thử lại.", true);
+      showScoreSaveError(error);
       return false;
     } finally {
       delete input.dataset.saving;
@@ -7357,27 +7613,6 @@
     invalidateScoreRecordIndex();
 
     // Remove from local storage
-    await deleteScoreFromDb(record.id);
-    await deleteUnusedPhotoFiles(collectPhotoUrls([recordCopy]));
-
-    pushUndoAction({
-      type: "score",
-      description: `Xóa điểm Zone ${area.code} · ${item.code} (${criterion.label}): ${beforeLabel}`,
-      periodId,
-      areaId: area.id,
-      itemId: item.id,
-      criterionId: criterion.id,
-      scoreSource: normalizeScoreSource(record.scoreSource),
-      areaCode: area.code,
-      itemCode: item.code,
-      criterionLabel: criterion.label,
-      before: recordCopy,
-      after: null,
-      beforeLabel,
-      afterLabel: "Đã xóa",
-    });
-
-    // Log history
     const historyEntry = {
       id: makeId("history"),
       timestamp: new Date().toISOString(),
@@ -7399,7 +7634,31 @@
       scope: FIVE_S_PERIOD_TYPE,
     };
     state.history.unshift(historyEntry);
-    await saveHistoryEntry(historyEntry);
+    const result = await deleteScoreFromDb(record.id, {
+      expectedValue: recordCopy,
+      slot: scoreSlotFor(recordCopy),
+      historyEntries: [historyEntry],
+    });
+    if (result?.status === "server-kept") return result;
+    await deleteUnusedPhotoFiles(collectPhotoUrls([recordCopy]));
+
+    pushUndoAction({
+      type: "score",
+      description: `Xóa điểm Zone ${area.code} · ${item.code} (${criterion.label}): ${beforeLabel}`,
+      periodId,
+      areaId: area.id,
+      itemId: item.id,
+      criterionId: criterion.id,
+      scoreSource: normalizeScoreSource(record.scoreSource),
+      areaCode: area.code,
+      itemCode: item.code,
+      criterionLabel: criterion.label,
+      before: recordCopy,
+      after: null,
+      beforeLabel,
+      afterLabel: "Đã xóa",
+    });
+    return result;
   }
 
   async function setScore({ periodId, area, item, criterion, score, status, scoreSource = SCORE_SOURCE_ASSESSOR, note = undefined, photoDataUrl = undefined, photoName = undefined }) {
@@ -7456,13 +7715,17 @@
     };
     state.history.unshift(historyEntry);
 
-    const dbWrites = [saveHistoryEntry(historyEntry)];
+    const dbWrites = [];
     if (score === null && !status) {
       if (existingIndex >= 0) {
         const removedId = state.scores[existingIndex].id;
         state.scores.splice(existingIndex, 1);
         invalidateScoreRecordIndex();
-        dbWrites.push(deleteScoreFromDb(removedId));
+        dbWrites.push(deleteScoreFromDb(removedId, {
+          expectedValue: existingCopy,
+          slot: scoreSlotFor(existingCopy),
+          historyEntries: [historyEntry],
+        }));
       }
     } else {
       const payload = {
@@ -7508,7 +7771,10 @@
         state.scores.push(payload);
       }
       invalidateScoreRecordIndex();
-      dbWrites.push(saveScore(payload));
+      dbWrites.push(saveScore(payload, {
+        expectedValue: existingCopy,
+        historyEntries: [historyEntry],
+      }));
     }
 
     pushUndoAction({
@@ -7528,9 +7794,20 @@
       afterLabel: afterLabel || "Chưa chấm",
     });
 
-    suppressNextDataWatchRender += dbWrites.length;
+    if (navigator.onLine && dbWrites.length) suppressNextDataWatchRender += 1;
     scheduleScoreUiRefresh();
-    await Promise.all(dbWrites);
+    try {
+      const results = await Promise.all(dbWrites);
+      if (results[0]?.status === "server-kept" && navigator.onLine) {
+        suppressNextDataWatchRender = Math.max(0, suppressNextDataWatchRender - 1);
+      }
+      return results[0];
+    } catch (error) {
+      if (navigator.onLine && dbWrites.length) {
+        suppressNextDataWatchRender = Math.max(0, suppressNextDataWatchRender - 1);
+      }
+      throw error;
+    }
   }
 
   async function logAdminChange({ subjectLabel, beforeLabel = "", afterLabel = "", changeLabel = "", areaCode = "", note = "", scope = "", periodId = "" }) {
@@ -7779,12 +8056,17 @@
             r.criterionId === criterionId &&
             normalizeScoreSource(r.scoreSource) === normalizedSource,
         );
+        const currentValue = existingIndex >= 0 ? cloneValue(state.scores[existingIndex]) : null;
+        let saveResult = null;
         if (!before) {
           if (existingIndex >= 0) {
             const removedId = state.scores[existingIndex].id;
             state.scores.splice(existingIndex, 1);
             invalidateScoreRecordIndex();
-            await deleteScoreFromDb(removedId);
+            saveResult = await deleteScoreFromDb(removedId, {
+              expectedValue: currentValue,
+              slot: scoreSlotFor(currentValue),
+            });
           }
         } else {
           const beforeCopy = cloneValue(before);
@@ -7794,7 +8076,13 @@
             state.scores.push(beforeCopy);
           }
           invalidateScoreRecordIndex();
-          await saveScore(beforeCopy);
+          saveResult = await saveScore(beforeCopy, { expectedValue: currentValue });
+        }
+        if (saveResult?.status === "server-kept") {
+          undoStack.push(action);
+          showToast("Đã giữ điểm đang lưu trên máy chủ.");
+          renderAll();
+          return;
         }
         redoStack.push(action);
         showToast(`Hoàn tác: ${action.description || "Điểm 5S"}`);
@@ -7884,12 +8172,17 @@
             r.criterionId === criterionId &&
             normalizeScoreSource(r.scoreSource) === normalizedSource,
         );
+        const currentValue = existingIndex >= 0 ? cloneValue(state.scores[existingIndex]) : null;
+        let saveResult = null;
         if (!after) {
           if (existingIndex >= 0) {
             const removedId = state.scores[existingIndex].id;
             state.scores.splice(existingIndex, 1);
             invalidateScoreRecordIndex();
-            await deleteScoreFromDb(removedId);
+            saveResult = await deleteScoreFromDb(removedId, {
+              expectedValue: currentValue,
+              slot: scoreSlotFor(currentValue),
+            });
           }
         } else {
           const afterCopy = cloneValue(after);
@@ -7899,7 +8192,13 @@
             state.scores.push(afterCopy);
           }
           invalidateScoreRecordIndex();
-          await saveScore(afterCopy);
+          saveResult = await saveScore(afterCopy, { expectedValue: currentValue });
+        }
+        if (saveResult?.status === "server-kept") {
+          redoStack.push(action);
+          showToast("Đã giữ điểm đang lưu trên máy chủ.");
+          renderAll();
+          return;
         }
         undoStack.push(action);
         showToast(`Làm lại: ${action.description || "Điểm 5S"}`);
@@ -7978,9 +8277,10 @@
     }
   }
 
-  function openFormModal({ title, html, submitText = "Lưu", submitClass = "primary-button", extraActions = "", extraRightActions = "", modalClass = "", onSubmit }) {
+  function openFormModal({ title, html, submitText = "Lưu", submitClass = "primary-button", extraActions = "", extraRightActions = "", modalClass = "", onSubmit, onError = null, onCancel = null }) {
     modalPreviewDirty = false;
     modalSubmitSucceeded = false;
+    modalCancelHandler = typeof onCancel === "function" ? onCancel : null;
     const isTableFullscreen = modalClass === "table-fullscreen-modal";
     setModalScrollLock(true, { tableFullscreen: isTableFullscreen });
     elements.modalBackdrop.classList.toggle("table-fullscreen-backdrop", isTableFullscreen);
@@ -8005,12 +8305,14 @@
       event.preventDefault();
       try {
         const shouldClose = await onSubmit(new FormData(form), form);
-        if (shouldClose !== false) {
+        if (shouldClose !== false && document.getElementById("modal-form") === form) {
           modalSubmitSucceeded = true;
+          modalCancelHandler = null;
           closeModal();
         }
       } catch (error) {
-        showToast("Không lưu được dữ liệu. Vui lòng thử lại.", true);
+        if (typeof onError === "function") onError(error);
+        else showToast("Không lưu được dữ liệu. Vui lòng thử lại.", true);
       }
     });
 
@@ -8043,6 +8345,7 @@
 
     modalPreviewDirty = false;
     modalSubmitSucceeded = true;
+    modalCancelHandler = null;
     setModalScrollLock(true);
     elements.modalBackdrop.classList.remove("table-fullscreen-backdrop");
     elements.modalBackdrop.classList.add("image-fullscreen-backdrop");
@@ -8059,6 +8362,8 @@
 
   function closeModal() {
     const shouldRefreshPreview = modalPreviewDirty && !modalSubmitSucceeded && currentUser && state;
+    const onCancel = modalCancelHandler;
+    modalCancelHandler = null;
     elements.modalBackdrop.hidden = true;
     elements.modalBackdrop.classList.remove("table-fullscreen-backdrop");
     elements.modalBackdrop.classList.remove("image-fullscreen-backdrop");
@@ -8075,6 +8380,7 @@
     if (shouldRefreshPreview) {
       renderActiveTab();
     }
+    onCancel?.();
   }
 
   function setModalScrollLock(isLocked, options = {}) {
@@ -15282,38 +15588,37 @@
   function handleLocalDataSyncStatus(event) {
     const detail = event?.detail || {};
     const pending = Number(detail.pending || 0);
+    const scoreDrafts = Number(detail.scoreDrafts || 0);
     const syncing = Boolean(detail.syncing);
     const hasError = Boolean(detail.lastError);
-    const indicator = document.querySelector(".status-indicator");
+    const online = detail.online !== false;
+    const indicator = document.getElementById("local-data-status-button");
     const label = indicator?.querySelector("span:not(.status-dot)");
 
     if (indicator) {
       indicator.classList.toggle("has-pending", pending > 0);
       indicator.classList.toggle("is-syncing", syncing);
-      indicator.classList.toggle("is-offline", pending > 0 && !syncing);
-      indicator.classList.toggle("has-error", hasError && pending > 0);
+      indicator.classList.toggle("is-offline", !online);
+      indicator.classList.toggle("has-error", hasError);
+      indicator.classList.toggle("has-score-drafts", scoreDrafts > 0);
+      indicator.disabled = scoreDrafts === 0;
+      indicator.title = scoreDrafts > 0 ? "Đồng bộ hoặc xử lý xung đột bản nháp điểm" : "Không có bản nháp điểm chờ đồng bộ";
+      indicator.setAttribute("aria-label", scoreDrafts > 0 ? `${scoreDrafts} bản nháp điểm chưa đồng bộ` : "Không có bản nháp điểm chờ đồng bộ");
     }
 
     if (label) {
-      if (pending > 0 && syncing) {
-        label.textContent = `Đang đồng bộ ${pending} thay đổi`;
-      } else if (pending > 0 && hasError) {
-        label.textContent = `Chờ đúng mạng nội bộ (${pending})`;
+      if (scoreDrafts > 0) {
+        label.textContent = !online
+          ? `${scoreDrafts} bản nháp điểm lưu trên thiết bị`
+          : `${scoreDrafts} bản nháp điểm chờ đồng bộ`;
+      } else if (!online) {
+        label.textContent = "Mất kết nối máy chủ";
       } else if (pending > 0) {
-        label.textContent = `Đã lưu tạm ${pending} thay đổi`;
+        label.textContent = `Còn ${pending} lệnh offline cũ`;
       } else {
         label.textContent = "Dữ liệu nội bộ (Local)";
       }
     }
-
-    if (pending > 0 && lastOfflinePending === 0 && !syncing) {
-      showToast("Mất kết nối mạng nội bộ. Dữ liệu đã được lưu tạm trên thiết bị.");
-    } else if (pending === 0 && lastOfflinePending > 0 && lastOfflineSyncing && !hasError) {
-      showToast("Đã đồng bộ dữ liệu offline lên máy chủ.");
-    }
-
-    lastOfflinePending = pending;
-    lastOfflineSyncing = syncing;
   }
 
   async function copyTextToClipboard(text, successMessage = "Đã copy.") {
@@ -16351,8 +16656,10 @@
     window.addEventListener("popstate", syncRouteFromLocation);
     window.addEventListener("hashchange", syncRouteFromLocation);
     window.addEventListener("local-data-sync-status", handleLocalDataSyncStatus);
-    dataStore?.getOfflineQueueCount?.()
-      .then((pending) => handleLocalDataSyncStatus({ detail: { pending, syncing: false, online: navigator.onLine } }))
+    window.addEventListener("local-data-network-restored", () => processPendingScoreDrafts());
+    document.getElementById("local-data-status-button")?.addEventListener("click", () => processPendingScoreDrafts());
+    Promise.all([dataStore?.getOfflineQueueCount?.(), dataStore?.getPendingScoreDrafts?.()])
+      .then(([pending, drafts]) => handleLocalDataSyncStatus({ detail: { pending, scoreDrafts: drafts?.length || 0, syncing: false, online: navigator.onLine } }))
       .catch(() => {});
     document.addEventListener("dblclick", (event) => {
       const image = event.target?.closest?.("img");
@@ -16775,18 +17082,20 @@
 
   const elements_loading = document.getElementById("loading-screen");
   let pendingDataWatchRaf = null;
+  let dataWatchRevision = 0;
 
   function startDataWatch() {
     if (dataUnsubscribe) {
       return;
     }
 
-    dataUnsubscribe = dbRef().on("value", (snapshot) => {
+    dataUnsubscribe = dbRef().on("value", async (snapshot) => {
       const raw = snapshot.val();
       if (!raw) {
         return;
       }
 
+      const revision = ++dataWatchRevision;
       const userId = currentUser?.id || "";
       state = normalizeState(raw);
       invalidateScoreRecordIndex();
@@ -16806,6 +17115,8 @@
         handleSessionRevoked();
         return;
       }
+      await overlayPendingScoreDrafts().catch(() => {});
+      if (revision !== dataWatchRevision) return;
       if (suppressNextDataWatchRender > 0) {
         suppressNextDataWatchRender -= 1;
         return;
@@ -16842,6 +17153,7 @@
       const restored = await restoreSessionUser();
       if (restored) {
         startDataWatch();
+        window.setTimeout(() => processPendingScoreDrafts(), 0);
       }
       syncRouteFromLocation();
     } catch (error) {
