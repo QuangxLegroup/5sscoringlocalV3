@@ -1108,6 +1108,7 @@
       SAFETY_LEVEL_COLUMNS,
       SAFETY_STOP6_COLUMNS,
       canManageSafetyRecord,
+      canManageSafetyCountermeasure,
       escapeHtml,
       getCompletionDateDisplay,
       getIssueCount,
@@ -1137,6 +1138,11 @@
           <button class="tiny-button danger-text-button" type="button" data-action="delete-safety-record" data-id="${escapeHtml(row.score.id)}">Xóa</button>
         </div>`
       : "";
+    const canAnnotateCountermeasure = typeof canManageSafetyCountermeasure === "function"
+      ? canManageSafetyCountermeasure(row.score, context.currentUser)
+      : canEdit;
+    const photoAnnotationAttrs = (field, editable) =>
+      `data-safety-record-id="${escapeHtml(row.score.id)}" data-safety-photo-field="${field}" data-safety-annotations="${escapeHtml(JSON.stringify(row.score[field] || []))}" data-safety-annotation-editable="${editable ? "true" : "false"}"`;
 
     return `<tr>
       <td class="safety-no-cell"><span>${index}</span>${actions}</td>
@@ -1145,14 +1151,14 @@
       <td>${escapeHtml(getIssueDay(row, row.score.periodId))}</td>
       <td>${escapeHtml(getIssueMonth(row, row.score.periodId))}</td>
       <td>${escapeHtml(row.score.note || getIssueDescription(row))}</td>
-      <td>${row.score.photoDataUrl ? `<img class="safety-thumb" src="${row.score.photoDataUrl}" alt="Ảnh minh họa">` : ""}</td>
+      <td>${row.score.photoDataUrl ? `<img class="safety-thumb" src="${row.score.photoDataUrl}" alt="Ảnh minh họa" ${photoAnnotationAttrs("photoAnnotations", canEdit)}>` : ""}</td>
       <td>${escapeHtml(getIssueCount(row))}</td>
       ${SAFETY_STOP6_COLUMNS.map((column) => renderSafetyMarkCell(isSafetyStop6Selected(row.score, column.value), context)).join("")}
       ${SAFETY_LEVEL_COLUMNS.map((column) => renderSafetyMarkCell(isSafetyLevelSelected(row.score, column.value), context, column.value === "A" ? "level-a-column" : "level-mark")).join("")}
       ${SAFETY_FOUND_COLUMNS.map((column) => renderSafetyMarkCell(isSafetyFoundSelected(row.score, column.value), context, "", "v")).join("")}
       <td>${escapeHtml(getIssueEmployeeCode(row))}</td>
       <td>${escapeHtml(row.score.improvementContent || "")}${row.score.countermeasureDate ? `<br><small>Triển khai: ${escapeHtml(context.formatDateDisplay(row.score.countermeasureDate))}</small>` : ""}</td>
-      <td>${row.score.afterPhotoDataUrl ? `<img class="safety-thumb" src="${row.score.afterPhotoDataUrl}" alt="Ảnh sau cải tiến">` : ""}</td>
+      <td>${row.score.afterPhotoDataUrl ? `<img class="safety-thumb" src="${row.score.afterPhotoDataUrl}" alt="Ảnh sau cải tiến" ${photoAnnotationAttrs("afterPhotoAnnotations", canAnnotateCountermeasure)}>` : ""}</td>
       <td>${escapeHtml(row.score.actionOwner || "")}</td>
       <td>${escapeHtml(row.score.actionPlan || "")}</td>
       <td>${escapeHtml(completionDate)}</td>

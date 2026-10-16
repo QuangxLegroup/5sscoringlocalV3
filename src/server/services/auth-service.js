@@ -674,6 +674,7 @@ class AuthService {
       "improvementContent",
       "afterPhotoDataUrl",
       "afterPhotoName",
+      "afterPhotoAnnotations",
       "actionOwner",
       "actionPlan",
       "completionDate",
@@ -685,6 +686,11 @@ class AuthService {
     for (const key of keys) {
       const beforeValue = existingRecord[key] === undefined ? null : existingRecord[key];
       const afterValue = nextRecord[key] === undefined ? null : nextRecord[key];
+      const emptyNewAnnotationField = ["photoAnnotations", "afterPhotoAnnotations"].includes(key)
+        && (beforeValue === null || beforeValue === undefined)
+        && Array.isArray(afterValue)
+        && afterValue.length === 0;
+      if (emptyNewAnnotationField) continue;
       if (JSON.stringify(beforeValue) !== JSON.stringify(afterValue) && !allowedChangedFields.has(key)) {
         return false;
       }

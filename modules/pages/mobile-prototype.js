@@ -44,9 +44,12 @@
   let uploadedSafetyPhotoData = "";
   let uploadedSafetyAfterPhotoData = "";
   let editingSafetyRecordId = "";
+  let safetyAnnotationDraftId = null;
+  let pendingSafetyPhotoAnnotations = [];
+  let pendingSafetyAfterPhotoAnnotations = [];
   let currentAppContext = null;
 
-  function openMobileImageModal(imgSrc) {
+  function openMobileImageModal(imgSrc, annotationOptions = {}) {
     if (!imgSrc || imgSrc === "images/Logo.jpg") return;
     const existing = document.getElementById("mobileImageModal");
     if (existing) existing.remove();
@@ -60,15 +63,63 @@
         <i class="fa-solid fa-xmark"></i>
       </button>
       <div class="mobile-image-fullscreen-container">
-        <img src="${imgSrc}" alt="Ảnh xem trước" class="mobile-image-fullscreen-img">
+        <div class="mobile-image-fullscreen-stage">
+          <img src="${imgSrc}" alt="Ảnh xem trước" class="mobile-image-fullscreen-img">
+        </div>
       </div>
     `;
     document.body.appendChild(modal);
 
-    const closeModal = () => modal.remove();
+    const cleanupAnnotation = window.mountImageCircleAnnotator?.(
+      modal.querySelector(".mobile-image-fullscreen-stage"),
+      modal,
+      {
+        ...annotationOptions,
+        onError: (error) => {
+          annotationOptions.onError?.(error);
+          showMobileToast(error?.message || "Không lưu được nét khoanh.", true);
+        },
+      },
+    );
+    let isClosing = false;
+    const closeModal = async () => {
+      if (isClosing) return;
+      isClosing = true;
+      try {
+        await cleanupAnnotation?.();
+        modal.remove();
+      } catch (error) {
+        showMobileToast(error?.message || "Không lưu được nét khoanh. Vui lòng thử lại.", true);
+        isClosing = false;
+      }
+    };
     modal.querySelector(".mobile-image-fullscreen-backdrop").addEventListener("click", closeModal);
     modal.querySelector(".mobile-image-fullscreen-close").addEventListener("click", closeModal);
-    modal.querySelector(".mobile-image-fullscreen-container").addEventListener("click", closeModal);
+    modal.querySelector(".mobile-image-fullscreen-container").addEventListener("click", (event) => {
+      if (event.target === event.currentTarget) closeModal();
+    });
+  }
+
+  function buildMobilePhotoAnnotationOptions(context, record, field, options = {}) {
+    const isAfterPhoto = field === "afterPhotoAnnotations";
+    const editable = options.editable ?? (record
+      ? (isAfterPhoto ? canManageSafetyCountermeasure(context, record) : canManageFullSafetyRecord(context, record))
+      : checkSafetyPermission(context));
+    const pending = isAfterPhoto ? pendingSafetyAfterPhotoAnnotations : pendingSafetyPhotoAnnotations;
+    return {
+      initialCircles: options.initialCircles ?? record?.[field] ?? pending,
+      editable,
+      onSave: async (annotations) => {
+        options.onChange?.(annotations);
+        if (options.localOnly || !record?.id) return true;
+        if (typeof context?.saveSafetyPhotoAnnotations !== "function") {
+          throw new Error("Không có kết nối lưu nét khoanh.");
+        }
+        await context.saveSafetyPhotoAnnotations(record.id, field, annotations);
+        return true;
+      },
+      onError: options.onError,
+    };
   }
 
   function formatIsoToVnDate(isoStr) {
@@ -243,6 +294,10 @@
 
     let modalPhotoUrl = item.photoDataUrl || "";
     let modalAfterPhotoUrl = item.afterPhotoDataUrl || "";
+    let modalPhotoAnnotations = [...(item.photoAnnotations || [])];
+    let modalAfterPhotoAnnotations = [...(item.afterPhotoAnnotations || [])];
+    let modalPhotoWasReplaced = false;
+    let modalAfterPhotoWasReplaced = false;
 
     const modal = document.createElement("div");
     modal.id = "mobileSafetyDetailModal";
@@ -336,7 +391,7 @@
               </div>
 
               <div id="modalPhotoWrap1" class="photo-preview-wrap ${modalPhotoUrl ? '' : 'is-hidden'}">
-                <img id="modalPhotoImg1" src="${modalPhotoUrl || ''}" alt="Ảnh hiện trường" class="photo-preview-img cursor-pointer" data-preview-img="${modalPhotoUrl || ''}" title="Chạm để xem phóng to">
+                <img id="modalPhotoImg1" src="${modalPhotoUrl || ''}" alt="Ảnh hiện trường" class="photo-preview-img cursor-pointer" data-preview-img="${modalPhotoUrl || ''}" data-safety-annotations="${escapeHtml(JSON.stringify(modalPhotoAnnotations))}" title="Chạm để xem phóng to">
                 <div class="photo-preview-actions">
                   <button type="button" id="modalRetakePhotoBtn1" class="photo-btn retake-btn" title="Đổi / Chụp lại ảnh khác" ${lockedAttr}>
                     <i class="fa-solid fa-arrows-rotate"></i>
@@ -415,7 +470,7 @@
               </div>
 
               <div id="modalPhotoWrap2" class="photo-preview-wrap ${modalAfterPhotoUrl ? '' : 'is-hidden'}">
-                <img id="modalPhotoImg2" src="${modalAfterPhotoUrl || ''}" alt="Ảnh sau cải tiến" class="photo-preview-img cursor-pointer" data-preview-img="${modalAfterPhotoUrl || ''}" title="Chạm để xem phóng to">
+                <img id="modalPhotoImg2" src="${modalAfterPhotoUrl || ''}" alt="Ảnh sau cải tiến" class="photo-preview-img cursor-pointer" data-preview-img="${modalAfterPhotoUrl || ''}" data-safety-annotations="${escapeHtml(JSON.stringify(modalAfterPhotoAnnotations))}" title="Chạm để xem phóng to">
                 <div class="photo-preview-actions">
                   <button type="button" id="modalRetakePhotoBtn2" class="photo-btn retake-btn" title="Đổi / Chụp lại ảnh khác">
                     <i class="fa-solid fa-arrows-rotate"></i>
@@ -485,7 +540,23 @@
         e.preventDefault();
         e.stopPropagation();
         const src = el.dataset.previewImg || el.src;
-        if (src) openMobileImageModal(src);
+        if (src) {
+          const isAfterPhoto = el.id === "modalPhotoImg2";
+          const field = isAfterPhoto ? "afterPhotoAnnotations" : "photoAnnotations";
+          const photoWasReplaced = () => isAfterPhoto ? modalAfterPhotoWasReplaced : modalPhotoWasReplaced;
+          const annotationOptions = buildMobilePhotoAnnotationOptions(context, item, field, {
+            initialCircles: isAfterPhoto ? modalAfterPhotoAnnotations : modalPhotoAnnotations,
+            editable: isAfterPhoto ? canEditCountermeasure : canEditFull,
+            localOnly: photoWasReplaced(),
+            onChange: (annotations) => {
+              if (isAfterPhoto) modalAfterPhotoAnnotations = annotations;
+              else modalPhotoAnnotations = annotations;
+              el.dataset.safetyAnnotations = JSON.stringify(annotations);
+              window.refreshSafetyPhotoAnnotationThumbnail?.(el, annotations);
+            },
+          });
+          openMobileImageModal(src, annotationOptions);
+        }
       });
     });
 
@@ -502,9 +573,12 @@
           const reader = new FileReader();
           reader.onload = (ev) => {
             modalPhotoUrl = ev.target.result;
+            modalPhotoAnnotations = [];
+            modalPhotoWasReplaced = true;
             if (img1) {
               img1.src = modalPhotoUrl;
               img1.dataset.previewImg = modalPhotoUrl;
+              img1.dataset.safetyAnnotations = "[]";
             }
             placeholder1?.classList.add("is-hidden");
             wrap1?.classList.remove("is-hidden");
@@ -526,10 +600,13 @@
       e.preventDefault();
       e.stopPropagation();
       modalPhotoUrl = "";
+      modalPhotoAnnotations = [];
+      modalPhotoWasReplaced = true;
       if (fileInput1) fileInput1.value = "";
       if (img1) {
         img1.src = "";
         img1.dataset.previewImg = "";
+        img1.dataset.safetyAnnotations = "[]";
       }
       wrap1?.classList.add("is-hidden");
       placeholder1?.classList.remove("is-hidden");
@@ -549,9 +626,12 @@
           const reader = new FileReader();
           reader.onload = (ev) => {
             modalAfterPhotoUrl = ev.target.result;
+            modalAfterPhotoAnnotations = [];
+            modalAfterPhotoWasReplaced = true;
             if (img2) {
               img2.src = modalAfterPhotoUrl;
               img2.dataset.previewImg = modalAfterPhotoUrl;
+              img2.dataset.safetyAnnotations = "[]";
             }
             placeholder2?.classList.add("is-hidden");
             wrap2?.classList.remove("is-hidden");
@@ -573,10 +653,13 @@
       e.preventDefault();
       e.stopPropagation();
       modalAfterPhotoUrl = "";
+      modalAfterPhotoAnnotations = [];
+      modalAfterPhotoWasReplaced = true;
       if (fileInput2) fileInput2.value = "";
       if (img2) {
         img2.src = "";
         img2.dataset.previewImg = "";
+        img2.dataset.safetyAnnotations = "[]";
       }
       wrap2?.classList.add("is-hidden");
       placeholder2?.classList.remove("is-hidden");
@@ -734,6 +817,7 @@
             completionDate, countermeasureDate, completedDate,
             afterPhotoDataUrl: finalAfterPhotoDataUrl,
             afterPhotoName: finalAfterPhotoName,
+            afterPhotoAnnotations: modalAfterPhotoAnnotations,
             updatedAt: now.toISOString(),
           }
         : {
@@ -754,8 +838,10 @@
             completionDate, countermeasureDate, completedDate,
             photoDataUrl: finalPhotoDataUrl,
             photoName: finalPhotoName,
+            photoAnnotations: modalPhotoAnnotations,
             afterPhotoDataUrl: finalAfterPhotoDataUrl,
             afterPhotoName: finalAfterPhotoName,
+            afterPhotoAnnotations: modalAfterPhotoAnnotations,
             updatedAt: now.toISOString(),
           };
 
@@ -1157,6 +1243,12 @@
 
     const allRecords = context?.state?.safetyRecords || [];
     const editingRecord = editingSafetyRecordId ? allRecords.find((r) => r.id === editingSafetyRecordId) || null : null;
+    const nextAnnotationDraftId = editingRecord?.id || "";
+    if (safetyAnnotationDraftId !== nextAnnotationDraftId) {
+      safetyAnnotationDraftId = nextAnnotationDraftId;
+      pendingSafetyPhotoAnnotations = [...(editingRecord?.photoAnnotations || [])];
+      pendingSafetyAfterPhotoAnnotations = [...(editingRecord?.afterPhotoAnnotations || [])];
+    }
 
     if (editingRecord) {
       currentSafetyZoneId = editingRecord.areaId || currentSafetyZoneId;
@@ -1291,7 +1383,7 @@
               </div>
 
               <div id="photoPreviewWrap" class="photo-preview-wrap ${uploadedSafetyPhotoData ? '' : 'is-hidden'}">
-                <img id="mobileSafetyPreviewImg" src="${uploadedSafetyPhotoData || ''}" alt="Ảnh hiện trường" class="photo-preview-img cursor-pointer" data-preview-img="${uploadedSafetyPhotoData || ''}" title="Chạm để phóng to ảnh">
+                <img id="mobileSafetyPreviewImg" src="${uploadedSafetyPhotoData || ''}" alt="Ảnh hiện trường" class="photo-preview-img cursor-pointer" data-preview-img="${uploadedSafetyPhotoData || ''}" data-safety-annotations="${escapeHtml(JSON.stringify(pendingSafetyPhotoAnnotations))}" data-safety-record-id="${escapeHtml(editingRecord?.id || "")}" data-safety-photo-field="photoAnnotations" data-safety-draft-field="photoAnnotations" data-safety-source-pending="false" title="Chạm để phóng to ảnh">
                 <div class="photo-preview-actions">
                   <button type="button" id="mobileRetakePhotoBtn" class="photo-btn retake-btn" title="Đổi/Chụp lại ảnh">
                     <i class="fa-solid fa-arrows-rotate"></i>
@@ -1409,7 +1501,7 @@
               </div>
 
               <div id="photoAfterPreviewWrap" class="photo-preview-wrap ${uploadedSafetyAfterPhotoData ? '' : 'is-hidden'}">
-                <img id="mobileSafetyAfterPreviewImg" src="${uploadedSafetyAfterPhotoData || ''}" alt="Ảnh sau cải tiến" class="photo-preview-img cursor-pointer" data-preview-img="${uploadedSafetyAfterPhotoData || ''}" title="Chạm để phóng to ảnh">
+                <img id="mobileSafetyAfterPreviewImg" src="${uploadedSafetyAfterPhotoData || ''}" alt="Ảnh sau cải tiến" class="photo-preview-img cursor-pointer" data-preview-img="${uploadedSafetyAfterPhotoData || ''}" data-safety-annotations="${escapeHtml(JSON.stringify(pendingSafetyAfterPhotoAnnotations))}" data-safety-record-id="${escapeHtml(editingRecord?.id || "")}" data-safety-photo-field="afterPhotoAnnotations" data-safety-draft-field="afterPhotoAnnotations" data-safety-source-pending="false" title="Chạm để phóng to ảnh">
                 <div class="photo-preview-actions">
                   <button type="button" id="mobileRetakeAfterPhotoBtn" class="photo-btn retake-btn" title="Đổi ảnh">
                     <i class="fa-solid fa-arrows-rotate"></i>
@@ -1517,7 +1609,7 @@
 
               return `
                 <div class="history-card ${editingSafetyRecordId === item.id ? 'is-editing' : ''}" data-action="open-safety-card-detail" data-id="${item.id}" title="Chạm để xem chi tiết, sửa hoặc xóa">
-                  <img src="${photoThumb}" alt="Thumb" class="history-card-thumb ${hasPhoto ? 'cursor-pointer' : ''}" ${hasPhoto ? `data-preview-img="${photoThumb}" title="Chạm 1 lần để xem ảnh lớn"` : ''} onerror="this.src='images/Logo.jpg'">
+                  <img src="${photoThumb}" alt="Thumb" class="history-card-thumb ${hasPhoto ? 'cursor-pointer' : ''}" ${hasPhoto ? `data-preview-img="${photoThumb}" data-safety-record-id="${escapeHtml(item.id)}" data-safety-photo-field="photoAnnotations" data-safety-annotations="${escapeHtml(JSON.stringify(item.photoAnnotations || []))}" title="Chạm 1 lần để xem ảnh lớn"` : ''} onerror="this.src='images/Logo.jpg'">
                   <div class="history-card-body">
                     <div class="history-card-top">
                       <span class="history-zone-chip">${escapeHtml(zoneLabel)}</span>
@@ -1580,9 +1672,12 @@
           const reader = new FileReader();
           reader.onload = (ev) => {
             uploadedSafetyPhotoData = ev.target.result;
+            pendingSafetyPhotoAnnotations = [];
             if (previewImg) {
               previewImg.src = uploadedSafetyPhotoData;
               previewImg.dataset.previewImg = uploadedSafetyPhotoData;
+              previewImg.dataset.safetyAnnotations = "[]";
+              previewImg.dataset.safetySourcePending = "true";
             }
             placeholder?.classList.add("is-hidden");
             previewWrap?.classList.remove("is-hidden");
@@ -1607,6 +1702,8 @@
         e.preventDefault();
         e.stopPropagation();
         uploadedSafetyPhotoData = "";
+        pendingSafetyPhotoAnnotations = [];
+        if (previewImg) previewImg.dataset.safetyAnnotations = "[]";
         fileInput.value = "";
         previewWrap?.classList.add("is-hidden");
         placeholder?.classList.remove("is-hidden");
@@ -1626,9 +1723,12 @@
           const reader = new FileReader();
           reader.onload = (ev) => {
             uploadedSafetyAfterPhotoData = ev.target.result;
+            pendingSafetyAfterPhotoAnnotations = [];
             if (afterPreviewImg) {
               afterPreviewImg.src = uploadedSafetyAfterPhotoData;
               afterPreviewImg.dataset.previewImg = uploadedSafetyAfterPhotoData;
+              afterPreviewImg.dataset.safetyAnnotations = "[]";
+              afterPreviewImg.dataset.safetySourcePending = "true";
             }
             afterPlaceholder?.classList.add("is-hidden");
             afterPreviewWrap?.classList.remove("is-hidden");
@@ -1653,6 +1753,8 @@
         e.preventDefault();
         e.stopPropagation();
         uploadedSafetyAfterPhotoData = "";
+        pendingSafetyAfterPhotoAnnotations = [];
+        if (afterPreviewImg) afterPreviewImg.dataset.safetyAnnotations = "[]";
         afterFileInput.value = "";
         afterPreviewWrap?.classList.add("is-hidden");
         afterPlaceholder?.classList.remove("is-hidden");
@@ -1688,7 +1790,27 @@
         e.stopPropagation();
         const src = imgEl.dataset.previewImg || imgEl.src;
         if (src && src !== "images/Logo.jpg") {
-          openMobileImageModal(src, "Ảnh minh họa");
+          const field = imgEl.dataset.safetyPhotoField || "photoAnnotations";
+          const recordId = imgEl.dataset.safetyRecordId || "";
+          const record = recordId
+            ? (context?.state?.safetyRecords || []).find((item) => item.id === recordId)
+            : null;
+          const draftField = imgEl.dataset.safetyDraftField || "";
+          const isAfterPhoto = field === "afterPhotoAnnotations";
+          const localOnly = imgEl.dataset.safetySourcePending === "true" || !record;
+          const annotationOptions = buildMobilePhotoAnnotationOptions(context, record, field, {
+            initialCircles: record?.[field] || (isAfterPhoto ? pendingSafetyAfterPhotoAnnotations : pendingSafetyPhotoAnnotations),
+            localOnly,
+            onChange: draftField
+              ? (annotations) => {
+                  if (draftField === "afterPhotoAnnotations") pendingSafetyAfterPhotoAnnotations = annotations;
+                  else pendingSafetyPhotoAnnotations = annotations;
+                  imgEl.dataset.safetyAnnotations = JSON.stringify(annotations);
+                  window.refreshSafetyPhotoAnnotationThumbnail?.(imgEl, annotations);
+                }
+              : undefined,
+          });
+          openMobileImageModal(src, annotationOptions);
         }
       });
     });
@@ -1889,6 +2011,7 @@
           note: desc,
           photoDataUrl: finalPhotoDataUrl,
           photoName: finalPhotoName,
+          photoAnnotations: pendingSafetyPhotoAnnotations,
           issueCount: existingRecord?.issueCount || 1,
           issueType: stop6,
           issueLevel: level,
@@ -1900,6 +2023,7 @@
           improvementContent,
           afterPhotoDataUrl: finalAfterPhotoDataUrl,
           afterPhotoName: finalAfterPhotoName,
+          afterPhotoAnnotations: pendingSafetyAfterPhotoAnnotations,
           actionOwner,
           actionPlan,
           completionDate,
@@ -1936,6 +2060,9 @@
           editingSafetyRecordId = "";
           uploadedSafetyPhotoData = "";
           uploadedSafetyAfterPhotoData = "";
+          safetyAnnotationDraftId = null;
+          pendingSafetyPhotoAnnotations = [];
+          pendingSafetyAfterPhotoAnnotations = [];
           if (fileInput) fileInput.value = "";
           if (afterFileInput) afterFileInput.value = "";
 

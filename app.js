@@ -441,6 +441,8 @@
   let pendingScoreUiRefreshRaf = null;
   let pendingScoreDraftProcessing = false;
   let modalCancelHandler = null;
+  let imageAnnotatorCleanup = null;
+  let imageAnnotatorClosing = false;
   const SESSION_STORAGE_KEY = "legroup-5s-session";
   const SESSION_HEARTBEAT_MS = 30 * 1000;
   const LOGIN_ROUTE = "/login";
@@ -796,6 +798,21 @@
     return "";
   }
 
+  function normalizeSafetyPhotoAnnotations(annotations) {
+    if (!Array.isArray(annotations)) return [];
+    return annotations.flatMap((circle) => {
+      const x = Number(circle?.x);
+      const y = Number(circle?.y);
+      const radius = Number(circle?.radius);
+      if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(radius) || radius <= 0) return [];
+      return [{
+        x: Math.max(0, Math.min(1, x)),
+        y: Math.max(0, Math.min(1, y)),
+        radius: Math.max(0, Math.min(2, radius)),
+      }];
+    });
+  }
+
   function normalizeSafetyRecord(record) {
     const now = new Date().toISOString();
     return {
@@ -808,6 +825,7 @@
       note: record.note || record.issueDescription || "",
       photoDataUrl: record.photoDataUrl || "",
       photoName: record.photoName || "",
+      photoAnnotations: normalizeSafetyPhotoAnnotations(record.photoAnnotations),
       issueCount: normalizeIssueCount(record.issueCount),
       issueType: record.issueType || "",
       issueLevel: record.issueLevel || "",
@@ -819,6 +837,7 @@
       improvementContent: record.improvementContent || "",
       afterPhotoDataUrl: record.afterPhotoDataUrl || "",
       afterPhotoName: record.afterPhotoName || "",
+      afterPhotoAnnotations: normalizeSafetyPhotoAnnotations(record.afterPhotoAnnotations),
       actionOwner: record.actionOwner || "",
       actionPlan: record.actionPlan || "",
       completionDate: record.completionDate || "",
@@ -1627,7 +1646,45 @@
     const previous = state.safetyRecords.find((item) => item.id === record.id);
     const dateError = window.SafetyTimeline.validate(record, previous, getPeriod(record.periodId)?.year);
     if (dateError) throw new Error(dateError);
+    const resetChangedPhotoAnnotations = (field, sourceField) => {
+      const nextAnnotations = normalizeSafetyPhotoAnnotations(record[field] ?? previous?.[field]);
+      const previousAnnotations = normalizeSafetyPhotoAnnotations(previous?.[field]);
+      const sourceChanged = previous && (previous[sourceField] || "") !== (record[sourceField] || "");
+      record[field] = sourceChanged && JSON.stringify(nextAnnotations) === JSON.stringify(previousAnnotations)
+        ? []
+        : nextAnnotations;
+    };
+    resetChangedPhotoAnnotations("photoAnnotations", "photoDataUrl");
+    resetChangedPhotoAnnotations("afterPhotoAnnotations", "afterPhotoDataUrl");
     await dbRef(`safetyRecords/${record.id}`).set(record);
+  }
+
+  async function saveSafetyPhotoAnnotations(recordId, field, annotations) {
+    const annotationFields = {
+      photoAnnotations: "photoDataUrl",
+      afterPhotoAnnotations: "afterPhotoDataUrl",
+    };
+    const photoField = annotationFields[field];
+    if (!recordId || !photoField) throw new Error("Không xác định được ảnh cần lưu nét khoanh.");
+    const record = state.safetyRecords.find((item) => item.id === recordId);
+    if (!record || !record[photoField]) throw new Error("Ảnh này không còn trong báo cáo an toàn.");
+    const canEdit = field === "afterPhotoAnnotations"
+      ? canManageSafetyCountermeasure(record, currentUser)
+      : canManageSafetyRecord(record, currentUser);
+    if (!canEdit) throw new Error("Bạn không có quyền lưu nét khoanh trên ảnh này.");
+
+    const nextRecord = {
+      ...record,
+      [field]: normalizeSafetyPhotoAnnotations(annotations),
+      updatedAt: new Date().toISOString(),
+    };
+    await saveSafetyRecord(nextRecord);
+    const index = state.safetyRecords.findIndex((item) => item.id === recordId);
+    if (index >= 0) {
+      Object.assign(record, nextRecord);
+      state.safetyRecords[index] = record;
+    }
+    return true;
   }
 
   async function deleteScoreFromDb(scoreId, options = {}) {
@@ -5447,6 +5504,7 @@
       setScore,
       getScoreRecord,
       saveSafetyRecord,
+      saveSafetyPhotoAnnotations,
       deleteSafetyRecord,
       deleteSafetyRecordDirect,
       deleteSafetyRecordFromDb,
@@ -8551,6 +8609,7 @@
       return;
     }
 
+    const isSafetyPhoto = Boolean(image.matches?.(".safety-thumb") || image.closest?.(".safety-record-entry-table, .safety-record-modal"));
     modalPreviewDirty = false;
     modalSubmitSucceeded = true;
     modalCancelHandler = null;
@@ -8562,13 +8621,63 @@
     if (modalCard) {
       modalCard.className = "modal-card image-fullscreen-modal";
     }
-    elements.modalBody.innerHTML = '<div class="image-fullscreen-view"><img src="' + escapeHtml(src) + '" alt="' + escapeHtml(image?.alt || "Ảnh phóng to") + '"></div>';
+    elements.modalBody.innerHTML = '<div class="image-fullscreen-view"><div class="image-fullscreen-stage"><img src="' + escapeHtml(src) + '" alt="' + escapeHtml(image?.alt || "Ảnh phóng to") + '"></div></div>' +
+      '<button type="button" class="image-fullscreen-close" aria-label="Đóng ảnh" title="Đóng"><i class="fa-solid fa-xmark"></i></button>';
     elements.modalActions.innerHTML = "";
-    elements.modalBody.querySelector(".image-fullscreen-view")?.addEventListener("click", closeModal);
+    elements.modalBody.querySelector(".image-fullscreen-view")?.addEventListener("click", (event) => {
+      if (event.target === event.currentTarget) closeModal();
+    });
+    elements.modalBody.querySelector(".image-fullscreen-close")?.addEventListener("click", closeModal);
+    if (isSafetyPhoto) {
+      const recordId = image.dataset.safetyRecordId || "";
+      const photoField = image.dataset.safetyPhotoField || "";
+      const initialCircles = (() => {
+        try { return JSON.parse(image.dataset.safetyAnnotations || "[]"); } catch (_) { return []; }
+      })();
+      const record = state?.safetyRecords?.find((item) => item.id === recordId);
+      const canEdit = photoField === "afterPhotoAnnotations"
+        ? Boolean(record && canManageSafetyCountermeasure(record, currentUser))
+        : Boolean(record && canManageSafetyRecord(record, currentUser));
+      imageAnnotatorCleanup = window.mountImageCircleAnnotator?.(
+        elements.modalBody.querySelector(".image-fullscreen-stage"),
+        elements.modalBody,
+        {
+          initialCircles,
+          editable: canEdit,
+          onSave: recordId && photoField
+            ? async (annotations) => {
+                await saveSafetyPhotoAnnotations(recordId, photoField, annotations);
+                image.dataset.safetyAnnotations = JSON.stringify(annotations);
+                window.refreshSafetyPhotoAnnotationThumbnail?.(image, annotations);
+                return true;
+              }
+            : undefined,
+          onError: (error) => showToast(error?.message || "Không lưu được nét khoanh.", true),
+        },
+      ) || null;
+    }
     elements.modalBackdrop.hidden = false;
   }
 
   function closeModal() {
+    if (imageAnnotatorCleanup) {
+      if (imageAnnotatorClosing) return;
+      imageAnnotatorClosing = true;
+      const cleanup = imageAnnotatorCleanup;
+      cleanup().then(() => {
+        if (imageAnnotatorCleanup === cleanup) imageAnnotatorCleanup = null;
+        finishModalClose();
+      }).catch((error) => {
+        showToast(error?.message || "Không lưu được nét khoanh. Vui lòng thử lại.", true);
+      }).finally(() => {
+        imageAnnotatorClosing = false;
+      });
+      return;
+    }
+    finishModalClose();
+  }
+
+  function finishModalClose() {
     const shouldRefreshPreview = modalPreviewDirty && !modalSubmitSucceeded && currentUser && state;
     const onCancel = modalCancelHandler;
     modalCancelHandler = null;
@@ -12796,8 +12905,11 @@
     }
 
     const row = { score: record || {}, area: selectedArea, item: getItem(record?.itemId) };
+    const safetyPhotoAnnotationAttrs = (field, editable) =>
+      "data-safety-record-id=\"" + escapeHtml(record?.id || "") + "\" data-safety-photo-field=\"" + field + "\" data-safety-annotations=\"" +
+      escapeHtml(JSON.stringify(record?.[field] || [])) + "\" data-safety-annotation-editable=\"" + (editable ? "true" : "false") + "\"";
     const afterPhotoPreview = record?.afterPhotoDataUrl
-      ? "<div class=\"photo-preview\"><img src=\"" + record.afterPhotoDataUrl + "\" alt=\"Ảnh sau cải tiến hiện tại\"><label class=\"check-line\"><input name=\"removeAfterPhoto\" type=\"checkbox\"><span>Xóa ảnh sau cải tiến hiện tại</span></label></div>"
+      ? "<div class=\"photo-preview\"><img src=\"" + record.afterPhotoDataUrl + "\" alt=\"Ảnh sau cải tiến hiện tại\" " + safetyPhotoAnnotationAttrs("afterPhotoAnnotations", canManageSafetyCountermeasure(record)) + "><label class=\"check-line\"><input name=\"removeAfterPhoto\" type=\"checkbox\"><span>Xóa ảnh sau cải tiến hiện tại</span></label></div>"
       : "";
     const defaultCompletionDate = toIsoDate(record?.completionDate) || "";
     const actualDateFields = "";
@@ -12866,7 +12978,7 @@
     const issueDate = getSafetyRecordIssueDate(record, period);
     const displayIssueDate = formatDateDisplay(issueDate);
     const photoPreview = record?.photoDataUrl
-      ? "<div class=\"photo-preview\"><img src=\"" + record.photoDataUrl + "\" alt=\"Ảnh minh họa hiện tại\"><label class=\"check-line\"><input name=\"removePhoto\" type=\"checkbox\"><span>Xóa ảnh hiện tại</span></label></div>"
+      ? "<div class=\"photo-preview\"><img src=\"" + record.photoDataUrl + "\" alt=\"Ảnh minh họa hiện tại\" " + safetyPhotoAnnotationAttrs("photoAnnotations", canManageSafetyRecord(record)) + "><label class=\"check-line\"><input name=\"removePhoto\" type=\"checkbox\"><span>Xóa ảnh hiện tại</span></label></div>"
       : "";
 
     openFormModal({
@@ -13850,11 +13962,11 @@
 
     for (const [index, row] of issueRows.entries()) {
       const rowNumber = 9 + index;
-      const beforeImage = await photoSourceToImage(row.score.photoDataUrl, images.length + 1, rowNumber, 6);
+      const beforeImage = await photoSourceToImage(row.score.photoDataUrl, images.length + 1, rowNumber, 6, row.score.photoAnnotations);
       if (beforeImage) {
         images.push(beforeImage);
       }
-      const afterImage = await photoSourceToImage(row.score.afterPhotoDataUrl, images.length + 1, rowNumber, 23);
+      const afterImage = await photoSourceToImage(row.score.afterPhotoDataUrl, images.length + 1, rowNumber, 23, row.score.afterPhotoAnnotations);
       if (afterImage) {
         images.push(afterImage);
       }
@@ -14153,7 +14265,52 @@
 </worksheet>`;
   }
 
-  async function photoSourceToImage(source, index, rowNumber, columnNumber = 6) {
+  async function photoSourceToImage(source, index, rowNumber, columnNumber = 6, annotations = []) {
+    if (Array.isArray(annotations) && annotations.length) {
+      const sourceText = String(source || "");
+      if (!sourceText) return null;
+      let imageSource = sourceText;
+      let objectUrl = "";
+      try {
+        if (!sourceText.startsWith("data:")) {
+          const response = await fetch(sourceText, { credentials: "include" });
+          if (!response.ok) throw new Error("Không tải được ảnh an toàn để xuất Excel.");
+          objectUrl = URL.createObjectURL(await response.blob());
+          imageSource = objectUrl;
+        }
+        const sourceImage = new Image();
+        await new Promise((resolve, reject) => {
+          sourceImage.onload = resolve;
+          sourceImage.onerror = () => reject(new Error("Không đọc được ảnh an toàn để xuất Excel."));
+          sourceImage.src = imageSource;
+        });
+        const width = sourceImage.naturalWidth;
+        const height = sourceImage.naturalHeight;
+        if (!width || !height) throw new Error("Ảnh an toàn không có kích thước hợp lệ.");
+        const canvas = document.createElement("canvas");
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext("2d");
+        if (!ctx) throw new Error("Không thể xử lý ảnh an toàn để xuất Excel.");
+        ctx.drawImage(sourceImage, 0, 0, width, height);
+        ctx.strokeStyle = "#ff3b30";
+        ctx.lineWidth = Math.max(3, Math.min(width, height) * 0.006);
+        annotations.forEach((circle) => {
+          const x = Number(circle?.x);
+          const y = Number(circle?.y);
+          const radius = Number(circle?.radius);
+          if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(radius) || radius <= 0) return;
+          ctx.beginPath();
+          ctx.arc(Math.max(0, Math.min(1, x)) * width, Math.max(0, Math.min(1, y)) * height, Math.max(0, Math.min(2, radius)) * Math.min(width, height), 0, Math.PI * 2);
+          ctx.stroke();
+        });
+        const pngImage = dataUrlToImage(canvas.toDataURL("image/png"), index, rowNumber, columnNumber);
+        if (!pngImage) throw new Error("Không tạo được ảnh đã khoanh để xuất Excel.");
+        return pngImage;
+      } finally {
+        if (objectUrl) URL.revokeObjectURL(objectUrl);
+      }
+    }
     const dataUrlImage = dataUrlToImage(source, index, rowNumber, columnNumber);
     if (dataUrlImage || !source) {
       return dataUrlImage;
@@ -14708,13 +14865,13 @@
     let imageIndex = 1;
     for (const [index, row] of issueRows.entries()) {
       const rowNumber = 9 + index;
-      const beforeImage = await photoSourceToImage(row.score.photoDataUrl, imageIndex, rowNumber, 6);
+      const beforeImage = await photoSourceToImage(row.score.photoDataUrl, imageIndex, rowNumber, 6, row.score.photoAnnotations);
       if (beforeImage) {
         images.push(renameWorkbookImage(beforeImage, `factory-s${sheetNumber}-before-${imageIndex}`));
         imageIndex += 1;
       }
 
-      const afterImage = await photoSourceToImage(row.score.afterPhotoDataUrl, imageIndex, rowNumber, 23);
+      const afterImage = await photoSourceToImage(row.score.afterPhotoDataUrl, imageIndex, rowNumber, 23, row.score.afterPhotoAnnotations);
       if (afterImage) {
         images.push(renameWorkbookImage(afterImage, `factory-s${sheetNumber}-after-${imageIndex}`));
         imageIndex += 1;
