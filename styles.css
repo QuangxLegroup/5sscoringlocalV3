@@ -4874,6 +4874,44 @@ button.admin-home-card {
   margin-top: 6px;
 }
 
+.safety-record-entry-table th:nth-child(2),
+.safety-record-entry-table td:nth-child(2) {
+  min-width: 140px;
+}
+
+.safety-record-entry-table .safety-date-editor {
+  display: block;
+  position: relative;
+  min-width: 130px;
+}
+
+.safety-record-entry-table .safety-date-editor > input[type="text"] {
+  width: 100%;
+  padding-right: 28px;
+  box-sizing: border-box;
+}
+
+.safety-record-entry-table .safety-date-editor .safety-date-calendar {
+  position: absolute;
+  right: 0;
+  top: 0;
+  width: 28px;
+  height: 100%;
+  padding: 4px;
+  border: 0;
+  color: transparent;
+  background: transparent;
+  color-scheme: light;
+  cursor: pointer;
+}
+
+.safety-record-entry-table .safety-date-editor .safety-date-calendar::-webkit-calendar-picker-indicator {
+  opacity: 1;
+  margin: 0;
+  padding: 2px;
+  cursor: pointer;
+}
+
 /* codex-report-image-fallback-modal */
 .report-image-modal {
   width: min(1180px, calc(100vw - 28px));
@@ -8996,12 +9034,14 @@ html, body {
 
 #tab-catalog .catalog-grid {
   display: grid;
-  grid-template-columns: minmax(320px, 1fr) minmax(320px, 1fr) minmax(340px, 1.15fr);
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-rows: repeat(3, minmax(620px, 1fr)) auto auto;
   grid-template-areas:
-    "period people assessor"
-    "area area email"
-    "safety safety safety"
-    "items items items";
+    "period people"
+    "assessor heads"
+    "area email"
+    "safety safety"
+    "items items";
   gap: 18px;
   align-items: stretch;
 }
@@ -9016,6 +9056,10 @@ html, body {
 
 #tab-catalog .catalog-assessor-panel {
   grid-area: assessor;
+}
+
+#tab-catalog .catalog-department-head-panel {
+  grid-area: heads;
 }
 
 #tab-catalog .catalog-area-panel {
@@ -9259,9 +9303,12 @@ html, body {
 #tab-catalog .period-section-list,
 #tab-catalog #scorer-list,
 #tab-catalog #catalog-assessor-list,
+#tab-catalog #department-head-list,
 #tab-catalog #department-head-email-list,
 #tab-catalog #area-list {
   flex: 1 1 auto;
+  min-height: 0;
+  max-height: none;
   overflow-y: auto;
   overflow-x: hidden;
   padding-top: 10px;
@@ -9275,29 +9322,31 @@ html, body {
 }
 
 #tab-catalog .period-section-list {
-  max-height: 240px;
+  max-height: 280px;
 }
 
-#tab-catalog #scorer-list {
-  max-height: 240px;
-}
-
+#tab-catalog #scorer-list,
 #tab-catalog #catalog-assessor-list {
-  max-height: 240px;
+  max-height: 380px;
+}
+
+#tab-catalog #department-head-list {
+  max-height: 400px;
 }
 
 #tab-catalog #department-head-email-list {
-  max-height: 480px;
+  max-height: 420px;
 }
 
 #tab-catalog #area-list {
-  max-height: 480px;
+  max-height: 260px;
 }
 
 /* Custom Slim Scrollbars */
 #tab-catalog .period-section-list::-webkit-scrollbar,
 #tab-catalog #scorer-list::-webkit-scrollbar,
 #tab-catalog #catalog-assessor-list::-webkit-scrollbar,
+#tab-catalog #department-head-list::-webkit-scrollbar,
 #tab-catalog #department-head-email-list::-webkit-scrollbar,
 #tab-catalog #area-list::-webkit-scrollbar {
   width: 5px;
@@ -9306,6 +9355,7 @@ html, body {
 #tab-catalog .period-section-list::-webkit-scrollbar-track,
 #tab-catalog #scorer-list::-webkit-scrollbar-track,
 #tab-catalog #catalog-assessor-list::-webkit-scrollbar-track,
+#tab-catalog #department-head-list::-webkit-scrollbar-track,
 #tab-catalog #department-head-email-list::-webkit-scrollbar-track,
 #tab-catalog #area-list::-webkit-scrollbar-track {
   background: #f8fafc;
@@ -9315,6 +9365,7 @@ html, body {
 #tab-catalog .period-section-list::-webkit-scrollbar-thumb,
 #tab-catalog #scorer-list::-webkit-scrollbar-thumb,
 #tab-catalog #catalog-assessor-list::-webkit-scrollbar-thumb,
+#tab-catalog #department-head-list::-webkit-scrollbar-thumb,
 #tab-catalog #department-head-email-list::-webkit-scrollbar-thumb,
 #tab-catalog #area-list::-webkit-scrollbar-thumb {
   background: #cbd5e1;
@@ -9324,6 +9375,7 @@ html, body {
 #tab-catalog .period-section-list::-webkit-scrollbar-thumb:hover,
 #tab-catalog #scorer-list::-webkit-scrollbar-thumb:hover,
 #tab-catalog #catalog-assessor-list::-webkit-scrollbar-thumb:hover,
+#tab-catalog #department-head-list::-webkit-scrollbar-thumb:hover,
 #tab-catalog #department-head-email-list::-webkit-scrollbar-thumb:hover,
 #tab-catalog #area-list::-webkit-scrollbar-thumb:hover {
   background: #94a3b8;
@@ -9345,6 +9397,33 @@ html, body {
   background: #ffffff !important;
   border-color: #94a3b8 !important;
   box-shadow: 0 2px 8px rgba(15, 23, 42, 0.06);
+}
+
+#tab-catalog .catalog-department-head-item {
+  box-sizing: border-box;
+  flex: 0 0 44px;
+  height: 44px;
+  min-height: 44px;
+  align-items: center;
+  overflow: hidden;
+  padding: 5px 10px;
+}
+
+#tab-catalog .catalog-department-head-item .compact-title-row {
+  min-width: 0;
+  flex-wrap: nowrap;
+  overflow: hidden;
+}
+
+#tab-catalog .catalog-department-head-item .compact-title-row strong {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
+#tab-catalog .catalog-department-head-item .catalog-meta-pill {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 #tab-catalog .compact-main {
@@ -9663,29 +9742,16 @@ html, body {
 
 @media (max-width: 1180px) {
   #tab-catalog .catalog-grid {
-    grid-template-columns: 1fr 1fr;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
     grid-template-areas:
       "period people"
-      "assessor email"
-      "area area"
+      "assessor heads"
+      "area email"
       "safety safety"
       "items items";
     gap: 14px;
   }
 
-  #tab-catalog .period-section-list,
-  #tab-catalog #scorer-list,
-  #tab-catalog #catalog-assessor-list {
-    max-height: 220px;
-  }
-
-  #tab-catalog #department-head-email-list {
-    max-height: 220px;
-  }
-
-  #tab-catalog #area-list {
-    max-height: 420px;
-  }
 }
 
 @media (max-width: 880px) {
@@ -9695,10 +9761,12 @@ html, body {
 
   #tab-catalog .catalog-grid {
     grid-template-columns: 1fr !important;
+    grid-template-rows: none !important;
     grid-template-areas:
       "period"
       "people"
       "assessor"
+      "heads"
       "area"
       "email"
       "safety"
@@ -9713,10 +9781,15 @@ html, body {
   #tab-catalog .period-section-list,
   #tab-catalog #scorer-list,
   #tab-catalog #catalog-assessor-list,
-  #tab-catalog #department-head-email-list,
+  #tab-catalog #department-head-list,
+  #tab-catalog #department-head-email-list {
+    max-height: min(40vh, 340px);
+    overflow-y: auto;
+  }
+
   #tab-catalog #area-list {
-    max-height: none;
-    overflow: visible;
+    max-height: min(40vh, 280px);
+    overflow-y: auto;
   }
 
   #tab-catalog .area-meta-grid {
@@ -11865,6 +11938,59 @@ input[type="date"]::-webkit-calendar-picker-indicator {
   color: #10b981;
 }
 
+.fives-score-source-filter {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.fives-score-source-label {
+  flex: 0 0 auto;
+  color: #94a3b8;
+  font-size: 0.62rem;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.fives-score-source-options {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 4px;
+  min-width: 0;
+  flex: 1 1 auto;
+  padding: 3px;
+  border: 1px solid #334155;
+  border-radius: 8px;
+  background: #020617;
+}
+
+.fives-score-source-btn {
+  min-width: 0;
+  min-height: 32px;
+  padding: 5px 7px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: #cbd5e1;
+  font-size: 0.68rem;
+  line-height: 1.2;
+  white-space: normal;
+}
+
+.fives-score-source-btn.is-active-assessor {
+  background: #2563eb;
+  color: #ffffff;
+}
+
+.fives-score-source-btn.is-active-manager {
+  background: #059669;
+  color: #ffffff;
+}
+
+.fives-level-row.is-readonly {
+  cursor: default;
+}
+
 /* Overall Score Bar */
 .fives-score-metric-row {
   border: 1px solid rgba(51, 65, 85, 0.4);
@@ -12408,7 +12534,7 @@ input[type="date"]::-webkit-calendar-picker-indicator {
   font-size: 0.78rem;
   font-weight: 700;
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.7);
-  z-index: 100010;
+  z-index: 100200 !important;
   opacity: 0;
   pointer-events: none;
   transition: all 0.22s cubic-bezier(0.16, 1, 0.3, 1);
@@ -12425,11 +12551,14 @@ input[type="date"]::-webkit-calendar-picker-indicator {
 }
 
 .mobile-toast-popup.is-error {
-  border-color: #ef4444;
+  border-color: #ef4444 !important;
+  background: #450a0a !important;
+  color: #fecaca !important;
+  box-shadow: 0 8px 28px rgba(239, 68, 68, 0.45) !important;
 }
 
 .mobile-toast-popup.is-error i {
-  color: #ef4444 !important;
+  color: #f87171 !important;
 }
 
 /* Media Query Responsive Adjustments */
@@ -13642,9 +13771,19 @@ input[type="date"]::-webkit-calendar-picker-indicator {
 
 .mobile-responsive-overlay.is-light-theme .fives-zone-label,
 .mobile-responsive-overlay.is-light-theme .fives-progress-label,
-.mobile-responsive-overlay.is-light-theme .fives-levels-stack-title {
+.mobile-responsive-overlay.is-light-theme .fives-levels-stack-title,
+.mobile-responsive-overlay.is-light-theme .fives-score-source-label {
   color: #475569 !important;
   font-weight: 700 !important;
+}
+
+.mobile-responsive-overlay.is-light-theme .fives-score-source-options {
+  border-color: #cbd5e1;
+  background: #f1f5f9;
+}
+
+.mobile-responsive-overlay.is-light-theme .fives-score-source-btn:not(.is-active-assessor):not(.is-active-manager) {
+  color: #334155;
 }
 
 .mobile-responsive-overlay.is-light-theme .fives-zone-select,
@@ -14144,6 +14283,12 @@ input[type="date"]::-webkit-calendar-picker-indicator {
   background: #f1f5f9 !important;
   border-color: #2563eb !important;
 }
+
+.mobile-safety-detail-modal.is-light-theme .btn-calendar-trigger i,
+.mobile-responsive-overlay.is-light-theme .btn-calendar-trigger i {
+  color: #475569 !important;
+}
+
 .findings-page { padding: 16px; min-width: 0; color: #dbeafe; }
 .findings-page [hidden] { display: none !important; }
 .findings-toolbar, .findings-actions, .findings-bottom { display: flex; align-items: end; flex-wrap: wrap; gap: 10px; }
@@ -14431,28 +14576,19 @@ input[type="date"]::-webkit-calendar-picker-indicator {
 .findings-mobile-single .findings-message:empty { display: none; }
 .findings-mobile-single .findings-progress { display: none; }
 .findings-mobile-single .findings-mobile-list { margin-top: 20px; }
-/* Keep mobile submit controls viewport-fixed and leave room to scroll past them. */
+/* Keep mobile submit controls in the form flow, directly after the entered content. */
 #mobileProtoOverlay .mobile-fixed-save {
-  position: fixed;
-  bottom: 0;
-  left: 50%;
-  transform: translateX(-50%);
-  z-index: 40;
+  position: static;
   box-sizing: border-box;
-  width: min(100%, 520px);
+  width: 100%;
+  max-width: none;
   margin: 0;
-  padding: 10px 14px calc(10px + env(safe-area-inset-bottom, 0px));
-  background: #0f172a;
-  border-top: 1px solid #334155;
-  box-shadow: 0 -6px 18px rgba(0, 0, 0, 0.18);
+  padding: 0;
+  background: transparent;
+  border: 0;
+  box-shadow: none;
 }
 #mobileProtoOverlay .mobile-fixed-save > button { width: 100%; min-height: 46px; margin: 0; }
-#mobileProtoOverlay .mobile-responsive-shell.is-full-width .mobile-fixed-save { width: min(100%, 960px); }
-#mobileProtoOverlay.is-light-theme .mobile-fixed-save { background: #f8fafc; border-top-color: #cbd5e1; }
-#mobileProtoOverlay:has(.mobile-fixed-save) { padding-bottom: calc(100px + env(safe-area-inset-bottom, 0px)); }
-@media (max-width: 640px) {
-  #mobileProtoOverlay .mobile-fixed-save { width: 100%; }
-}
 .findings-empty { display: grid; justify-items: center; gap: 12px; padding: 30px 16px; border: 1px dashed var(--finding-border); border-radius: 14px; color: var(--finding-muted); text-align: center; }
 .findings-empty > span { font-size: 36px; color: var(--finding-accent); }
 .findings-empty p { font-size: 13px; margin: 0; }

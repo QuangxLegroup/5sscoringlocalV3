@@ -15,173 +15,36 @@
       },
       "passwordHash": "pbkdf2-sha256$210000$BcS7xRCRXdaI6MiRNgDQjQ$VGXt0JNQKWKjisKHsagu0aX7w-ROcfkWlljUlaVtZUY"
     },
-    "account-mtwjtdvp-0gswir": {
-      "id": "account-mtwjtdvp-0gswir",
-      "role": "assessorSafety",
-      "name": "MrNgocDB",
-      "accessTypes": [
-        "safety"
-      ],
-      "rolesByType": {
-        "safety": "assessorSafety"
-      },
-      "username": "msngocdb",
-      "createdAt": "2026-09-11T06:01:39.205Z",
-      "assessorId": "assessor-wgvjbk",
-      "areaIds": [
-        "area-1"
-      ],
-      "safetyAssessorId": "assessor-mtkepzm9-leo6og",
-      "safetyAreaIds": [
-        "area-1"
-      ],
-      "displayName": "MsNgoc",
-      "passwordHash": "pbkdf2-sha256$210000$2H5OJ_L4mG7TOcT4vMBDsg$2iVJiNp75h5tIBnGyK6Znkhfo4IoTDEABfMAtI70sIg"
-    },
     "account-mu3kgvpw-mtp8b3": {
       "id": "account-mu3kgvpw-mtp8b3",
       "role": "assessor5s",
-      "name": "MrHuy",
+      "name": "Mr Huy",
       "accessTypes": [
-        "safety",
         "5s"
       ],
       "rolesByType": {
-        "safety": "assessorSafety",
         "5s": "assessor5s"
       },
       "username": "mrhuy",
       "createdAt": "2026-09-16T03:54:18.644Z",
       "displayName": "MrHuy",
-      "safetyAssessorId": "safety-assessor-mu3kfb79-ah1yf2",
-      "safetyAreaIds": [
-        "area-1",
-        "area-2",
-        "area-3",
-        "area-4",
-        "area-5",
-        "area-6",
-        "area-7",
-        "area-8",
-        "area-9",
-        "area-10",
-        "area-11",
-        "area-12",
-        "area-13",
-        "area-14",
-        "area-15",
-        "area-16",
-        "area-17",
-        "area-18",
-        "area-19",
-        "area-20",
-        "area-21",
-        "area-22",
-        "area-23",
-        "area-24",
-        "area-25",
-        "area-26",
-        "area-27",
-        "area-28",
-        "area-safety-xiolum",
-        "area-safety-tjmjl8"
-      ],
       "areaIds": [
         "area-1",
-        "area-2",
-        "area-3",
-        "area-4",
-        "area-5",
-        "area-6",
-        "area-7",
-        "area-8",
-        "area-9",
-        "area-10",
-        "area-11",
-        "area-12",
-        "area-13",
-        "area-14",
-        "area-15",
-        "area-16",
-        "area-17",
-        "area-18",
-        "area-19",
-        "area-20",
-        "area-21",
-        "area-22",
-        "area-23",
         "area-24",
         "area-25",
-        "area-26",
         "area-27",
-        "area-28",
-        "area-29",
-        "area-muntbdke-1sz7hg"
+        "area-mv7rc1f4-l0n1em"
       ],
       "fiveSAssessorId": "assessor-1q0l6v",
       "assessorId": "assessor-1q0l6v",
       "fiveSAreaIds": [
         "area-1",
-        "area-2",
-        "area-3",
-        "area-4",
-        "area-5",
-        "area-6",
-        "area-7",
-        "area-8",
-        "area-9",
-        "area-10",
-        "area-11",
-        "area-12",
-        "area-13",
-        "area-14",
-        "area-15",
-        "area-16",
-        "area-17",
-        "area-18",
-        "area-19",
-        "area-20",
-        "area-21",
-        "area-22",
-        "area-23",
         "area-24",
         "area-25",
-        "area-26",
         "area-27",
-        "area-28",
-        "area-29",
-        "area-muntbdke-1sz7hg"
+        "area-mv7rc1f4-l0n1em"
       ],
       "passwordHash": "pbkdf2-sha256$210000$mhFw4NlwLCmKQhsP6lAxbQ$ylDcggWD7l7VUlh80WPWJ2kF3ddSVNKalpcC0tOTwl8"
-    },
-    "account-mu6abokl-t7ozhv": {
-      "id": "account-mu6abokl-t7ozhv",
-      "role": "zoneOwner",
-      "name": "Mr Ánh",
-      "accessTypes": [
-        "5s"
-      ],
-      "rolesByType": {
-        "5s": "zoneOwner"
-      },
-      "username": "mranh",
-      "createdAt": "2026-09-18T01:33:38.469Z",
-      "displayName": "mranh",
-      "fiveSScorerId": "scorer-25",
-      "scorerId": "scorer-25",
-      "fiveSAreaIds": [
-        "area-1",
-        "area-14",
-        "area-15",
-        "area-28"
-      ],
-      "areaIds": [
-        "area-1",
-        "area-14",
-        "area-15",
-        "area-28"
-      ],
-      "passwordHash": "pbkdf2-sha256$210000$1MI2oRxEeHbC1I2k-Ly50Q$JF20zIWk5Bju_1ipWcIRvIkzSW87J1l5LHOAgQEQ9Ig"
     },
     "account-muku0b1t-bp4yyv": {
       "id": "account-muku0b1t-bp4yyv",
@@ -226,34 +89,26 @@
       "createdAt": "2026-09-28T05:54:19.937Z",
       "passwordHash": "pbkdf2-sha256$210000$rw-HIB-l1FBtTTs7gU-EfA$8-513NnrjGLz56gpBGKYECirI6Tacwcx8kOgIMPFV3M"
     },
-    "account-munscjbt-a4a6sl": {
-      "id": "account-munscjbt-a4a6sl",
-      "role": "assessor5s",
-      "name": "Mr Nam",
+    "account-muw4idfb-2das9v": {
+      "id": "account-muw4idfb-2das9v",
+      "role": "viewer",
       "accessTypes": [
-        "5s"
+        "5s",
+        "safety"
       ],
       "rolesByType": {
-        "5s": "assessor5s"
+        "5s": "viewer",
+        "safety": "viewer"
       },
-      "username": "mrnam",
-      "createdAt": "2026-09-30T07:30:16.409Z",
-      "displayName": "mrnam",
-      "fiveSAssessorId": "assessor-munsahl6-ym01bd",
-      "assessorId": "assessor-munsahl6-ym01bd",
-      "fiveSAreaIds": [
-        "area-6",
-        "area-10",
-        "area-21",
-        "area-22"
-      ],
-      "areaIds": [
-        "area-6",
-        "area-10",
-        "area-21",
-        "area-22"
-      ],
-      "passwordHash": "pbkdf2-sha256$210000$xCJ5r6-Q3PVz28sHw0HKQg$M5if_QjGSJe-6H-n2g4tkjIJccogVbWd5EEVFhSdM1I"
+      "name": "LeGroup",
+      "position": "Công ty",
+      "displayName": "LeGroup",
+      "username": "legroup",
+      "areaIds": [],
+      "fiveSAreaIds": [],
+      "safetyAreaIds": [],
+      "createdAt": "2026-10-06T03:32:53.495Z",
+      "passwordHash": "pbkdf2-sha256$210000$glWzEG8K5CUXH6xETEkA7w$tyl5ymdfi_Ugin3JCLHOMiBTIo3u6ccLRT95oh6jSD4"
     }
   }
 }

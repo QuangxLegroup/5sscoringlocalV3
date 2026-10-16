@@ -1113,7 +1113,6 @@
       getIssueCount,
       getIssueDay,
       getIssueDescription,
-      getIssueFoundBy,
       getIssueEmployeeCode,
       getIssueLocation,
       getIssueMonth,
@@ -1143,14 +1142,14 @@
       <td class="safety-no-cell"><span>${index}</span>${actions}</td>
       <td class="safety-status-cell">${escapeHtml(statusLabel)}</td>
       <td>${escapeHtml(getIssueLocation(row))}</td>
-      <td>${escapeHtml(getIssueDay(row))}</td>
+      <td>${escapeHtml(getIssueDay(row, row.score.periodId))}</td>
       <td>${escapeHtml(getIssueMonth(row, row.score.periodId))}</td>
       <td>${escapeHtml(row.score.note || getIssueDescription(row))}</td>
       <td>${row.score.photoDataUrl ? `<img class="safety-thumb" src="${row.score.photoDataUrl}" alt="Ảnh minh họa">` : ""}</td>
       <td>${escapeHtml(getIssueCount(row))}</td>
       ${SAFETY_STOP6_COLUMNS.map((column) => renderSafetyMarkCell(isSafetyStop6Selected(row.score, column.value), context)).join("")}
       ${SAFETY_LEVEL_COLUMNS.map((column) => renderSafetyMarkCell(isSafetyLevelSelected(row.score, column.value), context, column.value === "A" ? "level-a-column" : "level-mark")).join("")}
-      ${SAFETY_FOUND_COLUMNS.map((column) => renderSafetyMarkCell(isSafetyFoundSelected(row.score, column.value), context, "", getIssueFoundBy(row) || "1")).join("")}
+      ${SAFETY_FOUND_COLUMNS.map((column) => renderSafetyMarkCell(isSafetyFoundSelected(row.score, column.value), context, "", "v")).join("")}
       <td>${escapeHtml(getIssueEmployeeCode(row))}</td>
       <td>${escapeHtml(row.score.improvementContent || "")}${row.score.countermeasureDate ? `<br><small>Triển khai: ${escapeHtml(context.formatDateDisplay(row.score.countermeasureDate))}</small>` : ""}</td>
       <td>${row.score.afterPhotoDataUrl ? `<img class="safety-thumb" src="${row.score.afterPhotoDataUrl}" alt="Ảnh sau cải tiến">` : ""}</td>
@@ -1689,7 +1688,16 @@
     const { escapeHtml } = context;
     const allMonthRows = monthRows;
     const statusFilter = context.elements.safetyStatusFilter?.value || "";
-    monthRows = monthRows.filter((row) => !statusFilter || issueStatusOf(row, context) === statusFilter);
+    monthRows = monthRows
+      .filter((row) => !statusFilter || issueStatusOf(row, context) === statusFilter)
+      .sort((a, b) => {
+        const timeA = String(a.score?.createdAt || a.score?.updatedAt || "");
+        const timeB = String(b.score?.createdAt || b.score?.updatedAt || "");
+        if (timeA !== timeB) {
+          return timeB.localeCompare(timeA);
+        }
+        return String(b.score?.id || "").localeCompare(String(a.score?.id || ""));
+      });
     const zoneText = visibleAreas.length === 1 ? "Zone " + visibleAreas[0].code + " · " : "";
     const pageKey = [filters.year, filters.month, visibleAreas.map((area) => area.id).join(","), reportPeriod?.id || "", statusFilter].join("|");
     const pagination = getPaginationState("assessment", pageKey, monthRows.length);

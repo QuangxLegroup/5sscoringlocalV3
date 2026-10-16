@@ -334,6 +334,9 @@
     departmentHeadEmailName: document.getElementById("department-head-email-name"),
     departmentHeadEmails: document.getElementById("department-head-emails"),
     departmentHeadEmailList: document.getElementById("department-head-email-list"),
+    departmentHeadForm: document.getElementById("department-head-form"),
+    departmentHeadName: document.getElementById("department-head-name"),
+    departmentHeadList: document.getElementById("department-head-list"),
     catalogAssessorForm: document.getElementById("catalog-assessor-form"),
     catalogAssessorName: document.getElementById("catalog-assessor-name"),
     catalogAssessorZoneList: document.getElementById("catalog-assessor-zone-list"),
@@ -1220,6 +1223,14 @@
         .map(legacyScoreToSafetyRecord)
         .filter((record) => record && !deletedSafetyRecordIds.has(record.id));
     }
+    normalized.safetyRecords.sort((a, b) => {
+      const timeA = String(a.createdAt || a.updatedAt || "");
+      const timeB = String(b.createdAt || b.updatedAt || "");
+      if (timeA !== timeB) {
+        return timeB.localeCompare(timeA);
+      }
+      return String(b.id || "").localeCompare(String(a.id || ""));
+    });
 
     return normalized;
   }
@@ -1452,47 +1463,18 @@
     return merged;
   }
 
-  function chooseScoreConflictVersion(draft, serverValue) {
-    const score = draft.score || draft.expectedValue;
-    const area = getAreaForPeriod(score?.periodId, score?.areaId);
-    const item = getItem(score?.itemId);
-    const criterion = getCriterion(item, score?.criterionId);
-    const context = [
-      area?.code ? `Zone ${area.code}` : score?.areaId,
-      item?.code || score?.itemId,
-      criterion?.label || score?.criterionId,
-    ].filter(Boolean).join(" · ");
-    const localLabel = draft.score ? formatScoreRecord(draft.score) || "Chưa chấm" : "Đã xóa điểm";
-    const serverLabel = serverValue ? formatScoreRecord(serverValue) || "Chưa chấm" : "Chưa có điểm trên máy chủ";
-
-    return new Promise((resolve) => {
-      openFormModal({
-        title: "Ô điểm đã được thay đổi",
-        submitText: "Dùng bản nháp",
-        submitClass: "primary-button",
-        extraActions: '<button class="secondary-button" type="button" id="score-conflict-keep-server">Giữ điểm trên máy chủ</button>',
-        html: `
-          <p>Ô ${escapeHtml(context)} đã được cập nhật sau khi bạn bắt đầu nhập. Chọn giá trị cần giữ.</p>
-          <div class="score-conflict-comparison">
-            <section><strong>Đang lưu trên máy chủ</strong><span>${escapeHtml(serverLabel)}</span><small>${escapeHtml(serverValue?.scorerName || serverValue?.accountUsername || "")}</small></section>
-            <section><strong>Bản nháp trên thiết bị</strong><span>${escapeHtml(localLabel)}</span><small>${escapeHtml(draft.score?.scorerName || draft.username || "")}</small></section>
-          </div>
-        `,
-        onCancel() {
-          resolve("later");
-        },
-        async onSubmit() {
-          modalCancelHandler = null;
-          resolve("draft");
-          return true;
-        },
-      });
-      elements.modalActions.querySelector("#score-conflict-keep-server")?.addEventListener("click", () => {
-        modalCancelHandler = null;
-        closeModal();
-        resolve("server");
-      }, { once: true });
-    });
+  function isServerScoreNewer(draft, serverValue) {
+    if (!serverValue) return false;
+    const localTimestamp = Date.parse(
+      draft.localUpdatedAt
+      || draft.score?.updatedAt
+      || draft.updatedAt
+      || draft.expectedValue?.updatedAt
+      || draft.createdAt
+      || "",
+    );
+    const serverTimestamp = Date.parse(serverValue.updatedAt || serverValue.createdAt || "");
+    return Number.isFinite(serverTimestamp) && serverTimestamp > (Number.isFinite(localTimestamp) ? localTimestamp : 0);
   }
 
   function showScoreSaveError(error) {
@@ -1578,18 +1560,13 @@
       } catch (error) {
         if (error?.status === 409 && error.payload?.scoreConflict) {
           const serverValue = error.payload.scoreConflict.currentValue || null;
-          const choice = await chooseScoreConflictVersion(draft, serverValue);
-          if (choice === "server") {
+          if (isServerScoreNewer(draft, serverValue)) {
             applyScoreValueToState(draft.slot, serverValue);
             const historyIds = new Set((draft.historyEntries || []).map((entry) => entry.id));
             state.history = (state.history || []).filter((entry) => !historyIds.has(entry.id));
             await dataStore.removePendingScoreDraft(draft.id);
             renderAll();
             return { status: "server-kept" };
-          }
-          if (choice === "later") {
-            error.scoreConflictPending = true;
-            throw error;
           }
 
           const mergedScore = mergeScoreDraft(draft.expectedValue, draft.score, serverValue);
@@ -1638,6 +1615,7 @@
       score: cloneValue(score),
       expectedValue: cloneValue(expectedValue),
       historyEntries: options.historyEntries || [],
+      localUpdatedAt: score?.updatedAt || new Date().toISOString(),
       accountId: currentUser?.id || "",
       username: currentUser?.username || "",
       createdAt: new Date().toISOString(),
@@ -2605,7 +2583,6 @@
         emails: normalizeEmailList(row.emails),
         areaCodes: [...new Set(row.areaCodes)].sort((a, b) => a.localeCompare(b, "vi")),
       }))
-      .filter((row) => row.areaCodes.length || row.emails.length)
       .sort((a, b) => a.name.localeCompare(b.name, "vi"));
   }
 
@@ -3730,13 +3707,26 @@
     });
   }
 
-  function areaCheckboxListHtml(selectedIds = [], type = activeAccountScope, periodId = getActivePeriodId(type), managerFilter = null) {
+  function areaCheckboxListHtml(selectedIds = [], type = activeAccountScope, periodId = getActivePeriodId(type), managerFilter = null, assessorFilter = null) {
     const catalogType = normalizeCatalogType(type);
     const selected = new Set((selectedIds || []).filter(Boolean));
     const periodAreas = getAreasForPeriod(periodId)
       .filter((area) => catalogType !== SAFETY_PERIOD_TYPE || isReportableSafetyArea(area));
+    const areasAssignedToOtherAssessors = new Set();
+    if (assessorFilter && catalogType !== SAFETY_PERIOD_TYPE) {
+      getPeriodCatalogAssessors(catalogType, periodId)
+        .filter((assessor) => assessor.id !== assessorFilter.assessorId)
+        .forEach((assessor) => {
+          getAssessorAreaIds(assessor.id, catalogType, periodId)
+            .forEach((areaId) => areasAssignedToOtherAssessors.add(areaId));
+        });
+    }
+    const areasAssignedToCurrentAssessor = catalogType !== SAFETY_PERIOD_TYPE && assessorFilter?.assessorId
+      ? new Set(getAssessorAreaIds(assessorFilter.assessorId, catalogType, periodId))
+      : new Set();
     const areas = periodAreas
       .filter((area) => {
+        if (catalogType !== SAFETY_PERIOD_TYPE && assessorFilter && areasAssignedToOtherAssessors.has(area.id) && !areasAssignedToCurrentAssessor.has(area.id)) return false;
         if (!managerFilter) return true;
         if (!area.scorerId && !area.responsibleName && !area.scorerName) return true;
         if (managerFilter.managerId && area.scorerId === managerFilter.managerId) return true;
@@ -3745,9 +3735,11 @@
         return Boolean(manager && !area.scorerId && assignedName.toLocaleLowerCase("vi") === manager.name.toLocaleLowerCase("vi"));
       });
     if (!areas.length) {
-      const message = managerFilter && periodAreas.length
-        ? "Tất cả zone đã có người phụ trách."
-        : "Chưa có zone. Hãy thêm zone ở Danh mục trước.";
+      const message = catalogType !== SAFETY_PERIOD_TYPE && assessorFilter && periodAreas.length
+        ? "Tất cả zone đã được phân công cho assessor khác."
+        : managerFilter && periodAreas.length
+          ? "Tất cả zone đã có người phụ trách."
+          : "Chưa có zone. Hãy thêm zone ở Danh mục trước.";
       return `<p class="field-hint" style="padding: 10px 12px; margin: 0;">${escapeHtml(message)}</p>`;
     }
 
@@ -3869,16 +3861,22 @@
     getMutableManagers(type).splice(0, getMutableManagers(type).length, ...rootManagers);
   }
 
-  async function setAssessorAreaIds(assessorId, targetAreaIds, type = activeCatalogScope, periodId = getActivePeriodId(type)) {
+  function setAssessorAreaIds(assessorId, targetAreaIds, type = activeCatalogScope, periodId = getActivePeriodId(type)) {
     if (!assessorId) {
-      return;
+      return {};
     }
     const catalogType = normalizeCatalogType(type);
     const targetSet = new Set((targetAreaIds || []).filter(Boolean));
     const assessor = getPeriodCatalogAssessor(periodId, assessorId) || getAssessor(assessorId, catalogType);
     const assessorName = assessor?.name || "";
+    const updates = {};
 
     const applyToArea = (area, pId) => {
+      const before = JSON.stringify([
+        area.assessorId || "",
+        area.assessorName || "",
+        Array.isArray(area.assessorIds) ? area.assessorIds : (area.assessorId ? [area.assessorId] : []),
+      ]);
       const currentAssessorIds = new Set(Array.isArray(area.assessorIds) ? area.assessorIds : (area.assessorId ? [area.assessorId] : []));
       if (targetSet.has(area.id)) {
         currentAssessorIds.add(assessorId);
@@ -3894,26 +3892,42 @@
           area.assessorName = remaining[0] ? (getPeriodCatalogAssessor(pId || periodId, remaining[0])?.name || "") : "";
         }
       }
+      if (area.assessorId === assessorId) {
+        area.assessorName = assessorName;
+      }
       area.assessorIds = [...currentAssessorIds];
+      return before !== JSON.stringify([area.assessorId || "", area.assessorName || "", area.assessorIds]);
     };
 
     // 1. Update active period snapshot areas
     const mutableAreas = getMutablePeriodAreas(catalogType, periodId);
-    mutableAreas.forEach((area) => applyToArea(area, periodId));
+    let activePeriodChanged = false;
+    mutableAreas.forEach((area) => {
+      activePeriodChanged = applyToArea(area, periodId) || activePeriodChanged;
+    });
+    const activePeriod = getPeriod(periodId);
+    if (activePeriodChanged && activePeriod?.settingsSnapshot) {
+      updates[`periods/${periodId}/settingsSnapshot`] = activePeriod.settingsSnapshot;
+    }
 
     // 2. Update root catalog areas
     const rootAreas = getMutableAreas(catalogType);
     if (Array.isArray(rootAreas)) {
-      rootAreas.forEach((area) => applyToArea(area, ""));
+      rootAreas.forEach((area) => {
+        if (applyToArea(area, "") && area.id) {
+          updates[`${catalogDbPath(catalogType, "areas")}/${area.id}`] = area;
+        }
+      });
     }
 
     // 3. Update all other period snapshots of the same catalog type
-    const periodsToSave = [];
     (state.periods || []).forEach((period) => {
-      if (normalizeCatalogType(period.type) === catalogType && period.settingsSnapshot?.areas) {
-        period.settingsSnapshot.areas.forEach((area) => applyToArea(area, period.id));
-        periodsToSave.push(period);
-      }
+      if (period.id === periodId || normalizeCatalogType(period.type) !== catalogType || !period.settingsSnapshot?.areas) return;
+      let changed = false;
+      period.settingsSnapshot.areas.forEach((area) => {
+        changed = applyToArea(area, period.id) || changed;
+      });
+      if (changed) updates[`periods/${period.id}/settingsSnapshot`] = period.settingsSnapshot;
     });
 
     // 4. Update affected accounts
@@ -3932,21 +3946,12 @@
         account.fiveSAreaIds = normalizedTargetAreaIds;
         account.areaIds = normalizedTargetAreaIds;
       }
+      if (account.id) updates[`accounts/${account.id}`] = account;
     });
 
-    // 5. Persist everything to database
-    const dbWrites = [
-      saveCatalogPeriodSnapshot(catalogType, periodId),
-      ...periodsToSave.map((p) => savePeriodSnapshot(p)),
-      ...affectedAccounts.map((account) => dbRef(`accounts/${account.id}`).set(account)),
-    ];
-    if (Array.isArray(rootAreas)) {
-      rootAreas.forEach((a) => {
-        dbWrites.push(dbRef(`${catalogDbPath(catalogType, "areas")}/${a.id}`).set(a));
-      });
-    }
-
-    await Promise.all(dbWrites);
+    const rootAssessor = getMutableAssessors(catalogType).find((item) => item.id === assessorId);
+    if (rootAssessor) updates[`${catalogDbPath(catalogType, "assessors")}/${assessorId}`] = rootAssessor;
+    return updates;
   }
 
   function scoreGuideHtml(item, criterion) {
@@ -3975,7 +3980,14 @@
         item: getItem(record.itemId),
       }))
       .filter((row) => row.area && isReportableSafetyArea(row.area) && (!areaId || row.area.id === areaId))
-      .sort((a, b) => String(b.score.updatedAt || b.score.createdAt || "").localeCompare(String(a.score.updatedAt || a.score.createdAt || "")));
+      .sort((a, b) => {
+        const timeA = String(a.score?.createdAt || a.score?.updatedAt || "");
+        const timeB = String(b.score?.createdAt || b.score?.updatedAt || "");
+        if (timeA !== timeB) {
+          return timeB.localeCompare(timeA);
+        }
+        return String(b.score?.id || "").localeCompare(String(a.score?.id || ""));
+      });
   }
 
   function getSafetyRowsForYear(year, options = {}) {
@@ -4030,17 +4042,143 @@
       : row.score.issueItemLabel || "Mối nguy an toàn";
     return row.score.note ? (prefix ? prefix + ": " + row.score.note : row.score.note) : prefix;
   }
-  function getIssueDay(row) {
-    return row.score.issueDay || formatDateParts(row.score.updatedAt).day || "";
+  function getNormalizedSafetyIssueDate(item, safetyPeriod) {
+    let day = Number(item?.issueDay) || 0;
+    let month = Number(item?.issueMonth) || 0;
+
+    let periodYear = Number(safetyPeriod?.year) || 0;
+    let periodMonth = Number(safetyPeriod?.month) || 0;
+    let periodDay = 0;
+
+    if (safetyPeriod?.id && String(safetyPeriod.id).includes("-")) {
+      const parts = String(safetyPeriod.id).split("-");
+      if (parts.length >= 5) {
+        periodYear = periodYear || Number(parts[2]) || 0;
+        periodMonth = periodMonth || Number(parts[3]) || 0;
+        periodDay = Number(parts[4]) || 0;
+      }
+    }
+    if (!periodDay && safetyPeriod?.label && String(safetyPeriod.label).includes("/")) {
+      const labelParts = String(safetyPeriod.label).split("/");
+      if (labelParts.length === 3) {
+        periodDay = Number(labelParts[0]) || 0;
+        periodMonth = periodMonth || Number(labelParts[1]) || 0;
+        periodYear = periodYear || Number(labelParts[2]) || 0;
+      }
+    }
+    if (!periodMonth && safetyPeriod?.createdAt) {
+      const createdDate = new Date(safetyPeriod.createdAt);
+      if (!Number.isNaN(createdDate.getTime())) {
+        periodMonth = createdDate.getMonth() + 1;
+        periodDay = periodDay || createdDate.getDate();
+        periodYear = periodYear || createdDate.getFullYear();
+      }
+    }
+
+    if (day && month) {
+      if (periodMonth && day === periodMonth && month !== periodMonth && month <= 31) {
+        const temp = day;
+        day = month;
+        month = temp;
+      } else if (day <= 12 && month > 12 && month <= 31) {
+        const temp = day;
+        day = month;
+        month = temp;
+      }
+    }
+
+    if (periodMonth && month && month === periodMonth - 1 && item?.createdAt) {
+      const createdDate = new Date(item.createdAt);
+      if (!Number.isNaN(createdDate.getTime()) && (createdDate.getMonth() + 1) === periodMonth) {
+        month = periodMonth;
+      }
+    }
+
+    if (!month && periodMonth) month = periodMonth;
+    if (!day && periodDay) day = periodDay;
+
+    return { day, month, year: periodYear };
+  }
+
+  function parseSafetyIssueDateInput(dateStr, safetyPeriod) {
+    if (!dateStr) {
+      const norm = getNormalizedSafetyIssueDate({}, safetyPeriod);
+      const now = new Date();
+      const d = norm.day || now.getDate();
+      const m = norm.month || (now.getMonth() + 1);
+      return { day: String(d), month: String(m) };
+    }
+    const str = String(dateStr).trim();
+    let day = 0;
+    let month = 0;
+    if (str.includes("-")) {
+      const parts = str.split("-");
+      if (parts.length === 3) {
+        if (parts[0].length === 4) {
+          month = Number(parts[1]) || 0;
+          day = Number(parts[2]) || 0;
+        } else if (parts[2].length === 4) {
+          day = Number(parts[0]) || 0;
+          month = Number(parts[1]) || 0;
+        }
+      }
+    } else if (str.includes("/")) {
+      const parts = str.split("/").map((p) => p.trim());
+      if (parts.length >= 2) {
+        if (parts[0].length === 4) {
+          month = Number(parts[1]) || 0;
+          day = Number(parts[2]) || 0;
+        } else {
+          day = Number(parts[0]) || 0;
+          month = Number(parts[1]) || 0;
+        }
+      }
+    } else if (str.includes(".")) {
+      const parts = str.split(".").map((p) => p.trim());
+      if (parts.length >= 2) {
+        if (parts[0].length === 4) {
+          month = Number(parts[1]) || 0;
+          day = Number(parts[2]) || 0;
+        } else {
+          day = Number(parts[0]) || 0;
+          month = Number(parts[1]) || 0;
+        }
+      }
+    } else if (/^\d{1,2}$/.test(str)) {
+      day = Number(str) || 0;
+    }
+
+    const norm = getNormalizedSafetyIssueDate({ issueDay: day, issueMonth: month }, safetyPeriod);
+    return {
+      day: String(norm.day || day || ""),
+      month: String(norm.month || month || ""),
+    };
+  }
+
+  function getSafetyIssueMonth(row) {
+    return Number(getIssueMonth(row, row?.score?.periodId)) || 0;
+  }
+
+  function getIssueDay(row, periodId) {
+    const period = getPeriod(periodId || row?.score?.periodId);
+    const norm = getNormalizedSafetyIssueDate(row?.score, period);
+    if (norm.day) {
+      return String(norm.day);
+    }
+    return row?.score?.issueDay || formatDateParts(row?.score?.updatedAt).day || "";
   }
 
   function getIssueMonth(row, periodId) {
-    if (row.score.issueMonth) {
+    const period = getPeriod(periodId || row?.score?.periodId);
+    const norm = getNormalizedSafetyIssueDate(row?.score, period);
+    if (norm.month) {
+      return String(norm.month);
+    }
+    if (row?.score?.issueMonth) {
       return row.score.issueMonth;
     }
 
-    const parts = formatDateParts(row.score.updatedAt);
-    const period = getPeriod(periodId);
+    const parts = formatDateParts(row?.score?.updatedAt);
     return parts.month || period?.month || "";
   }
 
@@ -5262,6 +5400,8 @@
       getIssueItemLabel,
       getIssueLocation,
       getIssueMonth,
+      getNormalizedSafetyIssueDate,
+      parseSafetyIssueDateInput,
       getIssueStatusLabel,
       getIssueRecords,
       getSafetyLevelConfirm,
@@ -5477,6 +5617,23 @@
   }
 
 
+  function populateAreaDepartmentHeadSelect() {
+    if (!elements.areaHead) {
+      return;
+    }
+
+    const periodId = getActivePeriodId(activeCatalogScope);
+    const rows = getDepartmentHeadRows(periodId);
+    const current = elements.areaHead.value;
+    elements.areaHead.innerHTML = rows.length
+      ? departmentHeadOptions(current, true, periodId)
+      : '<option value="">Thêm trưởng phòng trước khi tạo zone</option>';
+    elements.areaHead.required = true;
+    elements.areaHead.value = rows.some((row) => departmentHeadKey(row.name) === departmentHeadKey(current))
+      ? rows.find((row) => departmentHeadKey(row.name) === departmentHeadKey(current)).name
+      : "";
+  }
+
   function populateDepartmentHeadEmailSelect() {
     if (!elements.departmentHeadEmailName) {
       return;
@@ -5552,7 +5709,7 @@
     }
     const catalogType = activeCatalogScope;
     const periodId = getActivePeriodId(catalogType);
-    elements.catalogAssessorZoneList.innerHTML = areaCheckboxListHtml([], catalogType, periodId);
+    elements.catalogAssessorZoneList.innerHTML = areaCheckboxListHtml([], catalogType, periodId, null, {});
     refreshSelectAllStates(elements.catalogAssessorZoneList);
   }
 
@@ -6152,6 +6309,8 @@
     syncCatalogPeriodFields();
     renderPeriodList();
     renderScorerList();
+    populateAreaDepartmentHeadSelect();
+    renderDepartmentHeadList();
     populateDepartmentHeadEmailSelect();
     renderDepartmentHeadEmailList();
     renderCatalogAssessorZoneList();
@@ -6243,6 +6402,33 @@
   }
 
 
+  function renderDepartmentHeadList() {
+    if (!elements.departmentHeadList) {
+      return;
+    }
+
+    const rows = getDepartmentHeadRows(getActivePeriodId(activeCatalogScope));
+    elements.departmentHeadList.innerHTML = rows
+      .map((row) => {
+        const zoneSummary = row.areaCodes.length
+          ? `<span class="catalog-meta-pill pill-zone">Zone: ${escapeHtml(row.areaCodes.join(", "))}</span>`
+          : '<span class="catalog-meta-pill text-muted">Chưa gán zone</span>';
+        return `<article class="compact-item catalog-department-head-item">
+          <div class="compact-main">
+            <div class="compact-title-row">
+              <strong>${escapeHtml(row.name)}</strong>
+              ${zoneSummary}
+            </div>
+          </div>
+          <div class="compact-actions">
+            <button class="tiny-button" type="button" data-action="edit-catalog-department-head" data-id="${escapeHtml(row.name)}">Sửa</button>
+            <button class="tiny-button danger-text-button" type="button" data-action="delete-catalog-department-head" data-id="${escapeHtml(row.name)}">Xóa</button>
+          </div>
+        </article>`;
+      })
+      .join("") || '<article class="compact-item"><strong>Chưa có trưởng phòng</strong><span>Thêm trưởng phòng trước khi tạo zone.</span></article>';
+  }
+
   function renderDepartmentHeadEmailList() {
     if (!elements.departmentHeadEmailList) {
       return;
@@ -6284,7 +6470,7 @@
           </div>
         </article>`;
       })
-      .join("") || "<article class=\"compact-item department-head-email-item\"><div><strong>Chưa có trưởng phòng</strong><span>Nhập trưởng phòng trong danh mục zone trước khi thiết lập email.</span></div></article>";
+      .join("") || "<article class=\"compact-item department-head-email-item\"><div><strong>Chưa có trưởng phòng</strong><span>Thêm trưởng phòng ở bước 4 trước khi thiết lập email.</span></div></article>";
   }
 
   function renderAssessorList() {
@@ -7810,11 +7996,11 @@
     }
   }
 
-  async function logAdminChange({ subjectLabel, beforeLabel = "", afterLabel = "", changeLabel = "", areaCode = "", note = "", scope = "", periodId = "" }) {
+  function createAdminChangeEntry({ subjectLabel, beforeLabel = "", afterLabel = "", changeLabel = "", areaCode = "", note = "", scope = "", periodId = "" }) {
     const normalizedScope = scope ? normalizeCatalogType(scope) : "";
     const period = getPeriod(periodId || (normalizedScope ? getActivePeriodId(normalizedScope) : undefined));
     const historyScope = normalizedScope || (period?.id ? getCatalogTypeForPeriod(period.id) : "");
-    const historyEntry = {
+    return {
       id: makeId("history"),
       timestamp: new Date().toISOString(),
       periodId: period?.id || "",
@@ -7830,6 +8016,28 @@
       source: "admin",
       scope: normalizedScope,
     };
+  }
+
+  function addAdminChangeToUpdates(change, updates) {
+    const historyEntry = createAdminChangeEntry(change);
+    state.history.unshift(historyEntry);
+    const stagedEntry = stageHistoryEntry(historyEntry);
+    if (!stagedEntry) return;
+
+    const expired = (state.history || []).filter((item) => isHistoryEntryExpired(item));
+    if (expired.length) {
+      state.history = (state.history || []).filter((item) => !isHistoryEntryExpired(item));
+      if (!currentUser || isAdminAccount(currentUser)) {
+        expired.forEach((item) => {
+          if (item?.id) updates[`history/${item.id}`] = null;
+        });
+      }
+    }
+    updates[`history/${stagedEntry.id}`] = stagedEntry;
+  }
+
+  async function logAdminChange(change) {
+    const historyEntry = createAdminChangeEntry(change);
     state.history.unshift(historyEntry);
     await saveHistoryEntry(historyEntry);
   }
@@ -8723,6 +8931,373 @@
     return contact;
   }
 
+  async function handleDepartmentHeadSubmit(event) {
+    event.preventDefault();
+    if (!requireAdminAction()) {
+      return;
+    }
+
+    const name = normalizeDepartmentHeadName(elements.departmentHeadName?.value);
+    if (!name) {
+      showToast("Vui lòng nhập tên trưởng phòng.", true);
+      return;
+    }
+
+    const catalogType = normalizeCatalogType(activeCatalogScope);
+    const periodId = getActivePeriodId(catalogType);
+    if (getDepartmentHeadRows(periodId).some((row) => departmentHeadKey(row.name) === departmentHeadKey(name))) {
+      showToast("Trưởng phòng này đã có trong danh mục kỳ đang mở.", true);
+      return;
+    }
+
+    const activePeriod = getPeriod(periodId);
+    if (activePeriod && !activePeriod.settingsSnapshot) {
+      ensurePeriodSnapshotLocal(periodId);
+    }
+    const beforeSnapshot = capturePeriodSnapshot(periodId);
+    const beforeCatalog = captureCatalogState(catalogType);
+    const beforeHistory = cloneValue(state.history);
+    const beforePeriodSnapshots = (state.periods || [])
+      .filter((period) => normalizeCatalogType(period.type) === catalogType)
+      .map((period) => ({
+        id: period.id,
+        hadSnapshot: Boolean(period.settingsSnapshot),
+        snapshot: period.settingsSnapshot ? cloneValue(period.settingsSnapshot) : null,
+      }));
+
+    const createdAt = new Date().toISOString();
+    const rootContacts = getDepartmentHeadContacts(catalogType);
+    let rootContact = rootContacts.find((contact) => departmentHeadKey(contact.name) === departmentHeadKey(name));
+    if (!rootContact) {
+      rootContact = {
+        id: makeStableId(catalogType === SAFETY_PERIOD_TYPE ? "safety-department-head" : "department-head", name),
+        name,
+        emails: [],
+        createdAt,
+      };
+      rootContacts.push(rootContact);
+    }
+
+    const periodContacts = getMutableDepartmentHeadContactsForPeriod(catalogType, periodId);
+    if (!periodContacts.some((contact) => departmentHeadKey(contact.name) === departmentHeadKey(name))) {
+      periodContacts.push({ ...rootContact });
+    }
+
+    const updates = {
+      [`${catalogDbPath(catalogType, "departmentHeadContacts")}/${rootContact.id}`]: rootContact,
+    };
+    if (activePeriod?.settingsSnapshot) {
+      updates[`periods/${periodId}/settingsSnapshot`] = activePeriod.settingsSnapshot;
+    }
+    addAdminChangeToUpdates({
+      subjectLabel: "Trưởng phòng",
+      afterLabel: name,
+      changeLabel: `Thêm trưởng phòng ${name}`,
+      scope: catalogType,
+      periodId,
+    }, updates);
+
+    try {
+      await updateRootWithOptionalRenderSuppression(updates, { suppressRender: true });
+    } catch (error) {
+      if (catalogType === SAFETY_PERIOD_TYPE) {
+        state.safetyDepartmentHeadContacts = cloneValue(beforeCatalog.departmentHeadContacts);
+      } else {
+        state.departmentHeadContacts = cloneValue(beforeCatalog.departmentHeadContacts);
+      }
+      beforePeriodSnapshots.forEach((entry) => {
+        const period = getPeriod(entry.id);
+        if (!period) return;
+        if (entry.hadSnapshot) period.settingsSnapshot = cloneValue(entry.snapshot);
+        else delete period.settingsSnapshot;
+      });
+      state.history = beforeHistory;
+      renderAll();
+      showToast(error?.message || "Không lưu được trưởng phòng. Vui lòng thử lại.", true);
+      return;
+    }
+
+    pushUndoAction({
+      type: "catalogOrSettings",
+      description: `Thêm trưởng phòng: ${name}`,
+      targetPeriodId: periodId,
+      catalogType,
+      beforeSnapshot,
+      afterSnapshot: capturePeriodSnapshot(periodId),
+      beforeCatalog,
+      afterCatalog: captureCatalogState(catalogType),
+    });
+    elements.departmentHeadForm?.reset();
+    showToast("Đã thêm trưởng phòng.");
+    renderAll();
+  }
+
+  function editCatalogDepartmentHead(name) {
+    if (!requireAdminAction()) {
+      return;
+    }
+
+    const catalogType = normalizeCatalogType(activeCatalogScope);
+    const periodId = getActivePeriodId(catalogType);
+    const current = getDepartmentHeadRows(periodId)
+      .find((row) => departmentHeadKey(row.name) === departmentHeadKey(name));
+    if (!current) {
+      return;
+    }
+
+    openFormModal({
+      title: "Sửa trưởng phòng",
+      html: `<div class="modal-context"><span><strong>Zone đang phụ trách:</strong> ${escapeHtml(current.areaCodes.join(", ") || "chưa gán zone")}</span></div>
+        <label>
+          <span>Tên trưởng phòng</span>
+          <input name="name" type="text" value="${escapeHtml(current.name)}" required>
+        </label>`,
+      async onSubmit(formData) {
+        const nextName = normalizeDepartmentHeadName(formData.get("name"));
+        if (!nextName) {
+          showToast("Vui lòng nhập tên trưởng phòng.", true);
+          return false;
+        }
+
+        const duplicate = getDepartmentHeadRows(periodId).some((row) => (
+          departmentHeadKey(row.name) !== departmentHeadKey(current.name)
+          && departmentHeadKey(row.name) === departmentHeadKey(nextName)
+        ));
+        if (duplicate) {
+          showToast("Trưởng phòng này đã có trong danh mục kỳ đang mở.", true);
+          return false;
+        }
+        if (nextName === current.name) {
+          showToast("Tên trưởng phòng không thay đổi.");
+          return true;
+        }
+
+        const activePeriod = getPeriod(periodId);
+        if (activePeriod && !activePeriod.settingsSnapshot) {
+          ensurePeriodSnapshotLocal(periodId);
+        }
+        const beforeSnapshot = capturePeriodSnapshot(periodId);
+        const beforeCatalog = captureCatalogState(catalogType);
+        const beforeHistory = cloneValue(state.history);
+        const beforePeriodSnapshots = (state.periods || [])
+          .filter((period) => normalizeCatalogType(period.type) === catalogType)
+          .map((period) => ({
+            id: period.id,
+            hadSnapshot: Boolean(period.settingsSnapshot),
+            snapshot: period.settingsSnapshot ? cloneValue(period.settingsSnapshot) : null,
+          }));
+
+        const previousName = current.name;
+        const previousKey = departmentHeadKey(previousName);
+        const renameAreas = (areas) => areas.forEach((area) => {
+          if (departmentHeadKey(area.departmentHead) !== previousKey) return;
+          area.departmentHead = nextName;
+          if (departmentHeadKey(area.summaryGroup) === previousKey) {
+            area.summaryGroup = nextName;
+          }
+        });
+
+        const periodAreas = getMutablePeriodAreas(catalogType, periodId);
+        const periodContacts = getMutableDepartmentHeadContactsForPeriod(catalogType, periodId);
+        const rootAreas = getMutableAreas(catalogType);
+        const rootContacts = getDepartmentHeadContacts(catalogType);
+        renameAreas(periodAreas);
+        renameAreas(rootAreas);
+        renameDepartmentHeadContact(previousName, nextName, periodContacts, catalogType);
+        renameDepartmentHeadContact(previousName, nextName, rootContacts, catalogType);
+
+        const updates = {};
+        const affectedRootAreaIds = new Set(beforeCatalog.areas
+          .filter((area) => departmentHeadKey(area.departmentHead) === previousKey)
+          .map((area) => area.id));
+        rootAreas
+          .filter((area) => affectedRootAreaIds.has(area.id))
+          .forEach((area) => {
+            updates[`${catalogDbPath(catalogType, "areas")}/${area.id}`] = area;
+          });
+
+        const currentRootContacts = getDepartmentHeadContacts(catalogType);
+        const rootContactsById = new Map(currentRootContacts.map((contact) => [contact.id, contact]));
+        const allRootContactIds = new Set([
+          ...beforeCatalog.departmentHeadContacts.map((contact) => contact.id),
+          ...currentRootContacts.map((contact) => contact.id),
+        ]);
+        allRootContactIds.forEach((contactId) => {
+          updates[`${catalogDbPath(catalogType, "departmentHeadContacts")}/${contactId}`] = rootContactsById.get(contactId) || null;
+        });
+        if (activePeriod?.settingsSnapshot) {
+          updates[`periods/${periodId}/settingsSnapshot`] = activePeriod.settingsSnapshot;
+        }
+        addAdminChangeToUpdates({
+          subjectLabel: "Trưởng phòng",
+          beforeLabel: previousName,
+          afterLabel: nextName,
+          changeLabel: `Sửa trưởng phòng ${previousName}`,
+          scope: catalogType,
+          periodId,
+        }, updates);
+
+        try {
+          await updateRootWithOptionalRenderSuppression(updates, { suppressRender: true });
+        } catch (error) {
+          if (catalogType === SAFETY_PERIOD_TYPE) {
+            state.safetyAreas = cloneValue(beforeCatalog.areas);
+            state.safetyDepartmentHeadContacts = cloneValue(beforeCatalog.departmentHeadContacts);
+          } else {
+            state.areas = cloneValue(beforeCatalog.areas);
+            state.departmentHeadContacts = cloneValue(beforeCatalog.departmentHeadContacts);
+          }
+          beforePeriodSnapshots.forEach((entry) => {
+            const period = getPeriod(entry.id);
+            if (!period) return;
+            if (entry.hadSnapshot) period.settingsSnapshot = cloneValue(entry.snapshot);
+            else delete period.settingsSnapshot;
+          });
+          state.history = beforeHistory;
+          renderAll();
+          showToast(error?.message || "Không lưu được thay đổi trưởng phòng. Vui lòng thử lại.", true);
+          return false;
+        }
+
+        pushUndoAction({
+          type: "catalogOrSettings",
+          description: `Sửa trưởng phòng: ${previousName} → ${nextName}`,
+          targetPeriodId: periodId,
+          catalogType,
+          beforeSnapshot,
+          afterSnapshot: capturePeriodSnapshot(periodId),
+          beforeCatalog,
+          afterCatalog: captureCatalogState(catalogType),
+        });
+        showToast("Đã cập nhật trưởng phòng.");
+        renderAll();
+        return true;
+      },
+    });
+  }
+
+  function deleteCatalogDepartmentHead(name) {
+    if (!requireAdminAction()) {
+      return;
+    }
+
+    const catalogType = normalizeCatalogType(activeCatalogScope);
+    const periodId = getActivePeriodId(catalogType);
+    const current = getDepartmentHeadRows(periodId)
+      .find((row) => departmentHeadKey(row.name) === departmentHeadKey(name));
+    if (!current) {
+      return;
+    }
+
+    const zoneMessage = current.areaCodes.length
+      ? ` Các zone ${current.areaCodes.join(", ")} sẽ được gỡ tên trưởng phòng này.`
+      : "";
+    openConfirmModal({
+      title: "Xóa trưởng phòng",
+      message: `Xóa trưởng phòng ${current.name}?${zoneMessage}`,
+      confirmText: "Xóa trưởng phòng",
+      danger: true,
+      async onConfirm() {
+        const activePeriod = getPeriod(periodId);
+        if (activePeriod && !activePeriod.settingsSnapshot) {
+          ensurePeriodSnapshotLocal(periodId);
+        }
+        const beforeSnapshot = capturePeriodSnapshot(periodId);
+        const beforeCatalog = captureCatalogState(catalogType);
+        const beforeHistory = cloneValue(state.history);
+        const beforePeriodSnapshots = (state.periods || [])
+          .filter((period) => normalizeCatalogType(period.type) === catalogType)
+          .map((period) => ({
+            id: period.id,
+            hadSnapshot: Boolean(period.settingsSnapshot),
+            snapshot: period.settingsSnapshot ? cloneValue(period.settingsSnapshot) : null,
+          }));
+
+        const currentKey = departmentHeadKey(current.name);
+        const periodAreas = getMutablePeriodAreas(catalogType, periodId);
+        const periodContacts = getMutableDepartmentHeadContactsForPeriod(catalogType, periodId);
+        const rootAreas = getMutableAreas(catalogType);
+        const rootContacts = getDepartmentHeadContacts(catalogType);
+        const affectedRootAreaIds = new Set(beforeCatalog.areas
+          .filter((area) => departmentHeadKey(area.departmentHead) === currentKey)
+          .map((area) => area.id));
+
+        periodAreas.forEach((area) => {
+          if (departmentHeadKey(area.departmentHead) === currentKey) area.departmentHead = "";
+        });
+        rootAreas.forEach((area) => {
+          if (departmentHeadKey(area.departmentHead) === currentKey) area.departmentHead = "";
+        });
+
+        const remainingPeriodContacts = periodContacts.filter((contact) => departmentHeadKey(contact.name) !== currentKey);
+        const remainingRootContacts = rootContacts.filter((contact) => departmentHeadKey(contact.name) !== currentKey);
+        if (activePeriod?.settingsSnapshot) {
+          activePeriod.settingsSnapshot.departmentHeadContacts = remainingPeriodContacts;
+        }
+        if (catalogType === SAFETY_PERIOD_TYPE) state.safetyDepartmentHeadContacts = remainingRootContacts;
+        else state.departmentHeadContacts = remainingRootContacts;
+
+        const updates = {};
+        rootAreas
+          .filter((area) => affectedRootAreaIds.has(area.id))
+          .forEach((area) => {
+            updates[`${catalogDbPath(catalogType, "areas")}/${area.id}`] = area;
+          });
+        beforeCatalog.departmentHeadContacts
+          .filter((contact) => departmentHeadKey(contact.name) === currentKey)
+          .forEach((contact) => {
+            updates[`${catalogDbPath(catalogType, "departmentHeadContacts")}/${contact.id}`] = null;
+          });
+        if (activePeriod?.settingsSnapshot) {
+          updates[`periods/${periodId}/settingsSnapshot`] = activePeriod.settingsSnapshot;
+        }
+        addAdminChangeToUpdates({
+          subjectLabel: "Trưởng phòng",
+          beforeLabel: current.name,
+          afterLabel: "Đã xóa",
+          changeLabel: `Xóa trưởng phòng ${current.name}`,
+          scope: catalogType,
+          periodId,
+        }, updates);
+
+        try {
+          await updateRootWithOptionalRenderSuppression(updates, { suppressRender: true });
+        } catch (error) {
+          if (catalogType === SAFETY_PERIOD_TYPE) {
+            state.safetyAreas = cloneValue(beforeCatalog.areas);
+            state.safetyDepartmentHeadContacts = cloneValue(beforeCatalog.departmentHeadContacts);
+          } else {
+            state.areas = cloneValue(beforeCatalog.areas);
+            state.departmentHeadContacts = cloneValue(beforeCatalog.departmentHeadContacts);
+          }
+          beforePeriodSnapshots.forEach((entry) => {
+            const period = getPeriod(entry.id);
+            if (!period) return;
+            if (entry.hadSnapshot) period.settingsSnapshot = cloneValue(entry.snapshot);
+            else delete period.settingsSnapshot;
+          });
+          state.history = beforeHistory;
+          renderAll();
+          showToast(error?.message || "Không xóa được trưởng phòng. Vui lòng thử lại.", true);
+          return;
+        }
+
+        pushUndoAction({
+          type: "catalogOrSettings",
+          description: `Xóa trưởng phòng: ${current.name}`,
+          targetPeriodId: periodId,
+          catalogType,
+          beforeSnapshot,
+          afterSnapshot: capturePeriodSnapshot(periodId),
+          beforeCatalog,
+          afterCatalog: captureCatalogState(catalogType),
+        });
+        showToast("Đã xóa trưởng phòng.");
+        renderAll();
+      },
+    });
+  }
+
   async function saveDepartmentHeadEmails(name, emails, type = activeCatalogScope, periodId = getActivePeriodId(type)) {
     const catalogType = normalizeCatalogType(type);
     const period = getPeriod(periodId);
@@ -8914,6 +9489,14 @@
     const checkedAreaIds = getCheckedAreaIds(elements.catalogAssessorForm);
     const beforeSnapshot = capturePeriodSnapshot(periodId);
     const beforeCatalog = captureCatalogState(catalogType);
+    const beforePeriodSnapshots = (state.periods || [])
+      .filter((period) => normalizeCatalogType(period.type) === normalizeCatalogType(catalogType))
+      .map((period) => ({
+        id: period.id,
+        hadSnapshot: Boolean(period.settingsSnapshot),
+        snapshot: period.settingsSnapshot ? cloneValue(period.settingsSnapshot) : null,
+      }));
+    const beforeHistory = cloneValue(state.history);
     const assessors = getMutablePeriodAssessors(catalogType, periodId);
     const newAssessor = { id: makeId(catalogType === SAFETY_PERIOD_TYPE ? "safety-assessor" : "assessor"), name, createdAt: new Date().toISOString() };
     assessors.push(newAssessor);
@@ -8923,21 +9506,41 @@
       rootAssessors.push({ ...newAssessor });
     }
 
-    if (checkedAreaIds.length) {
-      await setAssessorAreaIds(newAssessor.id, checkedAreaIds, catalogType, periodId);
+    const updates = checkedAreaIds.length
+      ? setAssessorAreaIds(newAssessor.id, checkedAreaIds, catalogType, periodId)
+      : {};
+    if (getPeriod(periodId)?.settingsSnapshot) {
+      updates[`periods/${periodId}/settingsSnapshot`] = getPeriod(periodId).settingsSnapshot;
     }
-
-    await Promise.all([
-      saveCatalogPeriodSnapshot(catalogType, periodId),
-      dbRef(`${catalogDbPath(catalogType, "assessors")}/${newAssessor.id}`).set(newAssessor),
-      logAdminChange({
-        subjectLabel: "Assessor",
-        afterLabel: name,
-        changeLabel: `Thêm assessor ${name}`,
-        scope: catalogType,
-        periodId,
-      }),
-    ]);
+    updates[`${catalogDbPath(catalogType, "assessors")}/${newAssessor.id}`] = newAssessor;
+    addAdminChangeToUpdates({
+      subjectLabel: "Assessor",
+      afterLabel: name,
+      changeLabel: `Thêm assessor ${name}`,
+      scope: catalogType,
+      periodId,
+    }, updates);
+    try {
+      await updateRootWithOptionalRenderSuppression(updates, { suppressRender: true });
+    } catch (error) {
+      if (normalizeCatalogType(catalogType) === SAFETY_PERIOD_TYPE) {
+        state.safetyAreas = cloneValue(beforeCatalog.areas);
+        state.safetyAssessors = cloneValue(beforeCatalog.assessors);
+      } else {
+        state.areas = cloneValue(beforeCatalog.areas);
+        state.assessors = cloneValue(beforeCatalog.assessors);
+      }
+      beforePeriodSnapshots.forEach((entry) => {
+        const period = getPeriod(entry.id);
+        if (!period) return;
+        if (entry.hadSnapshot) period.settingsSnapshot = cloneValue(entry.snapshot);
+        else delete period.settingsSnapshot;
+      });
+      state.history = beforeHistory;
+      renderAll();
+      showToast(error?.message || "Không lưu được assessor và phân công Zone. Vui lòng thử lại.", true);
+      return;
+    }
     const afterSnapshot = capturePeriodSnapshot(periodId);
     const afterCatalog = captureCatalogState(catalogType);
     pushUndoAction({
@@ -8967,12 +9570,20 @@
     const periodId = getActivePeriodId(catalogType);
     const areas = getMutablePeriodAreas(catalogType, periodId);
     const code = elements.areaCode.value.trim();
+    const departmentHead = normalizeDepartmentHeadName(elements.areaHead?.value);
     const scorerId = elements.areaScorer.value;
     const assessorId = isSafety ? "" : elements.areaAssessor.value;
     const checkedAssessorIds = isSafety ? getCheckedAssessorIds(elements.areaForm) : (assessorId ? [assessorId] : []);
 
-    if (!code || !scorerId || (!isSafety && !assessorId)) {
-      showToast(isSafety ? "Vui lòng nhập đủ mã zone và người phụ trách zone." : "Vui lòng nhập đủ mã zone, người phụ trách zone và assessor.", true);
+    if (!code || !departmentHead || !scorerId || (!isSafety && !assessorId)) {
+      showToast(isSafety
+        ? "Vui lòng chọn trưởng phòng và nhập đủ mã zone, người phụ trách zone."
+        : "Vui lòng chọn trưởng phòng và nhập đủ mã zone, người phụ trách zone, assessor.", true);
+      return;
+    }
+
+    if (!getDepartmentHeadRows(periodId).some((row) => departmentHeadKey(row.name) === departmentHeadKey(departmentHead))) {
+      showToast("Vui lòng chọn trưởng phòng có sẵn trong danh mục.", true);
       return;
     }
 
@@ -8993,8 +9604,8 @@
       order: Math.max(0, ...areas.map((area) => Number(area.order) || 0)) + 1,
       code,
       templateCode: code,
-      departmentHead: elements.areaHead.value.trim(),
-      summaryGroup: elements.areaSummaryGroup?.value?.trim() || getDepartmentHeadSummaryGroup(elements.areaHead.value.trim(), areas),
+      departmentHead,
+      summaryGroup: elements.areaSummaryGroup?.value?.trim() || getDepartmentHeadSummaryGroup(departmentHead, areas),
       scorerId,
       assessorId: primaryAssessorId,
       assessorIds: checkedAssessorIds,
@@ -9035,7 +9646,7 @@
       logAdminChange({
         subjectLabel: "Zone",
         areaCode: code,
-        afterLabel: `${code} · ${elements.areaHead.value.trim() || "-"} · ${newArea.responsibleName || ""} · Assessor: ${newArea.assessorName || "-"}`,
+        afterLabel: `${code} · ${departmentHead} · ${newArea.responsibleName || ""} · Assessor: ${newArea.assessorName || "-"}`,
         changeLabel: `Thêm zone ${code}`,
         scope: catalogType,
         periodId,
@@ -9087,12 +9698,13 @@
     const assessorName = assessor?.name || "";
 
     if (assessor && scope === SAFETY_PERIOD_TYPE) {
-      if (!state.safetyAssessors || typeof state.safetyAssessors !== "object") {
-        state.safetyAssessors = {};
+      if (!Array.isArray(state.safetyAssessors)) {
+        state.safetyAssessors = [];
       }
-      if (!state.safetyAssessors[personId]) {
-        state.safetyAssessors[personId] = { id: personId, name: assessorName, createdAt: new Date().toISOString() };
-        await dbRef(`safetyAssessors/${personId}`).set(state.safetyAssessors[personId]);
+      if (!state.safetyAssessors.some((item) => item.id === personId)) {
+        const safetyAssessor = { id: personId, name: assessorName, createdAt: new Date().toISOString() };
+        state.safetyAssessors.push(safetyAssessor);
+        await dbRef(`safetyAssessors/${personId}`).set(safetyAssessor);
       }
     }
 
@@ -9131,6 +9743,55 @@
         ]);
       }
     }
+  }
+
+  async function ensureMirroredAssessorForAccount(account, targetScope, periodId) {
+    const sourceScope = normalizeCatalogType(targetScope) === SAFETY_PERIOD_TYPE
+      ? FIVE_S_PERIOD_TYPE
+      : SAFETY_PERIOD_TYPE;
+    const sourceRole = getAccountRoleForType(account, sourceScope);
+    if (!hasAccountAccessType(account, sourceScope)
+      || ![getAssessorRoleForScope(sourceScope), ROLE_ZONE_OWNER].includes(sourceRole)) {
+      return null;
+    }
+
+    const sourcePersonId = getAccountPersonId(account, sourceScope);
+    const sourcePeriodId = getActivePeriodId(sourceScope);
+    const sourcePerson = sourceRole === ROLE_ZONE_OWNER
+      ? getPeriodCatalogManager(sourcePeriodId, sourcePersonId) || getManager(sourcePersonId, sourceScope)
+      : getPeriodCatalogAssessor(sourcePeriodId, sourcePersonId) || getAssessor(sourcePersonId, sourceScope);
+    const name = String(sourcePerson?.name || account.name || account.displayName || "").trim();
+    if (!name) {
+      return null;
+    }
+
+    const normalizedName = name.toLocaleLowerCase("vi");
+    const rootAssessors = getMutableAssessors(targetScope);
+    const periodAssessors = getMutablePeriodAssessors(targetScope, periodId);
+    let assessor = getPeriodCatalogAssessors(targetScope, periodId)
+      .find((item) => item.name.toLocaleLowerCase("vi") === normalizedName)
+      || rootAssessors.find((item) => item.name.toLocaleLowerCase("vi") === normalizedName);
+    if (!assessor) {
+      assessor = {
+        id: makeId(targetScope === SAFETY_PERIOD_TYPE ? "safety-assessor" : "assessor"),
+        name,
+        createdAt: new Date().toISOString(),
+      };
+    }
+
+    if (!rootAssessors.some((item) => item.id === assessor.id)) {
+      rootAssessors.push({ ...assessor });
+    }
+    if (!periodAssessors.some((item) => item.id === assessor.id)) {
+      periodAssessors.push({ ...assessor });
+    }
+
+    const period = getPeriod(periodId);
+    await Promise.all([
+      dbRef(`${catalogDbPath(targetScope, "assessors")}/${assessor.id}`).set(assessor),
+      period?.settingsSnapshot ? savePeriodSnapshot(period) : Promise.resolve(),
+    ]);
+    return assessor;
   }
 
   async function handleAccountSubmit(event) {
@@ -9175,7 +9836,12 @@
       }
     } else {
       personId = elements.accountAssessor.value;
-      const assessor = getPeriodCatalogAssessor(periodId, personId);
+      let assessor = null;
+      if (existing && !hasAccountAccessType(existing, scope)) {
+        assessor = await ensureMirroredAssessorForAccount(existing, scope, periodId);
+        if (assessor) personId = assessor.id;
+      }
+      if (!assessor) assessor = getPeriodCatalogAssessor(periodId, personId);
       name = assessor?.name || "";
       if (!assessor) {
         showToast("Vui lòng chọn assessor.", true);
@@ -9612,7 +10278,7 @@
         <div class="form-field">
           <span style="font-weight: 600;">Zone ${escapeHtml(getAccountScopeLabel(catalogType))} được chấm</span>
           <div class="zone-check-list" style="max-height: 200px; overflow-y: auto;">
-            ${areaCheckboxListHtml(currentAssignedAreaIds, catalogType, periodId)}
+            ${areaCheckboxListHtml(currentAssignedAreaIds, catalogType, periodId, null, { assessorId: assessor.id })}
           </div>
         </div>
       `,
@@ -9632,61 +10298,65 @@
         const beforeSnapshot = capturePeriodSnapshot(periodId);
         const beforeCatalog = captureCatalogState(catalogType);
         const beforeName = assessor.name;
-        assessor.name = name;
-
         const rootAssessors = getMutableAssessors(catalogType);
         const rootAssessor = rootAssessors.find((item) => item.id === id);
+        const affectedAccounts = state.accounts.filter((account) => hasAccountAccessType(account, catalogType) && getAccountPersonId(account, catalogType) === assessor.id);
+        const beforeAccounts = affectedAccounts.map((account) => cloneValue(account));
+        const beforePeriodSnapshots = (state.periods || [])
+          .filter((period) => normalizeCatalogType(period.type) === catalogType)
+          .map((period) => ({
+            id: period.id,
+            hadSnapshot: Boolean(period.settingsSnapshot),
+            snapshot: period.settingsSnapshot ? cloneValue(period.settingsSnapshot) : null,
+          }));
+        const beforeHistory = cloneValue(state.history);
+
+        assessor.name = name;
         if (rootAssessor) {
           rootAssessor.name = name;
         }
-
-        await setAssessorAreaIds(assessor.id, checkedAreaIds, catalogType, periodId);
-
-        const areas = getMutablePeriodAreas(catalogType, periodId);
-        areas.forEach((area) => {
-          if (area.assessorId === assessor.id) {
-            area.assessorName = name;
-          }
-        });
-
-        const rootAreas = getMutableAreas(catalogType);
-        if (Array.isArray(rootAreas)) {
-          rootAreas.forEach((area) => {
-            if (area.assessorId === assessor.id) {
-              area.assessorName = name;
-            }
-          });
-        }
-
-        const affectedAccounts = state.accounts.filter((account) => hasAccountAccessType(account, catalogType) && getAccountPersonId(account, catalogType) === assessor.id);
         affectedAccounts.forEach((account) => {
           account.name = name;
         });
 
-        const dbWrites = [
-          saveCatalogPeriodSnapshot(catalogType, periodId),
-          ...affectedAccounts.map((account) => dbRef(`accounts/${account.id}`).set(account)),
-          logAdminChange({
-            subjectLabel: "Assessor",
-            beforeLabel: beforeName,
-            afterLabel: name,
-            changeLabel: `Sửa assessor ${beforeName}`,
-            scope: catalogType,
-            periodId,
-          }),
-        ];
-        if (rootAssessor) {
-          dbWrites.push(dbRef(`${catalogDbPath(catalogType, "assessors")}/${id}`).set(rootAssessor));
+        const updates = setAssessorAreaIds(assessor.id, checkedAreaIds, catalogType, periodId);
+        if (getPeriod(periodId)?.settingsSnapshot) {
+          updates[`periods/${periodId}/settingsSnapshot`] = getPeriod(periodId).settingsSnapshot;
         }
-        if (Array.isArray(rootAreas)) {
-          rootAreas.forEach((a) => {
-            if (a.assessorId === assessor.id) {
-              dbWrites.push(dbRef(`${catalogDbPath(catalogType, "areas")}/${a.id}`).set(a));
-            }
-          });
-        }
+        if (rootAssessor) updates[`${catalogDbPath(catalogType, "assessors")}/${id}`] = rootAssessor;
+        addAdminChangeToUpdates({
+          subjectLabel: "Assessor",
+          beforeLabel: beforeName,
+          afterLabel: name,
+          changeLabel: `Sửa assessor ${beforeName}`,
+          scope: catalogType,
+          periodId,
+        }, updates);
 
-        await Promise.all(dbWrites);
+        try {
+          await updateRootWithOptionalRenderSuppression(updates, { suppressRender: true });
+        } catch (error) {
+          const isSafety = catalogType === SAFETY_PERIOD_TYPE;
+          if (isSafety) {
+            state.safetyAreas = cloneValue(beforeCatalog.areas);
+            state.safetyAssessors = cloneValue(beforeCatalog.assessors);
+          } else {
+            state.areas = cloneValue(beforeCatalog.areas);
+            state.assessors = cloneValue(beforeCatalog.assessors);
+          }
+          beforePeriodSnapshots.forEach((entry) => {
+            const period = getPeriod(entry.id);
+            if (!period) return;
+            if (entry.hadSnapshot) period.settingsSnapshot = cloneValue(entry.snapshot);
+            else delete period.settingsSnapshot;
+          });
+          const accountById = new Map(beforeAccounts.map((account) => [account.id, account]));
+          state.accounts = state.accounts.map((account) => accountById.get(account.id) || account);
+          state.history = beforeHistory;
+          renderAll();
+          showToast(error?.message || "Không lưu được phân công Zone. Vui lòng thử lại.", true);
+          return false;
+        }
         const afterSnapshot = capturePeriodSnapshot(periodId);
         const afterCatalog = captureCatalogState(catalogType);
         pushUndoAction({
@@ -11304,7 +11974,12 @@
           }
         } else {
           personId = String(formData.get("assessorId") || "");
-          const assessor = getPeriodCatalogAssessor(periodId, personId);
+          let assessor = null;
+          if (!isZoneOwnerRole) {
+            assessor = await ensureMirroredAssessorForAccount(account, scope, periodId);
+            if (assessor) personId = assessor.id;
+          }
+          if (!assessor) assessor = getPeriodCatalogAssessor(periodId, personId);
           name = assessor?.name || "";
           if (!assessor) {
             showToast("Vui lòng chọn assessor.", true);
@@ -11994,10 +12669,11 @@
   }
 
   function getSafetyRecordIssueDate(record, period) {
-    if (record?.issueDay && record?.issueMonth) {
-      const year = Number(period?.year) || new Date().getFullYear();
-      const month = String(record.issueMonth).padStart(2, "0");
-      const day = String(record.issueDay).padStart(2, "0");
+    const norm = getNormalizedSafetyIssueDate(record, period);
+    if (norm.day && norm.month) {
+      const year = norm.year || Number(period?.year) || new Date().getFullYear();
+      const month = String(norm.month).padStart(2, "0");
+      const day = String(norm.day).padStart(2, "0");
       return year + "-" + month + "-" + day;
     }
     return toIsoDate(record?.createdAt) || toIsoDate(period?.createdAt) || todayIsoDate();
@@ -12188,6 +12864,7 @@
     }
 
     const issueDate = getSafetyRecordIssueDate(record, period);
+    const displayIssueDate = formatDateDisplay(issueDate);
     const photoPreview = record?.photoDataUrl
       ? "<div class=\"photo-preview\"><img src=\"" + record.photoDataUrl + "\" alt=\"Ảnh minh họa hiện tại\"><label class=\"check-line\"><input name=\"removePhoto\" type=\"checkbox\"><span>Xóa ảnh hiện tại</span></label></div>"
       : "";
@@ -12205,11 +12882,11 @@
         "</div>" +
         "<div class=\"safety-record-entry-wrap\"><table class=\"safety-record-entry-table\">" +
           "<thead><tr>" +
-            "<th>Zone</th><th>Ngày phát hiện</th><th>Mối nguy hiểm phát hiện được</th><th>Ảnh minh họa</th><th>Số lần</th><th>STOP 6</th><th>Cấp bậc</th><th>Phát hiện</th><th>Tình trạng</th><th>Phát hiện bởi</th><th>Mã nhân viên</th><th>Hạng mục</th><th>Nội dung cải tiến, xử lý</th><th>Ảnh sau cải tiến</th><th>Đảm nhiệm</th><th>Kế hoạch</th><th>Ngày dự kiến / ngày ghi nhận cũ</th>" +
+            "<th>Zone</th><th>Ngày phát hiện (dd/mm/yyyy)</th><th>Mối nguy hiểm phát hiện được</th><th>Ảnh minh họa</th><th>Số lần</th><th>STOP 6</th><th>Cấp bậc</th><th>Phát hiện</th><th>Tình trạng</th><th>Phát hiện bởi</th><th>Mã nhân viên</th><th>Hạng mục</th><th>Nội dung cải tiến, xử lý</th><th>Ảnh sau cải tiến</th><th>Đảm nhiệm</th><th>Kế hoạch</th><th>Ngày dự kiến / ngày ghi nhận cũ</th>" +
           "</tr></thead>" +
           "<tbody><tr>" +
             "<td><select name=\"areaId\" required>" + getSafetyAreaOptions(periodId, selectedArea.id) + "</select></td>" +
-            "<td><input name=\"issueDate\" type=\"date\" value=\"" + escapeHtml(issueDate) + "\" required></td>" +
+            "<td><span class=\"safety-date-editor\"><input name=\"issueDate\" type=\"text\" data-safety-date placeholder=\"dd/mm/yyyy\" inputmode=\"numeric\" maxlength=\"10\" value=\"" + escapeHtml(displayIssueDate) + "\" required autocomplete=\"off\"><input type=\"date\" class=\"safety-date-calendar\" aria-label=\"Mở lịch chọn ngày\" value=\"" + escapeHtml(issueDate) + "\"></span></td>" +
             "<td><textarea name=\"note\" required>" + escapeHtml(record?.note || "") + "</textarea></td>" +
             "<td><input name=\"photo\" type=\"file\" accept=\"image/*\">" + photoPreview + "</td>" +
             "<td><input name=\"issueCount\" type=\"number\" min=\"1\" step=\"1\" value=\"" + escapeHtml(record ? getIssueCount(row) : 1) + "\"></td>" +
@@ -12236,8 +12913,7 @@
           showToast("Bạn không có quyền cập nhật zone này.", true);
           return false;
         }
-        const issueDateValue = toIsoDate(formData.get("issueDate")) || todayIsoDate();
-        const dateParts = issueDateValue.split("-");
+        const parsedIssueDate = parseSafetyIssueDateInput(formData.get("issueDate"), period);
         const issueCountInput = String(formData.get("issueCount") || "").trim();
         const issueCount = normalizeIssueCount(issueCountInput || 1);
         const note = String(formData.get("note") || "").trim();
@@ -12276,8 +12952,8 @@
           periodId,
           areaId: selected.id,
           issueLocation: "Zone " + selected.code,
-          issueDay: String(Number(dateParts[2]) || ""),
-          issueMonth: String(Number(dateParts[1]) || period.month || ""),
+          issueDay: parsedIssueDate.day,
+          issueMonth: parsedIssueDate.month,
           note,
           photoDataUrl: nextPhoto.photoDataUrl,
           photoName: nextPhoto.photoName,
@@ -12302,7 +12978,7 @@
           scorerName: ownerName,
           accountUsername: ownerUsername,
           createdBy: record?.createdBy || ownerUsername,
-          createdAt: record?.createdAt || now,
+          createdAt: record?.createdAt || record?.updatedAt || now,
           updatedAt: now,
         });
         if (!hasSafetyRecordChanged(record, payload)) {
@@ -12315,7 +12991,11 @@
         const payloadCopy = cloneValue(payload);
 
         await saveSafetyRecord(payload);
-        state.safetyRecords = [...state.safetyRecords.filter((item) => item.id !== payload.id), payload];
+        if (existingIndex >= 0) {
+          state.safetyRecords = state.safetyRecords.map((item, idx) => (idx === existingIndex ? payload : item));
+        } else {
+          state.safetyRecords = [payload, ...(state.safetyRecords || [])];
+        }
         state.deletedSafetyRecords = (state.deletedSafetyRecords || []).filter((item) => item.id !== payload.id);
         await Promise.all([
           tryUnmarkSafetyRecordDeleted(payload.id),
@@ -12348,6 +13028,22 @@
         return true;
       },
     });
+
+    const modalForm = elements.modalBody?.querySelector("form") || elements.modalBody;
+    const safetyDateText = modalForm?.querySelector('[data-safety-date]');
+    const safetyDateCalendar = modalForm?.querySelector('.safety-date-calendar');
+    if (safetyDateText && safetyDateCalendar) {
+      safetyDateCalendar.addEventListener("change", () => {
+        safetyDateText.value = formatDateDisplay(safetyDateCalendar.value);
+        safetyDateText.dispatchEvent(new Event("input", { bubbles: true }));
+      });
+      safetyDateText.addEventListener("input", () => {
+        const iso = parseDisplayDateToIso(safetyDateText.value);
+        if (iso) {
+          safetyDateCalendar.value = iso;
+        }
+      });
+    }
   }
   function exportFiveSFindings(ids, periodId) {
     if (!requireExportAction()) return;
@@ -13307,7 +14003,7 @@
       });
       SAFETY_FOUND_COLUMNS.forEach((column, columnIndex) => {
         const selected = isSafetyFoundSelected(row.score, column.value);
-        addCell(rowNumber, 18 + columnIndex, selected ? getIssueFoundBy(row) || 1 : "", selected ? 24 : 14);
+        addCell(rowNumber, 18 + columnIndex, selected ? "v" : "", selected ? 24 : 14);
       });
       addCell(rowNumber, 21, row.score.employeeCode || "", 14);
       addCell(rowNumber, 22, [row.score.improvementContent || "", row.score.countermeasureDate ? `Triển khai: ${formatDateDisplay(row.score.countermeasureDate)}` : ""].filter(Boolean).join("\n"), 24);
@@ -15602,8 +16298,12 @@
       indicator.classList.toggle("has-error", hasError);
       indicator.classList.toggle("has-score-drafts", scoreDrafts > 0);
       indicator.disabled = scoreDrafts === 0;
-      indicator.title = scoreDrafts > 0 ? "Đồng bộ hoặc xử lý xung đột bản nháp điểm" : "Không có bản nháp điểm chờ đồng bộ";
-      indicator.setAttribute("aria-label", scoreDrafts > 0 ? `${scoreDrafts} bản nháp điểm chưa đồng bộ` : "Không có bản nháp điểm chờ đồng bộ");
+      indicator.title = scoreDrafts > 0
+        ? "Đồng bộ hoặc xử lý xung đột bản nháp điểm"
+        : pending > 0 ? "Dữ liệu sẽ tự đồng bộ khi kết nối ổn định" : "Không có dữ liệu chờ đồng bộ";
+      indicator.setAttribute("aria-label", scoreDrafts > 0
+        ? `${scoreDrafts} bản nháp điểm chưa đồng bộ`
+        : pending > 0 ? `${pending} thay đổi đang chờ đồng bộ` : "Không có dữ liệu chờ đồng bộ");
     }
 
     if (label) {
@@ -15611,10 +16311,12 @@
         label.textContent = !online
           ? `${scoreDrafts} bản nháp điểm lưu trên thiết bị`
           : `${scoreDrafts} bản nháp điểm chờ đồng bộ`;
+      } else if (pending > 0) {
+        label.textContent = syncing
+          ? `Đang đồng bộ ${pending} thay đổi...`
+          : online ? `${pending} thay đổi chờ đồng bộ` : `Mất mạng · ${pending} thay đổi đã lưu trên máy`;
       } else if (!online) {
         label.textContent = "Mất kết nối máy chủ";
-      } else if (pending > 0) {
-        label.textContent = `Còn ${pending} lệnh offline cũ`;
       } else {
         label.textContent = "Dữ liệu nội bộ (Local)";
       }
@@ -16486,6 +17188,8 @@
       "delete-assessor",
       "edit-area",
       "edit-department-head",
+      "edit-catalog-department-head",
+      "delete-catalog-department-head",
       "edit-safety-risk-owner",
       "edit-summary-group",
       "edit-area-responsible",
@@ -16553,6 +17257,8 @@
       "delete-assessor": () => deleteAssessor(id),
       "edit-area": () => editArea(id, periodId),
       "edit-department-head": () => editDepartmentHeadGroup(id || "", periodId, sourceElement?.dataset.areaIds || ""),
+      "edit-catalog-department-head": () => editCatalogDepartmentHead(id),
+      "delete-catalog-department-head": () => deleteCatalogDepartmentHead(id),
       "edit-safety-risk-owner": () => editSafetyRiskOwnerGroup(sourceElement?.dataset.areaIds || "", periodId, id || ""),
       "edit-summary-group": () => editSummaryGroup(id || "", periodId, sourceElement?.dataset.areaIds || "", sourceElement?.dataset.deptHead || ""),
       "edit-area-responsible": () => editAreaResponsible(id, periodId),
@@ -16714,6 +17420,7 @@
     elements.period5SForm?.addEventListener("submit", (event) => handlePeriodSubmit(event, FIVE_S_PERIOD_TYPE));
     elements.periodSafetyForm?.addEventListener("submit", (event) => handlePeriodSubmit(event, SAFETY_PERIOD_TYPE));
     elements.scorerForm.addEventListener("submit", handleScorerSubmit);
+    elements.departmentHeadForm?.addEventListener("submit", handleDepartmentHeadSubmit);
     elements.departmentHeadEmailForm?.addEventListener("submit", handleDepartmentHeadEmailSubmit);
     elements.departmentHeadEmailName?.addEventListener("change", () => fillDepartmentHeadEmailForm(elements.departmentHeadEmailName.value));
     elements.safetyDepartmentGroupsForm?.addEventListener("submit", handleSafetyDepartmentGroupsSubmit);

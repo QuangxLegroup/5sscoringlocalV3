@@ -13,7 +13,7 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
-    <link rel="stylesheet" href="styles.css?v=2026100103">
+    <link rel="stylesheet" href="styles.css?v=2026101402">
   </head>
   <body>
     <section class="loading-screen" id="loading-screen">
@@ -484,10 +484,27 @@
                     <div class="compact-list" id="catalog-assessor-list"></div>
                   </section>
 
-                  <section class="panel catalog-area-panel">
+                  <section class="panel catalog-department-head-panel">
                     <div class="section-heading catalog-section-heading">
                       <div>
                         <span class="section-step">Bước 4</span>
+                        <h2>Trưởng phòng</h2>
+                      </div>
+                    </div>
+                    <form class="stacked-form" id="department-head-form">
+                      <label>
+                        <span>Tên trưởng phòng</span>
+                        <input id="department-head-name" type="text" autocomplete="off" required>
+                      </label>
+                      <button class="primary-button" type="submit">Thêm trưởng phòng</button>
+                    </form>
+                    <div class="compact-list" id="department-head-list"></div>
+                  </section>
+
+                  <section class="panel catalog-area-panel">
+                    <div class="section-heading catalog-section-heading">
+                      <div>
+                        <span class="section-step">Bước 5</span>
                         <h2>Zone và trưởng phòng</h2>
                       </div>
                     </div>
@@ -498,7 +515,7 @@
                       </label>
                       <label>
                         <span>Trưởng phòng</span>
-                        <input id="area-head" type="text" autocomplete="off">
+                        <select id="area-head" required></select>
                       </label>
                       <label id="area-summary-group-field">
                         <span>Nhóm tổng điểm</span>
@@ -528,7 +545,7 @@
                   <section class="panel department-head-email-panel">
                     <div class="section-heading catalog-section-heading">
                       <div>
-                        <span class="section-step">Bước 5</span>
+                        <span class="section-step">Bước 6</span>
                         <h2>Email trưởng phòng</h2>
                       </div>
                     </div>
@@ -714,21 +731,21 @@
     </div>
 
     <div class="toast" id="toast" role="status" aria-live="polite"></div>
-    <script src="modules/local-data-api.js?v=2026100501"></script>
+    <script src="modules/local-data-api.js?v=2026101403"></script>
     <script src="modules/core/page-registry.js"></script>
     <script src="modules/core/safety-timeline.js?v=2026092823"></script>
     <script src="modules/pages/admin-home-page.js?v=2026100101"></script>
     <script src="modules/pages/assessor-page.js"></script>
     <script src="modules/pages/summary-page.js"></script>
-    <script src="modules/pages/safety-page.js?v=2026092825"></script>
+    <script src="modules/pages/safety-page.js?v=2026101402"></script>
     <script src="modules/pages/issue-stats-page.js"></script>
     <script src="modules/pages/catalog-page.js"></script>
     <script src="modules/pages/accounts-page.js"></script>
     <script src="modules/pages/data-page.js"></script>
     <script src="modules/pages/five-s-findings-page.js?v=2026100101"></script>
-    <script src="modules/pages/mobile-prototype.js?v=2026100602"></script>
+    <script src="modules/pages/mobile-prototype.js?v=2026101403"></script>
     <script src="standards.js"></script>
-    <script src="app.js?v=2026100501"></script>
+    <script src="app.js?v=2026101403"></script>
   
     <script>
       (() => {
