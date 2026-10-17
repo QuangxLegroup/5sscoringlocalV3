@@ -13255,7 +13255,7 @@
       ? options.areaId
       : elements.safetyAreaFilter?.value || "";
     const rows = getIssueRecords(periodId, { areaId }).filter((row) => !options.status || normalizeIssueStatus(row.score.issueStatus) === options.status);
-    const logoImage = await loadWorkbookImage("images/Logo.jpg", "legroup-logo.jpg", 1, 1, 3, 2);
+    const logoImage = await loadWorkbookLogoImage("images/Logo.jpg", "legroup-logo.png", 1, 1);
     const bytes = await buildSafetyXlsxWorkbook(periodId, rows, logoImage);
     const safeName = `danh-gia-an-toan-thang-${period?.month || "x"}-${period?.year || "x"}.xlsx`;
     downloadFile(safeName, bytes, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
@@ -13876,7 +13876,7 @@
     }
 
     showToast("Đang tạo file Excel riêng và gửi từng trưởng phòng...");
-    const logoImage = await loadWorkbookImage("images/Logo.jpg", "legroup-logo.jpg", 1, 1, 3, 2);
+    const logoImage = await loadWorkbookLogoImage("images/Logo.jpg", "legroup-logo.png", 1, 1);
     const recipientEmails = recipients.map((recipient) => recipient.email);
     const messages = await Promise.all(recipients.map(async (recipient) => {
       const areaCodeSet = new Set(recipient.areaCodes);
@@ -14361,6 +14361,88 @@
     }
   }
 
+  async function loadWorkbookLogoImage(src, name, rowNumber, columnNumber) {
+    let objectUrl = "";
+    try {
+      const response = await fetch(src, { credentials: "include" });
+      if (!response.ok) return null;
+
+      objectUrl = URL.createObjectURL(await response.blob());
+      const sourceImage = new Image();
+      await new Promise((resolve, reject) => {
+        sourceImage.onload = resolve;
+        sourceImage.onerror = () => reject(new Error("Không đọc được logo để xuất Excel."));
+        sourceImage.src = objectUrl;
+      });
+
+      const width = sourceImage.naturalWidth;
+      const height = sourceImage.naturalHeight;
+      if (!width || !height) return null;
+
+      const scanCanvas = document.createElement("canvas");
+      scanCanvas.width = width;
+      scanCanvas.height = height;
+      const scanContext = scanCanvas.getContext("2d", { willReadFrequently: true });
+      if (!scanContext) return null;
+      scanContext.drawImage(sourceImage, 0, 0, width, height);
+
+      const pixels = scanContext.getImageData(0, 0, width, height).data;
+      let left = width;
+      let top = height;
+      let right = -1;
+      let bottom = -1;
+      for (let y = 0; y < height; y += 1) {
+        for (let x = 0; x < width; x += 1) {
+          const offset = (y * width + x) * 4;
+          if (pixels[offset] < 245 || pixels[offset + 1] < 245 || pixels[offset + 2] < 245) {
+            left = Math.min(left, x);
+            top = Math.min(top, y);
+            right = Math.max(right, x);
+            bottom = Math.max(bottom, y);
+          }
+        }
+      }
+      if (right < left || bottom < top) {
+        left = 0;
+        top = 0;
+        right = width - 1;
+        bottom = height - 1;
+      }
+
+      const artworkWidth = right - left + 1;
+      const artworkHeight = bottom - top + 1;
+      const paddingX = Math.round(artworkWidth * 0.025);
+      const paddingY = Math.round(artworkHeight * 0.06);
+      left = Math.max(0, left - paddingX);
+      top = Math.max(0, top - paddingY);
+      right = Math.min(width - 1, right + paddingX);
+      bottom = Math.min(height - 1, bottom + paddingY);
+
+      const cropWidth = right - left + 1;
+      const cropHeight = bottom - top + 1;
+      const cropCanvas = document.createElement("canvas");
+      cropCanvas.width = cropWidth;
+      cropCanvas.height = cropHeight;
+      const cropContext = cropCanvas.getContext("2d");
+      if (!cropContext) return null;
+      cropContext.drawImage(sourceImage, left, top, cropWidth, cropHeight, 0, 0, cropWidth, cropHeight);
+
+      const image = dataUrlToImage(cropCanvas.toDataURL("image/png"), 0, rowNumber, columnNumber);
+      if (!image) return null;
+      return {
+        ...image,
+        name,
+        extension: "png",
+        isLogo: true,
+        aspectRatio: cropWidth / cropHeight,
+      };
+    } catch (error) {
+      return null;
+    } finally {
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    }
+  }
+
   function buildSafetyContentTypesXml(images) {
     const imageDefaults = [...new Set(images.map((image) => image.extension))]
       .map((extension) => `<Default Extension="${extension}" ContentType="image/${extension === "jpg" ? "jpeg" : extension}"/>`)
@@ -14398,6 +14480,26 @@
   function buildSafetyImageAnchorXml(image, relationshipIndex, shapeId = relationshipIndex) {
     const row = image.rowNumber - 1;
     const column = image.columnNumber - 1;
+    if (image.isLogo && Number.isFinite(image.aspectRatio) && image.aspectRatio > 0) {
+      const maxWidthPx = 177;
+      const maxHeightPx = 65;
+      const widthPx = Math.min(maxWidthPx, maxHeightPx * image.aspectRatio);
+      const heightPx = widthPx / image.aspectRatio;
+      const widthEmu = Math.round(widthPx * 9525);
+      const heightEmu = Math.round(heightPx * 9525);
+      const xOffsetEmu = 91440;
+      const yOffsetEmu = Math.round((5 + (maxHeightPx - heightPx) / 2) * 9525);
+      return `<xdr:oneCellAnchor>
+  <xdr:from><xdr:col>${column}</xdr:col><xdr:colOff>${xOffsetEmu}</xdr:colOff><xdr:row>${row}</xdr:row><xdr:rowOff>${yOffsetEmu}</xdr:rowOff></xdr:from>
+  <xdr:ext cx="${widthEmu}" cy="${heightEmu}"/>
+  <xdr:pic>
+    <xdr:nvPicPr><xdr:cNvPr id="${shapeId}" name="LeGroup logo"/><xdr:cNvPicPr><a:picLocks noChangeAspect="1"/></xdr:cNvPicPr></xdr:nvPicPr>
+    <xdr:blipFill><a:blip r:embed="rId${relationshipIndex}"/><a:stretch><a:fillRect/></a:stretch></xdr:blipFill>
+    <xdr:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="${widthEmu}" cy="${heightEmu}"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></xdr:spPr>
+  </xdr:pic>
+  <xdr:clientData/>
+</xdr:oneCellAnchor>`;
+    }
     const toColumn = Number.isFinite(image.toColumnNumber) ? image.toColumnNumber : column + 1;
     const toRow = Number.isFinite(image.toRowNumber) ? image.toRowNumber : row;
     const toColumnOffset = Number.isFinite(image.toColumnNumber) ? 0 : 457200;
@@ -14857,7 +14959,7 @@
 
   async function buildFactoryDepartmentSheetImages(issueRows, sheetNumber) {
     const images = [];
-    const logoImage = await loadWorkbookImage("images/Logo.jpg", `factory-s${sheetNumber}-logo.jpg`, 1, 1, 3, 2);
+    const logoImage = await loadWorkbookLogoImage("images/Logo.jpg", `factory-s${sheetNumber}-logo.png`, 1, 1);
     if (logoImage) {
       images.push(logoImage);
     }
