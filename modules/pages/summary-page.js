@@ -138,7 +138,8 @@
       itemAverage,
     } = context;
     const periodId = period?.id || "";
-    const areas = getAreasForPeriod(periodId);
+    const periodAreas = getAreasForPeriod(periodId);
+    const areas = periodAreas;
     const zoneRows = areas.map((area) => ({
       label: area.code || "-",
       group: area.summaryGroup || area.departmentHead || "Khác",
@@ -380,6 +381,8 @@
       getActivePeriodId,
       getAllowedAreaIds,
       getAreasForPeriod,
+      getAvailableFiveSScoreSources,
+      getFiveSScoreSourceAreaIds,
       getPeriod,
       getScoreSourceForAccount,
       getScoreSourceLabel,
@@ -393,22 +396,27 @@
     const period = getPeriod(elements.summaryPeriodSelect?.value || getActivePeriodId(FIVE_S_PERIOD_TYPE));
     const periodId = period?.id || "";
     const isAdmin = isAdminAccount(currentUser);
+    const availableSources = isAdmin
+      ? SCORE_SOURCE_OPTIONS.map((option) => option.value)
+      : (getAvailableFiveSScoreSources?.(currentUser, periodId) || []);
+    const sourceOptions = SCORE_SOURCE_OPTIONS.filter((option) => availableSources.includes(option.value));
     const userScoreSource = typeof getScoreSourceForAccount === "function"
       ? getScoreSourceForAccount(currentUser)
       : SCORE_SOURCE_ASSESSOR;
-    const scoreSource = isAdmin
-      ? elements.summaryScoreSource?.value || SCORE_SOURCE_ASSESSOR
-      : userScoreSource;
+    const selectedSource = elements.summaryScoreSource?.value || "";
+    const defaultSource = availableSources.includes(userScoreSource) ? userScoreSource : sourceOptions[0]?.value || SCORE_SOURCE_ASSESSOR;
+    const scoreSource = sourceOptions.some((option) => option.value === selectedSource) ? selectedSource : defaultSource;
     const isAverageMode = isAdmin && scoreSource === SCORE_SOURCE_AVERAGE;
     const allowedAreaIds = getAllowedAreaIds(currentUser, periodId);
     const assignedAreas = getAreasForPeriod(periodId).filter((area) => allowedAreaIds.has(area.id));
 
     if (elements.summaryScoreSource) {
-      const currentSource = isAdmin ? elements.summaryScoreSource.value || scoreSource : scoreSource;
-      elements.summaryScoreSource.innerHTML = SCORE_SOURCE_OPTIONS
-        .map((option) => `<option value="${escapeHtml(option.value)}" ${option.value === currentSource ? "selected" : ""}>${escapeHtml(option.label)}</option>`)
+      elements.summaryScoreSource.innerHTML = sourceOptions
+        .map((option) => `<option value="${escapeHtml(option.value)}" ${option.value === scoreSource ? "selected" : ""}>${escapeHtml(option.label)}</option>`)
         .join("");
-      elements.summaryScoreSource.value = SCORE_SOURCE_OPTIONS.some((option) => option.value === currentSource) ? currentSource : SCORE_SOURCE_ASSESSOR;
+      elements.summaryScoreSource.value = scoreSource;
+      const sourceField = elements.summaryScoreSource.closest(".source-toggle");
+      if (sourceField) sourceField.hidden = !isAdmin && sourceOptions.length < 2;
     }
 
     elements.summaryTitle.textContent = isAverageMode
@@ -419,7 +427,7 @@
         ? ""
         : assignedAreas.length
           ? `Zone được phép chấm: ${assignedAreas.map((area) => area.code).join(", ")}`
-          : "Tài khoản này chưa được phân quyền chấm zone 5S.";
+          : "Không có zone được phân quyền chấm; bảng điểm đang ở chế độ chỉ xem.";
     }
 
     if (isAverageMode) {
@@ -435,7 +443,10 @@
         periodId,
         scoreSource,
         editable: true,
-        editableAreaIds: allowedAreaIds,
+        visibleAreaIds: undefined,
+        editableAreaIds: isAdmin
+          ? allowedAreaIds
+          : (getFiveSScoreSourceAreaIds?.(currentUser, periodId, scoreSource) || new Set()),
         adminMode: isAdmin,
       });
     }

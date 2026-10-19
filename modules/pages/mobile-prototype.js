@@ -37,9 +37,11 @@
   let isFullWidth = false;
   let currentFiveSZoneId = "";
   let currentSafetyZoneId = "";
+  let currentSafetyHistoryPeriodId = "";
   let activeSectionFilter = "all";
   let currentFiveSScoreSource = "";
   let currentFiveSScoreSourceUserKey = null;
+  let currentFiveSScoreSourceAreaKey = "";
   let mobileAccountKey = null;
   let uploadedSafetyPhotoData = "";
   let uploadedSafetyAfterPhotoData = "";
@@ -502,10 +504,10 @@
         </div>
 
         <!-- Action Buttons Footer -->
-        <div class="detail-modal-footer">
-          <button type="button" class="btn-detail-delete" id="btnDetailDelete">
+        <div class="detail-modal-footer ${canEditFull ? "has-delete" : "countermeasure-only"}">
+          ${canEditFull ? `<button type="button" class="btn-detail-delete" id="btnDetailDelete">
             <i class="fa-solid fa-trash-can"></i> XÓA BÁO CÁO
-          </button>
+          </button>` : ""}
           <button type="button" class="btn-detail-save" id="btnDetailSave">
             <i class="fa-solid fa-floppy-disk"></i> LƯU THAY ĐỔI
           </button>
@@ -865,7 +867,6 @@
         showMobileToast("Đã lưu thay đổi báo cáo thành công!");
         renderSafetyScreen(overlay, context);
       } catch (err) {
-        console.error("Lỗi cập nhật báo cáo an toàn:", err);
         showMobileToast(err?.message || "Không lưu được báo cáo. Vui lòng thử lại.", true);
         if (btnSave) {
           btnSave.disabled = false;
@@ -946,14 +947,23 @@
     return areas.filter((area) => allowedAreaIds.has(area.id));
   }
 
+  function sortMobileAreasByCode(areas) {
+    return [...(areas || [])].sort((left, right) => String(left?.code || left?.templateCode || "")
+      .localeCompare(String(right?.code || right?.templateCode || ""), "vi", {
+        numeric: true,
+        sensitivity: "base",
+      }));
+  }
+
   function resolveMobileAreaId(currentAreaId, availableAreas) {
     return availableAreas.some((area) => area.id === currentAreaId)
       ? currentAreaId
       : availableAreas[0]?.id || "";
   }
 
-  function getDefaultMobileFiveSScoreSource(context, user) {
-    return context?.getScoreSourceForAccount?.(user)
+  function getDefaultMobileFiveSScoreSource(context, user, periodId, areaId) {
+    return context?.getDefaultFiveSScoreSource?.(user, periodId, areaId)
+      || context?.getScoreSourceForAccount?.(user)
       || context?.SCORE_SOURCE_ASSESSOR
       || "assessor";
   }
@@ -1011,8 +1021,10 @@
       mobileAccountKey = nextAccountKey;
       currentFiveSZoneId = "";
       currentSafetyZoneId = "";
+      currentSafetyHistoryPeriodId = "";
       currentFiveSScoreSource = "";
       currentFiveSScoreSourceUserKey = nextAccountKey;
+      currentFiveSScoreSourceAreaKey = "";
     }
     activeTab = ["5s", "findings"].includes(initialTab) ? initialTab : "safety";
 
@@ -1025,6 +1037,8 @@
 
     // Close existing if open
     closeMobilePrototype();
+
+    currentSafetyHistoryPeriodId = "";
 
     const currentTheme = getMobileTheme();
     const overlay = document.createElement("div");
@@ -1218,7 +1232,10 @@
       const scrollTop = scoreScreen?.scrollTop || 0;
       renderFiveSScreen(overlay, context);
       if (scoreScreen) scoreScreen.scrollTop = scrollTop;
-    } else if (activeTab === "safety" && switched) renderSafetyScreen(overlay, context);
+    } else if (activeTab === "safety") {
+      const safetyScreen = overlay.querySelector("#mobileScreenSafety");
+      if (switched || !safetyScreen?.firstElementChild) renderSafetyScreen(overlay, context);
+    }
   }
 
   // ─────────────────────────────────────────────────────────────────────────────
@@ -1229,6 +1246,10 @@
     if (!screen) return;
 
     const safetyPeriodId = context?.getActivePeriodId?.(context.SAFETY_PERIOD_TYPE) || "";
+    const historyPeriods = context?.getPeriodsByType?.(context.SAFETY_PERIOD_TYPE) || [];
+    if (!historyPeriods.some((period) => period.id === currentSafetyHistoryPeriodId)) {
+      currentSafetyHistoryPeriodId = safetyPeriodId || historyPeriods[0]?.id || "";
+    }
     const allSafetyAreas = context ? context.getAreasForPeriod(safetyPeriodId) : [];
     const user = context?.currentUser;
     const isAdmin = typeof context?.isAdminAccount === "function" && context.isAdminAccount(user);
@@ -1239,7 +1260,7 @@
       const code = String(a.templateCode || a.code || "").trim();
       return code !== "27";
     });
-    const availableSafetyAreas = filterMobileAreasByPermission(reportableAreas, allowedAreaIds);
+    const availableSafetyAreas = sortMobileAreasByCode(filterMobileAreasByPermission(reportableAreas, allowedAreaIds));
 
     const allRecords = context?.state?.safetyRecords || [];
     const editingRecord = editingSafetyRecordId ? allRecords.find((r) => r.id === editingSafetyRecordId) || null : null;
@@ -1280,19 +1301,6 @@
     }
 
     const dateStr = `${String(now.getDate()).padStart(2, "0")}/${String(now.getMonth() + 1).padStart(2, "0")}/${now.getFullYear()} ${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
-
-    // Get current safety records for recent history (newest created first)
-    const recentRecords = allRecords
-      .filter((r) => !safetyPeriodId || r.periodId === safetyPeriodId)
-      .sort((a, b) => {
-        const timeA = String(a.createdAt || a.updatedAt || "");
-        const timeB = String(b.createdAt || b.updatedAt || "");
-        if (timeA !== timeB) {
-          return timeB.localeCompare(timeA);
-        }
-        return String(b.id || "").localeCompare(String(a.id || ""));
-      })
-      .slice(0, 20);
 
     const defaultFinder = editingRecord ? (editingRecord.issueFoundBy || "") : (context?.getAccountDisplayName?.(user, context.SAFETY_PERIOD_TYPE, safetyPeriodId) || user?.name || "");
     const todayValue = typeof context?.todayIsoDate === "function" ? context.todayIsoDate() : new Date().toISOString().slice(0, 10);
@@ -1577,70 +1585,130 @@
         <!-- Recent Uploads History List -->
         <div class="mobile-history-section">
           <div class="history-section-header">
-            <h3 class="history-section-title">Danh sách mối nguy đã ghi nhận</h3>
-            <span class="history-count-badge">${recentRecords.length} Mối nguy</span>
+            <div class="history-heading-filter">
+              <h3 class="history-section-title">Danh sách mối nguy đã ghi nhận</h3>
+              <label class="history-period-filter">
+                <span>Kỳ</span>
+                <select id="mobileSafetyHistoryPeriodSelect" aria-label="Lọc danh sách mối nguy theo kỳ đánh giá" ${historyPeriods.length ? "" : "disabled"}>
+                  ${historyPeriods.map((period) => `<option value="${escapeHtml(period.id)}" ${period.id === currentSafetyHistoryPeriodId ? "selected" : ""}>${escapeHtml(context.periodLabel(period))}</option>`).join("")}
+                </select>
+              </label>
+            </div>
+            <span class="history-count-badge" id="mobileSafetyHistoryCount"></span>
           </div>
 
-          <div class="history-cards-list">
-            ${recentRecords.length === 0 ? `
-              <div class="history-empty-card">
-                <i class="fa-solid fa-shield-check text-slate-500 text-2xl mb-1"></i>
-                <p>Chưa có báo cáo mối nguy nào được ghi nhận trong kỳ này.</p>
-              </div>
-            ` : recentRecords.map((item) => {
-              const itemArea = reportableAreas.find((a) => a.id === item.areaId) || allSafetyAreas.find((a) => a.id === item.areaId);
-              const zoneLabel = itemArea ? `Zone ${itemArea.code}` : (item.issueLocation || "Zone");
-              const statusText = item.issueStatus === "closed" ? "Đã khắc phục" : item.issueStatus === "in_progress" ? "Đang xử lý" : item.issueStatus === "overdue" ? "Quá hạn" : "Chưa xử lý";
-              const statusClass = item.issueStatus === "closed" ? "status-closed" : item.issueStatus === "in_progress" ? "status-progress" : item.issueStatus === "overdue" ? "status-overdue" : "status-open";
-              const photoThumb = item.photoDataUrl || "images/Logo.jpg";
-              const hasPhoto = Boolean(item.photoDataUrl);
-              const rawLevel = item.issueLevel || item.level || item.riskLevel || "";
-              const issueLevel = String(rawLevel).trim().toUpperCase();
-              const levelBadgeClass = issueLevel === "A" ? "pill-level-a" : issueLevel === "B" ? "pill-level-b" : issueLevel === "C" ? "pill-level-c" : "pill-level-none";
-              const levelBadgeText = issueLevel ? (issueLevel.startsWith("CẤP") ? issueLevel : `Cấp ${issueLevel}`) : "Chưa phân loại";
-
-              const rawStop6 = item.issueType || item.stop6 || item.stop_6 || item.issue_type || "";
-              const stop6Text = String(rawStop6).trim();
-
-              const { day: normDay, month: normMonth } = getNormalizedSafetyIssueDate(item, safetyPeriod);
-              const itemDate = normDay && normMonth
-                ? `${String(normDay).padStart(2, '0')}/${String(normMonth).padStart(2, '0')}`
-                : (item.updatedAt ? new Date(item.updatedAt).toLocaleDateString("vi-VN") : dateStr);
-
-              return `
-                <div class="history-card ${editingSafetyRecordId === item.id ? 'is-editing' : ''}" data-action="open-safety-card-detail" data-id="${item.id}" title="Chạm để xem chi tiết, sửa hoặc xóa">
-                  <img src="${photoThumb}" alt="Thumb" class="history-card-thumb ${hasPhoto ? 'cursor-pointer' : ''}" ${hasPhoto ? `data-preview-img="${photoThumb}" data-safety-record-id="${escapeHtml(item.id)}" data-safety-photo-field="photoAnnotations" data-safety-annotations="${escapeHtml(JSON.stringify(item.photoAnnotations || []))}" title="Chạm 1 lần để xem ảnh lớn"` : ''} onerror="this.src='images/Logo.jpg'">
-                  <div class="history-card-body">
-                    <div class="history-card-top">
-                      <span class="history-zone-chip">${escapeHtml(zoneLabel)}</span>
-                      <span class="history-status-badge ${statusClass}">${statusText}</span>
-                    </div>
-                    <p class="history-hazard-text">${escapeHtml(item.note || "Mối nguy không có mô tả")}</p>
-                    <div class="history-meta-row">
-                      <span class="history-date-text"><i class="fa-regular fa-clock"></i> ${escapeHtml(itemDate)}</span>
-                      <span class="history-pill ${levelBadgeClass}">${escapeHtml(levelBadgeText)}</span>
-                      ${stop6Text ? `<span class="history-pill pill-stop6"><i class="fa-solid fa-triangle-exclamation"></i> ${escapeHtml(stop6Text)}</span>` : ''}
-                    </div>
-                    ${item.improvementContent ? `
-                      <div class="history-countermeasure-note">
-                        <i class="fa-solid fa-wrench"></i> ${escapeHtml(item.improvementContent)}
-                      </div>
-                    ` : ''}
-                  </div>
-                  <div class="history-card-chevron">
-                    <i class="fa-solid fa-chevron-right"></i>
-                  </div>
-                </div>
-              `;
-            }).join("")}
-          </div>
+          <div class="history-cards-list" id="mobileSafetyHistoryList"></div>
         </div>
 
       </div>
     `;
 
+    renderSafetyHistory(screen, context, currentSafetyHistoryPeriodId, dateStr);
     // Wire up events inside Safety form
     wireSafetyEvents(screen, context, safetyPeriodId, overlay, allowedAreaIds);
+    wireSafetyHistory(screen, context, overlay);
+  }
+
+  function renderSafetyHistory(screen, context, periodId, dateStr) {
+    const list = screen.querySelector("#mobileSafetyHistoryList");
+    const count = screen.querySelector("#mobileSafetyHistoryCount");
+    if (!list || !count) return;
+
+    const period = context?.getPeriod?.(periodId);
+    const periodAreas = context?.getAreasForPeriod?.(periodId) || [];
+    const reportableAreas = periodAreas.filter((area) => String(area.templateCode || area.code || "").trim() !== "27");
+    const recentRecords = (context?.state?.safetyRecords || [])
+      .filter((record) => !periodId || record.periodId === periodId)
+      .sort((a, b) => {
+        const timeA = String(a.createdAt || a.updatedAt || "");
+        const timeB = String(b.createdAt || b.updatedAt || "");
+        if (timeA !== timeB) return timeB.localeCompare(timeA);
+        return String(b.id || "").localeCompare(String(a.id || ""));
+      })
+      .slice(0, 20);
+
+    count.textContent = `${recentRecords.length} Mối nguy`;
+    if (!recentRecords.length) {
+      list.innerHTML = `
+        <div class="history-empty-card">
+          <i class="fa-solid fa-shield-check text-slate-500 text-2xl mb-1"></i>
+          <p>Chưa có báo cáo mối nguy nào được ghi nhận trong kỳ này.</p>
+        </div>
+      `;
+      return;
+    }
+
+    list.innerHTML = recentRecords.map((item) => {
+      const itemArea = reportableAreas.find((area) => area.id === item.areaId) || periodAreas.find((area) => area.id === item.areaId);
+      const zoneLabel = itemArea ? `Zone ${itemArea.code}` : (item.issueLocation || "Zone");
+      const statusText = item.issueStatus === "closed" ? "Đã khắc phục" : item.issueStatus === "in_progress" ? "Đang xử lý" : item.issueStatus === "overdue" ? "Quá hạn" : "Chưa xử lý";
+      const statusClass = item.issueStatus === "closed" ? "status-closed" : item.issueStatus === "in_progress" ? "status-progress" : item.issueStatus === "overdue" ? "status-overdue" : "status-open";
+      const photoThumb = item.photoDataUrl || "images/Logo.jpg";
+      const rawLevel = item.issueLevel || item.level || item.riskLevel || "";
+      const issueLevel = String(rawLevel).trim().toUpperCase();
+      const levelBadgeClass = issueLevel === "A" ? "pill-level-a" : issueLevel === "B" ? "pill-level-b" : issueLevel === "C" ? "pill-level-c" : "pill-level-none";
+      const levelBadgeText = issueLevel ? (issueLevel.startsWith("CẤP") ? issueLevel : `Cấp ${issueLevel}`) : "Chưa phân loại";
+      const rawStop6 = item.issueType || item.stop6 || item.stop_6 || item.issue_type || "";
+      const stop6Text = String(rawStop6).trim();
+      const { day: normDay, month: normMonth } = getNormalizedSafetyIssueDate(item, period);
+      const itemDate = normDay && normMonth
+        ? `${String(normDay).padStart(2, "0")}/${String(normMonth).padStart(2, "0")}`
+        : (item.updatedAt ? new Date(item.updatedAt).toLocaleDateString("vi-VN") : dateStr);
+
+      return `
+        <div class="history-card ${editingSafetyRecordId === item.id ? "is-editing" : ""}" data-action="open-safety-card-detail" data-id="${escapeHtml(item.id)}" role="button" tabindex="0" aria-label="Mở chi tiết mối nguy tại ${escapeHtml(zoneLabel)}" title="Chạm để xem chi tiết, sửa hoặc xóa">
+          <img src="${photoThumb}" alt="Ảnh mối nguy tại ${escapeHtml(zoneLabel)}" class="history-card-thumb" onerror="this.src='images/Logo.jpg'">
+          <div class="history-card-body">
+            <div class="history-card-top">
+              <span class="history-zone-chip">${escapeHtml(zoneLabel)}</span>
+              <span class="history-status-badge ${statusClass}">${statusText}</span>
+            </div>
+            <p class="history-hazard-text">${escapeHtml(item.note || "Mối nguy không có mô tả")}</p>
+            <div class="history-meta-row">
+              <span class="history-date-text"><i class="fa-regular fa-clock"></i> ${escapeHtml(itemDate)}</span>
+              <span class="history-pill ${levelBadgeClass}">${escapeHtml(levelBadgeText)}</span>
+              ${stop6Text ? `<span class="history-pill pill-stop6"><i class="fa-solid fa-triangle-exclamation"></i> ${escapeHtml(stop6Text)}</span>` : ""}
+            </div>
+            ${item.improvementContent ? `
+              <div class="history-countermeasure-note">
+                <i class="fa-solid fa-wrench"></i> ${escapeHtml(item.improvementContent)}
+              </div>
+            ` : ""}
+          </div>
+          <div class="history-card-chevron">
+            <i class="fa-solid fa-chevron-right"></i>
+          </div>
+        </div>
+      `;
+    }).join("");
+  }
+
+  function wireSafetyHistory(screen, context, overlay) {
+    const filter = screen.querySelector("#mobileSafetyHistoryPeriodSelect");
+    const list = screen.querySelector("#mobileSafetyHistoryList");
+    if (!filter || !list) return;
+
+    filter.addEventListener("change", () => {
+      currentSafetyHistoryPeriodId = filter.value;
+      const now = new Date();
+      const dateStr = `${String(now.getDate()).padStart(2, "0")}/${String(now.getMonth() + 1).padStart(2, "0")}/${now.getFullYear()} ${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
+      renderSafetyHistory(screen, context, currentSafetyHistoryPeriodId, dateStr);
+    });
+
+    const openRecordFromCard = (card) => {
+      const record = (context?.state?.safetyRecords || []).find((item) => item.id === card.dataset.id);
+      if (record) openSafetyDetailModal(record, overlay, context);
+    };
+    list.addEventListener("click", (event) => {
+      const card = event.target.closest('.history-card[data-action="open-safety-card-detail"]');
+      if (card && list.contains(card) && !event.target.closest("[data-preview-img]")) openRecordFromCard(card);
+    });
+    list.addEventListener("keydown", (event) => {
+      const card = event.target.closest('.history-card[data-action="open-safety-card-detail"]');
+      if (!card || !list.contains(card) || (event.key !== "Enter" && event.key !== " ")) return;
+      event.preventDefault();
+      openRecordFromCard(card);
+    });
   }
 
   function wireSafetyEvents(screen, context, safetyPeriodId, overlay, allowedAreaIds) {
@@ -1811,22 +1879,6 @@
               : undefined,
           });
           openMobileImageModal(src, annotationOptions);
-        }
-      });
-    });
-
-    // Card click: open detail modal (where user can view full info, Edit, or Delete)
-    screen.querySelectorAll('.history-card[data-action="open-safety-card-detail"]').forEach((card) => {
-      card.addEventListener("click", (e) => {
-        // If user tapped directly on an image thumbnail, don't trigger modal (preview lightbox handles it)
-        if (e.target.closest("[data-preview-img]")) {
-          return;
-        }
-        const recordId = card.dataset.id;
-        const allRecords = context?.state?.safetyRecords || [];
-        const record = allRecords.find((r) => r.id === recordId);
-        if (record) {
-          openSafetyDetailModal(record, overlay, context);
         }
       });
     });
@@ -2069,7 +2121,6 @@
           showMobileToast(isEditing ? "Đã cập nhật báo cáo an toàn!" : "Đã lưu báo cáo an toàn thành công!");
           renderSafetyScreen(overlay, context);
         } catch (err) {
-          console.error("Lỗi lưu báo cáo an toàn:", err);
           showMobileToast(err?.message || "Không lưu được báo cáo. Vui lòng thử lại.", true);
           if (submitBtn) {
             submitBtn.disabled = false;
@@ -2107,24 +2158,32 @@
       ? context.getAllowedAreaIds(user, fiveSPeriodId)
       : null;
 
-    const assignedAreas = filterMobileAreasByPermission(allAreas, allowedAreaIds);
+    const assignedAreas = sortMobileAreasByCode(filterMobileAreasByPermission(allAreas, allowedAreaIds));
     currentFiveSZoneId = resolveMobileAreaId(currentFiveSZoneId, assignedAreas);
     const selectedArea = assignedAreas.find((area) => area.id === currentFiveSZoneId) || null;
     const isAreaAllowed = !allowedAreaIds || (selectedArea && allowedAreaIds.has(selectedArea.id));
-    const defaultScoreSource = getDefaultMobileFiveSScoreSource(context, user);
+    const scoreSourceAreaKey = `${fiveSPeriodId}:${selectedArea?.id || ""}`;
+    const defaultScoreSource = getDefaultMobileFiveSScoreSource(context, user, fiveSPeriodId, selectedArea?.id || "");
+    const availableScoreSources = isAdmin
+      ? [context?.SCORE_SOURCE_ASSESSOR || "assessor", context?.SCORE_SOURCE_SELF || "self"]
+      : (context?.getAvailableFiveSScoreSources?.(user, fiveSPeriodId, selectedArea?.id || "") || [defaultScoreSource]);
     const userKey = String(user?.id || user?.username || "");
     if (currentFiveSScoreSourceUserKey !== userKey) {
       currentFiveSScoreSourceUserKey = userKey;
+      currentFiveSScoreSource = "";
+    }
+    if (currentFiveSScoreSourceAreaKey !== scoreSourceAreaKey) {
+      currentFiveSScoreSourceAreaKey = scoreSourceAreaKey;
       currentFiveSScoreSource = defaultScoreSource;
     }
-    if (!isAdmin || ![context?.SCORE_SOURCE_ASSESSOR || "assessor", context?.SCORE_SOURCE_SELF || "self"].includes(currentFiveSScoreSource)) {
+    if (!availableScoreSources.includes(currentFiveSScoreSource)) {
       currentFiveSScoreSource = defaultScoreSource;
     }
     const scoreSource = currentFiveSScoreSource;
     const canEditScore = checkFiveSPermission(context)
       && periodOpen
       && Boolean(isAreaAllowed)
-      && (typeof context?.canEditFiveSScoreSource !== "function" || context.canEditFiveSScoreSource(user, scoreSource));
+      && (typeof context?.canEditFiveSScoreSource !== "function" || context.canEditFiveSScoreSource(user, scoreSource, selectedArea?.id || "", fiveSPeriodId));
 
     // Build flattened items list
     const flattenedCriteria = buildFlattened5SCriteria(context);
@@ -2162,12 +2221,16 @@
     const scoreSourceLabel = scoreSource === (context?.SCORE_SOURCE_SELF || "self")
       ? "Quản lý Zone tự đánh giá"
       : "Assessor chấm";
-    const scoreSourceFilterHtml = isAdmin ? `
+    const scoreSourceFilterHtml = availableScoreSources.length > 1 ? `
       <div class="fives-score-source-filter" role="group" aria-label="Lọc nguồn điểm 5S">
         <span class="fives-score-source-label">Nguồn điểm</span>
         <div class="fives-score-source-options">
-          <button type="button" class="fives-score-source-btn ${scoreSource === (context?.SCORE_SOURCE_ASSESSOR || "assessor") ? "is-active-assessor" : ""}" data-mobile-score-source="${escapeHtml(context?.SCORE_SOURCE_ASSESSOR || "assessor")}" aria-pressed="${scoreSource === (context?.SCORE_SOURCE_ASSESSOR || "assessor")}">Assessor chấm</button>
-          <button type="button" class="fives-score-source-btn ${scoreSource === (context?.SCORE_SOURCE_SELF || "self") ? "is-active-manager" : ""}" data-mobile-score-source="${escapeHtml(context?.SCORE_SOURCE_SELF || "self")}" aria-pressed="${scoreSource === (context?.SCORE_SOURCE_SELF || "self")}">Quản lý Zone tự chấm</button>
+          ${availableScoreSources.map((source) => {
+            const isAssessor = source === (context?.SCORE_SOURCE_ASSESSOR || "assessor");
+            const label = isAssessor ? "Assessor chấm" : "Quản lý Zone tự chấm";
+            const activeClass = scoreSource === source ? (isAssessor ? "is-active-assessor" : "is-active-manager") : "";
+            return `<button type="button" class="fives-score-source-btn ${activeClass}" data-mobile-score-source="${escapeHtml(source)}" aria-pressed="${scoreSource === source}">${label}</button>`;
+          }).join("")}
         </div>
       </div>
     ` : "";
@@ -2732,7 +2795,7 @@
           return;
         }
 
-        if (typeof context?.canEditFiveSScoreSource === "function" && !context.canEditFiveSScoreSource(user, scoreSource)) {
+        if (typeof context?.canEditFiveSScoreSource === "function" && !context.canEditFiveSScoreSource(user, scoreSource, selectedArea?.id || "", fiveSPeriodId)) {
           showMobileToast("Tài khoản của bạn không có quyền chỉnh sửa nguồn điểm này!", true);
           return;
         }

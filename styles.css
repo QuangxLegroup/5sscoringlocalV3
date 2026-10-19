@@ -546,6 +546,7 @@ h2 {
 .tab-panel.is-active {
   display: grid;
   gap: 14px;
+  align-content: start;
 }
 
 .admin-home {
@@ -9052,12 +9053,12 @@ html, body {
 #tab-catalog .catalog-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  grid-template-rows: repeat(3, minmax(620px, 1fr)) auto auto;
+  grid-template-rows: auto auto auto auto auto;
   grid-template-areas:
-    "period people"
-    "assessor heads"
-    "area email"
-    "safety safety"
+    "period person"
+    "people assessor"
+    "heads area"
+    "email safety"
     "items items";
   gap: 18px;
   align-items: stretch;
@@ -9065,6 +9066,16 @@ html, body {
 
 #tab-catalog .catalog-period-panel {
   grid-area: period;
+  grid-row: auto;
+}
+
+#tab-catalog .catalog-person-form-panel {
+  grid-area: person;
+}
+
+#tab-catalog .catalog-employee-directory-panel {
+  grid-column: 1 / -1;
+  grid-row: auto;
 }
 
 #tab-catalog .catalog-people-panel {
@@ -9079,8 +9090,20 @@ html, body {
   grid-area: heads;
 }
 
+#tab-catalog #scorer-list,
+#tab-catalog #catalog-assessor-list,
+#tab-catalog #department-head-list,
+#tab-catalog #catalog-employee-list {
+  max-height: min(52vh, 430px);
+  overflow-y: auto;
+  padding-right: 4px;
+  align-content: start;
+  scrollbar-width: thin;
+}
+
 #tab-catalog .catalog-area-panel {
   grid-area: area;
+  grid-column: auto;
 }
 
 #tab-catalog .department-head-email-panel {
@@ -9176,6 +9199,68 @@ html, body {
 #tab-catalog label span,
 #tab-catalog .form-field > span {
   color: #475569 !important;
+}
+
+#tab-catalog .catalog-person-role-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+#tab-catalog .catalog-person-role-options .check-line {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 36px;
+  padding: 6px 10px;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  background: #f8fafc;
+  cursor: pointer;
+}
+
+#tab-catalog .catalog-person-role-options input[type="checkbox"] {
+  width: 15px;
+  height: 15px;
+  min-height: 15px;
+  margin: 0;
+}
+
+#tab-catalog .catalog-person-role-zone {
+  display: grid;
+  gap: 5px;
+  padding: 10px;
+  border: 1px solid #dbe3ef;
+  border-radius: 8px;
+  background: #f8fafc;
+}
+
+#tab-catalog .catalog-person-role-zone + .catalog-person-role-zone {
+  margin-top: 10px;
+}
+
+#tab-catalog .catalog-person-role-zone > strong {
+  color: #0f172a;
+  font-size: 0.85rem;
+}
+
+#tab-catalog .catalog-employee-role-grid {
+  display: grid;
+  gap: 10px;
+}
+
+#tab-catalog .catalog-employee-role-editor {
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid #dbe3ef;
+  border-radius: 8px;
+  background: #fff;
+}
+
+#tab-catalog .catalog-employee-role-editor > .check-line {
+  width: fit-content;
+  cursor: pointer;
 }
 
 #tab-catalog input,
@@ -9307,6 +9392,16 @@ html, body {
 
 #tab-catalog .zone-check-item:hover {
   background: #f1f5f9 !important;
+}
+
+#tab-catalog .zone-check-item.is-unavailable {
+  color: #64748b !important;
+  cursor: not-allowed;
+}
+
+#tab-catalog .zone-check-item small {
+  color: #b45309;
+  font-size: 0.72rem;
 }
 
 #tab-catalog .zone-check-item input[type="checkbox"] {
@@ -9761,10 +9856,10 @@ html, body {
   #tab-catalog .catalog-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
     grid-template-areas:
-      "period people"
-      "assessor heads"
-      "area email"
-      "safety safety"
+      "period person"
+      "people assessor"
+      "heads area"
+      "email safety"
       "items items";
     gap: 14px;
   }
@@ -9781,6 +9876,7 @@ html, body {
     grid-template-rows: none !important;
     grid-template-areas:
       "period"
+      "person"
       "people"
       "assessor"
       "heads"
@@ -9799,6 +9895,7 @@ html, body {
   #tab-catalog #scorer-list,
   #tab-catalog #catalog-assessor-list,
   #tab-catalog #department-head-list,
+  #tab-catalog #catalog-employee-list,
   #tab-catalog #department-head-email-list {
     max-height: min(40vh, 340px);
     overflow-y: auto;
@@ -11349,19 +11446,75 @@ input[type="date"]::-webkit-calendar-picker-indicator {
   display: flex;
   justify-content: space-between;
   align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
   margin-bottom: 10px;
 }
 
+.history-heading-filter {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
 .history-section-title {
-  font-size: 0.74rem;
+  font-size: 0.68rem;
   font-weight: 800;
   text-transform: uppercase;
   color: #94a3b8;
   margin: 0;
-  letter-spacing: 0.5px;
+  letter-spacing: 0.3px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.history-period-filter {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: 0 1 112px;
+  min-width: 82px;
+}
+
+.history-period-filter > span {
+  flex: 0 0 auto;
+  color: #94a3b8;
+  font-size: 0.58rem;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.history-period-filter select {
+  box-sizing: border-box;
+  flex: 1;
+  min-width: 0;
+  width: 100%;
+  min-height: 30px;
+  padding: 3px 7px;
+  border: 1px solid #334155;
+  border-radius: 7px;
+  background: #0f172a;
+  color: #e2e8f0;
+  font: inherit;
+  font-size: 0.64rem;
+}
+
+.history-period-filter select:disabled {
+  opacity: 0.65;
+}
+
+.history-period-filter select:focus-visible {
+  outline: 2px solid #38bdf8;
+  outline-offset: 2px;
 }
 
 .history-count-badge {
+  flex: 0 0 auto;
+  white-space: nowrap;
   font-size: 0.66rem;
   padding: 2px 8px;
   border-radius: 999px;
@@ -14307,6 +14460,16 @@ input[type="date"]::-webkit-calendar-picker-indicator {
   color: #334155 !important;
 }
 
+.mobile-responsive-overlay.is-light-theme .history-period-filter select {
+  border-color: #cbd5e1;
+  background: #ffffff;
+  color: #334155;
+}
+
+.mobile-responsive-overlay.is-light-theme .history-period-filter > span {
+  color: #64748b;
+}
+
 .mobile-responsive-overlay.is-light-theme .history-count-badge {
   background: #f1f5f9 !important;
   color: #334155 !important;
@@ -14668,6 +14831,8 @@ input[type="date"]::-webkit-calendar-picker-indicator {
 .findings-issue-modal.is-mobile-dark.is-mobile-detail .findings-issue-entry-table td::before { color: #cbd5e1; }
 .detail-modal-footer .btn-detail-delete { grid-column: 1; grid-row: 1; }
 .detail-modal-footer .btn-detail-save { grid-column: 2; grid-row: 1; }
+.detail-modal-footer.countermeasure-only { grid-template-columns: minmax(0, 1fr); }
+.detail-modal-footer.countermeasure-only .btn-detail-save { grid-column: 1; }
 @media (max-width: 640px) {
   .findings-issue-modal .findings-page { padding: 0; }
   .findings-issue-entry-table, .findings-issue-entry-table tbody { display: block; min-width: 0; width: 100%; }

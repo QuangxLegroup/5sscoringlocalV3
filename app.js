@@ -274,6 +274,8 @@
     logoutButton: document.getElementById("logout-button"),
     assessorPeriodSelect: document.getElementById("assessor-period-select"),
     assessorAreaSelect: document.getElementById("assessor-area-select"),
+    assessorScoreSourceField: document.getElementById("assessor-score-source-field"),
+    assessorScoreSourceSelect: document.getElementById("assessor-score-source-select"),
     assessorProgress: document.getElementById("assessor-progress"),
     assessorTitle: document.getElementById("assessor-title"),
     assessorSheet: document.getElementById("assessor-sheet"),
@@ -326,20 +328,19 @@
     catalogScopeDetail: document.getElementById("catalog-scope-detail"),
     accountScopeSwitch: document.getElementById("account-scope-switch"),
     accountScopeDetail: document.getElementById("account-scope-detail"),
-    scorerForm: document.getElementById("scorer-form"),
-    scorerName: document.getElementById("scorer-name"),
-    scorerZoneList: document.getElementById("scorer-zone-list"),
+    catalogPersonForm: document.getElementById("catalog-person-form"),
+    catalogPersonCode: document.getElementById("catalog-person-code"),
+    catalogPersonName: document.getElementById("catalog-person-name"),
+    catalogPersonRoles: document.getElementById("catalog-person-roles"),
+    catalogPersonZonesField: document.getElementById("catalog-person-zones-field"),
+    catalogPersonZonesLabel: document.getElementById("catalog-person-zones-label"),
+    catalogPersonZoneList: document.getElementById("catalog-person-zone-list"),
     scorerList: document.getElementById("scorer-list"),
     departmentHeadEmailForm: document.getElementById("department-head-email-form"),
     departmentHeadEmailName: document.getElementById("department-head-email-name"),
     departmentHeadEmails: document.getElementById("department-head-emails"),
     departmentHeadEmailList: document.getElementById("department-head-email-list"),
-    departmentHeadForm: document.getElementById("department-head-form"),
-    departmentHeadName: document.getElementById("department-head-name"),
     departmentHeadList: document.getElementById("department-head-list"),
-    catalogAssessorForm: document.getElementById("catalog-assessor-form"),
-    catalogAssessorName: document.getElementById("catalog-assessor-name"),
-    catalogAssessorZoneList: document.getElementById("catalog-assessor-zone-list"),
     catalogAssessorList: document.getElementById("catalog-assessor-list"),
     areaForm: document.getElementById("area-form"),
     areaCode: document.getElementById("area-code"),
@@ -368,6 +369,9 @@
     accountZoneField: document.getElementById("account-zone-field"),
     accountZoneList: document.getElementById("account-zone-list"),
     accountZoneLabel: document.getElementById("account-zone-label"),
+    accountPersonSearch: document.getElementById("account-person-search"),
+    accountPersonSearchOptions: document.getElementById("account-person-search-options"),
+    catalogEmployeeList: document.getElementById("catalog-employee-list"),
     accountUsername: document.getElementById("account-username"),
     accountDisplayName: document.getElementById("account-display-name"),
     accountPassword: document.getElementById("account-password"),
@@ -396,6 +400,7 @@
 
   let state = null;
   let currentUser = null;
+  let catalogPersonSelectedAreaIdsByRole = {};
   let activeTab = "home";
   let pendingRouteTab = null;
   let activeSafetyReport = "";
@@ -625,7 +630,7 @@
 
   function normalizeAccountAccessTypes(accessTypes, role = "") {
     const normalizedRole = normalizeAccountRole(role);
-    if (normalizedRole === ROLE_ADMIN || normalizedRole === ROLE_VIEWER || normalizedRole === ROLE_DEPARTMENT_HEAD) {
+    if (normalizedRole === ROLE_ADMIN || normalizedRole === ROLE_VIEWER) {
       return [FIVE_S_PERIOD_TYPE, SAFETY_PERIOD_TYPE];
     }
 
@@ -637,8 +642,10 @@
       .filter(Boolean)
       .map((value) => normalizeCatalogType(value));
 
+    if (!values.length && Array.isArray(accessTypes)) return [];
     if (!values.length) {
-      values.push(normalizedRole === ROLE_ASSESSOR_SAFETY ? SAFETY_PERIOD_TYPE : FIVE_S_PERIOD_TYPE);
+    if (normalizedRole === ROLE_DEPARTMENT_HEAD) return [FIVE_S_PERIOD_TYPE, SAFETY_PERIOD_TYPE];
+    values.push(normalizedRole === ROLE_ASSESSOR_SAFETY ? SAFETY_PERIOD_TYPE : FIVE_S_PERIOD_TYPE);
     }
 
     return [...new Set(values)];
@@ -674,7 +681,13 @@
     if (normalizeAccountRole(account.role) === ROLE_ADMIN) {
       return true;
     }
-    return normalizeAccountAccessTypes(account.accessTypes, account.role).includes(normalizeCatalogType(type));
+    const catalogType = normalizeCatalogType(type);
+    if (normalizeAccountAccessTypes(account.accessTypes, account.role).includes(catalogType)) return true;
+    const periodId = getActivePeriodId(catalogType);
+    const matchesPerson = (person) => accountMatchesCatalogPerson(account, person);
+    return getPeriodCatalogManagers(catalogType, periodId).some(matchesPerson)
+      || getPeriodCatalogAssessors(catalogType, periodId).some(matchesPerson)
+      || getDepartmentHeadRows(periodId).some(matchesPerson);
   }
 
   function getAccountRoleForType(account, type = FIVE_S_PERIOD_TYPE) {
@@ -1081,6 +1094,7 @@
       .map((manager) => {
         const name = String(manager.name || "").trim();
         return {
+          ...manager,
           id: manager.id || makeStableId("safety-scorer", name),
           name,
           emails: mergeEmailLists(manager.emails, manager.email, manager.managerEmail, manager.managerEmails),
@@ -1090,6 +1104,7 @@
       .filter((manager) => manager.id && manager.name);
     normalized.safetyAssessors = (normalized.safetyAssessors.length ? normalized.safetyAssessors : normalized.assessors.map((assessor) => ({ ...assessor })))
       .map((assessor) => ({
+        ...assessor,
         id: assessor.id || makeStableId("safety-assessor", assessor.name),
         name: String(assessor.name || "").trim(),
         createdAt: assessor.createdAt || "",
@@ -1276,12 +1291,14 @@
     }
 
     const managers = (s.managers || []).map((manager) => ({
+      ...manager,
       id: manager.id,
       name: manager.name || "",
       emails: normalizeEmailList(manager.emails),
       createdAt: manager.createdAt || "",
     }));
     const safetyManagers = (s.safetyManagers || []).map((manager) => ({
+      ...manager,
       id: manager.id,
       name: manager.name || "",
       emails: normalizeEmailList(manager.emails),
@@ -1289,6 +1306,7 @@
     }));
     const departmentHeadContacts = normalizeDepartmentHeadContacts(s.departmentHeadContacts, s.areas, s.managers)
       .map((contact) => ({
+        ...contact,
         id: contact.id,
         name: contact.name || "",
         emails: normalizeEmailList(contact.emails),
@@ -1296,6 +1314,7 @@
       }));
     const safetyDepartmentHeadContacts = normalizeDepartmentHeadContacts(s.safetyDepartmentHeadContacts, s.safetyAreas, s.safetyManagers)
       .map((contact) => ({
+        ...contact,
         id: contact.id,
         name: contact.name || "",
         emails: normalizeEmailList(contact.emails),
@@ -2234,17 +2253,17 @@
   function normalizeDepartmentHeadContacts(contacts = [], areas = []) {
     const byKey = new Map();
 
-    const upsert = (name, emails = [], createdAt = "", id = "") => {
+    const upsert = (name, emails = [], createdAt = "", id = "", employeeCode = "") => {
       const cleanName = normalizeDepartmentHeadName(name);
-      const key = departmentHeadKey(cleanName);
-      if (!key) {
-        return;
-      }
+      const codeKey = employeeCodeKey(employeeCode);
+      if (!cleanName && !codeKey) return;
+      const key = codeKey ? `code:${codeKey}` : `name:${departmentHeadKey(cleanName)}`;
 
       const existing = byKey.get(key);
       byKey.set(key, {
         id: existing?.id || id || makeStableId("department-head", cleanName),
         name: cleanName,
+        employeeCode: existing?.employeeCode || employeeCode || "",
         emails: mergeEmailLists(existing?.emails, emails),
         createdAt: existing?.createdAt || createdAt || "",
       });
@@ -2256,11 +2275,12 @@
         mergeEmailLists(contact?.emails, contact?.email, contact?.managerEmail, contact?.managerEmails),
         contact?.createdAt || "",
         contact?.id || "",
+        contact?.employeeCode || "",
       );
     });
 
     (areas || []).forEach((area) => {
-      upsert(area?.departmentHead, [], area?.createdAt || "");
+      upsert(area?.departmentHead, [], area?.createdAt || "", "", area?.departmentHeadEmployeeCode || "");
     });
 
     const now = new Date().toISOString();
@@ -2270,7 +2290,7 @@
         emails: normalizeEmailList(contact.emails),
         createdAt: contact.createdAt || now,
       }))
-      .sort((a, b) => a.name.localeCompare(b.name, "vi"));
+      .sort(compareEmployeeCodeAscending);
   }
 
 
@@ -2305,7 +2325,7 @@
       beforeContact.emails = [];
     }
 
-    return normalized.sort((a, b) => a.name.localeCompare(b.name, "vi"));
+    return normalized.sort(compareEmployeeCodeAscending);
   }
 
   function renameDepartmentHeadContact(beforeName, afterName, contacts, type = FIVE_S_PERIOD_TYPE) {
@@ -2491,6 +2511,26 @@
     return snapshot ? ensureSnapshotArray(snapshot, "areas") : getMutableAreas(type);
   }
 
+  function compareEmployeeCodeAscending(left, right) {
+    const leftCode = String(left?.employeeCode || "").trim();
+    const rightCode = String(right?.employeeCode || "").trim();
+    if (leftCode && rightCode) {
+      const codeOrder = leftCode.localeCompare(rightCode, "vi", { numeric: true, sensitivity: "base" });
+      if (codeOrder) return codeOrder;
+    } else if (leftCode || rightCode) {
+      return leftCode ? -1 : 1;
+    }
+    return String(left?.name || "").localeCompare(String(right?.name || ""), "vi", { numeric: true, sensitivity: "base" });
+  }
+
+  function compareZoneCodesByOrder(left, right) {
+    const codeOrder = String(left?.code || "").localeCompare(String(right?.code || ""), "vi", {
+      numeric: true,
+      sensitivity: "base",
+    });
+    return codeOrder || (Number(left?.order) || 0) - (Number(right?.order) || 0);
+  }
+
   function getPeriodCatalogAreas(type = activeCatalogScope, periodId = getActiveCatalogPeriodId(type)) {
     return [...getPeriodCatalogArrays(type, periodId).areas]
       .sort((a, b) => (Number(a.order) || 0) - (Number(b.order) || 0));
@@ -2499,13 +2539,13 @@
   function getPeriodCatalogManagers(type = activeCatalogScope, periodId = getActiveCatalogPeriodId(type)) {
     return [...getPeriodCatalogArrays(type, periodId).managers]
       .filter((manager) => manager?.id && manager?.name)
-      .sort((a, b) => a.name.localeCompare(b.name, "vi"));
+      .sort(compareEmployeeCodeAscending);
   }
 
   function getPeriodCatalogAssessors(type = activeCatalogScope, periodId = getActiveCatalogPeriodId(type)) {
     return [...getPeriodCatalogArrays(type, periodId).assessors]
       .filter((assessor) => assessor?.id && assessor?.name)
-      .sort((a, b) => a.name.localeCompare(b.name, "vi"));
+      .sort(compareEmployeeCodeAscending);
   }
 
   function getPeriodCatalogManager(periodId, scorerId) {
@@ -2539,13 +2579,13 @@
   }
 
   function getManagers(type = FIVE_S_PERIOD_TYPE) {
-    return [...getCatalogArrays(type).managers].sort((a, b) => a.name.localeCompare(b.name, "vi"));
+    return [...getCatalogArrays(type).managers].sort(compareEmployeeCodeAscending);
   }
 
   function getAssessors(type = FIVE_S_PERIOD_TYPE) {
     return [...(getCatalogArrays(type).assessors || [])]
       .filter((assessor) => assessor?.id && assessor?.name)
-      .sort((a, b) => a.name.localeCompare(b.name, "vi"));
+      .sort(compareEmployeeCodeAscending);
   }
 
 
@@ -2569,27 +2609,34 @@
     return getDepartmentHeadContacts(getCatalogTypeForPeriod(periodId));
   }
 
-  function getDepartmentHeadContact(name, type = FIVE_S_PERIOD_TYPE) {
+  function getDepartmentHeadContact(name, type = FIVE_S_PERIOD_TYPE, employeeCode = "") {
     const key = departmentHeadKey(name);
-    if (!key) {
+    const codeKey = employeeCodeKey(employeeCode);
+    if (!key && !codeKey) {
       return null;
     }
 
-    return getDepartmentHeadContacts(type).find((contact) => departmentHeadKey(contact.name) === key) || null;
+    const contacts = getDepartmentHeadContacts(type);
+    return (codeKey ? contacts.find((contact) => employeeCodeKey(contact.employeeCode) === codeKey) : null)
+      || contacts.find((contact) => !codeKey || !employeeCodeKey(contact.employeeCode)
+        ? departmentHeadKey(contact.name) === key
+        : false)
+      || null;
   }
 
-  function ensureDepartmentHeadContact(name, type = FIVE_S_PERIOD_TYPE) {
+  function ensureDepartmentHeadContact(name, type = FIVE_S_PERIOD_TYPE, employeeCode = "") {
     const cleanName = normalizeDepartmentHeadName(name);
     if (!cleanName) {
       return null;
     }
 
     const contacts = getDepartmentHeadContacts(type);
-    let contact = getDepartmentHeadContact(cleanName, type);
+    let contact = getDepartmentHeadContact(cleanName, type, employeeCode);
     if (!contact) {
       contact = {
         id: makeStableId(normalizeCatalogType(type) === SAFETY_PERIOD_TYPE ? "safety-department-head" : "department-head", cleanName),
         name: cleanName,
+        employeeCode,
         emails: [],
         createdAt: new Date().toISOString(),
       };
@@ -2600,6 +2647,8 @@
         state.departmentHeadContacts = contacts;
       }
     }
+    contact.name = cleanName;
+    if (employeeCode) contact.employeeCode = employeeCode;
 
     return contact;
   }
@@ -2609,26 +2658,28 @@
     const contacts = getDepartmentHeadContactsForPeriod(periodId);
     const byKey = new Map();
 
-    const upsert = (name, emails = []) => {
+    const upsert = (name, emails = [], employeeCode = "") => {
       const cleanName = normalizeDepartmentHeadName(name);
-      const key = departmentHeadKey(cleanName);
+      const codeKey = employeeCodeKey(employeeCode);
+      const key = codeKey ? `code:${codeKey}` : `name:${departmentHeadKey(cleanName)}`;
       if (!key) {
         return null;
       }
 
       if (!byKey.has(key)) {
-        byKey.set(key, { name: cleanName, emails: [], areaCodes: [] });
+        byKey.set(key, { name: cleanName, employeeCode: employeeCode || "", emails: [], areaCodes: [] });
       }
 
       const row = byKey.get(key);
       row.name = cleanName;
+      if (employeeCode && !row.employeeCode) row.employeeCode = employeeCode;
       row.emails = mergeEmailLists(row.emails, emails);
       return row;
     };
 
-    contacts.forEach((contact) => upsert(contact.name, contact.emails));
+    contacts.forEach((contact) => upsert(contact.name, contact.emails, contact.employeeCode));
     areas.forEach((area) => {
-      const row = upsert(area.departmentHead);
+      const row = upsert(area.departmentHead, [], area.departmentHeadEmployeeCode);
       if (row && area.code) {
         row.areaCodes.push(area.code);
       }
@@ -2640,7 +2691,7 @@
         emails: normalizeEmailList(row.emails),
         areaCodes: [...new Set(row.areaCodes)].sort((a, b) => a.localeCompare(b, "vi")),
       }))
-      .sort((a, b) => a.name.localeCompare(b.name, "vi"));
+      .sort(compareEmployeeCodeAscending);
   }
 
   function getDepartmentHeadEmailsForPeriod(periodId, name) {
@@ -2665,6 +2716,7 @@
 
     let managers = snapshotToArray(snapshot.managers)
       .map((manager) => ({
+        ...manager,
         id: manager.id || makeStableId("scorer", manager.name),
         name: String(manager.name || "").trim(),
         emails: mergeEmailLists(manager.emails, manager.email, manager.managerEmail, manager.managerEmails),
@@ -2673,6 +2725,7 @@
       .filter((manager) => manager.id && manager.name);
     const assessors = snapshotToArray(snapshot.assessors)
       .map((assessor) => ({
+        ...assessor,
         id: assessor.id || makeStableId("assessor", assessor.name),
         name: String(assessor.name || "").trim(),
         createdAt: assessor.createdAt || "",
@@ -2687,6 +2740,7 @@
         code: String(area.code || "").trim(),
         templateCode: area.templateCode || area.code || "",
         departmentHead: area.departmentHead || "",
+        departmentHeadEmployeeCode: area.departmentHeadEmployeeCode || "",
         summaryGroup: area.summaryGroup || "",
         managerEmails: normalizeEmailList(area.managerEmails || area.managerEmail || ""),
         scorerId: area.scorerId || "",
@@ -2735,12 +2789,14 @@
     const managers = [...(catalog.managers || [])].map((manager) => ({
       id: manager.id,
       name: manager.name || "",
+      employeeCode: manager.employeeCode || "",
       emails: normalizeEmailList(manager.emails),
       createdAt: manager.createdAt || "",
     }));
     const assessors = [...(catalog.assessors || [])].map((assessor) => ({
       id: assessor.id,
       name: assessor.name || "",
+      employeeCode: assessor.employeeCode || "",
       createdAt: assessor.createdAt || "",
     }));
     const managerById = new Map(managers.map((manager) => [manager.id, manager]));
@@ -2753,6 +2809,7 @@
         code: area.code || "",
         templateCode: area.templateCode || area.code || "",
         departmentHead: area.departmentHead || "",
+        departmentHeadEmployeeCode: area.departmentHeadEmployeeCode || "",
         summaryGroup: area.summaryGroup || "",
         scorerId: area.scorerId || "",
         responsibleName: area.responsibleName || managerById.get(area.scorerId)?.name || area.scorerName || "",
@@ -2784,6 +2841,7 @@
     const areas = (snapshot?.areas || []).map((area) => ({
       ...area,
       departmentHead: "",
+      departmentHeadEmployeeCode: "",
       scorerId: "",
       responsibleName: "",
       assessorId: "",
@@ -2848,7 +2906,7 @@
 
   function getManagersForPeriod(periodId) {
     if (shouldUsePeriodSnapshot(periodId)) {
-      return [...(getPeriodSnapshot(periodId)?.managers || [])].sort((a, b) => a.name.localeCompare(b.name, "vi"));
+      return [...(getPeriodSnapshot(periodId)?.managers || [])].sort(compareEmployeeCodeAscending);
     }
 
     return getManagers(getCatalogTypeForPeriod(periodId));
@@ -2856,7 +2914,7 @@
 
   function getAssessorsForPeriod(periodId) {
     if (shouldUsePeriodSnapshot(periodId)) {
-      return [...(getPeriodSnapshot(periodId)?.assessors || [])].sort((a, b) => a.name.localeCompare(b.name, "vi"));
+      return [...(getPeriodSnapshot(periodId)?.assessors || [])].sort(compareEmployeeCodeAscending);
     }
 
     return getAssessors(getCatalogTypeForPeriod(periodId));
@@ -2970,20 +3028,174 @@
     return normalizeAccountRole(account?.role) === ROLE_DEPARTMENT_HEAD;
   }
 
+  function getAccountIdentityNames(account) {
+    return [...new Set([
+      account?.name,
+      isDepartmentHeadAccount(account) ? account?.departmentHeadName : "",
+    ].map((value) => String(value || "").trim()).filter(Boolean))];
+  }
+
+  function employeeCodeKey(value) {
+    return String(value || "").trim().replace(/\s+/g, "").toLocaleUpperCase("vi");
+  }
+
+  function sameEmployeeCode(left, right) {
+    const leftKey = employeeCodeKey(left);
+    const rightKey = employeeCodeKey(right);
+    return Boolean(leftKey && rightKey && leftKey === rightKey);
+  }
+
+  function hasAmbiguousCatalogEmployeeCode(name) {
+    const codes = new Set();
+    [FIVE_S_PERIOD_TYPE, SAFETY_PERIOD_TYPE].forEach((type) => {
+      const periodId = getActivePeriodId(type);
+      if (!periodId) return;
+      [
+        ...getPeriodCatalogManagers(type, periodId),
+        ...getPeriodCatalogAssessors(type, periodId),
+        ...getDepartmentHeadRows(periodId),
+      ].forEach((person) => {
+        if (sameNormalizedText(person.name, name) && employeeCodeKey(person.employeeCode)) {
+          codes.add(employeeCodeKey(person.employeeCode));
+        }
+      });
+    });
+    return codes.size > 1;
+  }
+
+  function accountMatchesCatalogPerson(account, person) {
+    if (!account || !person) return false;
+    const accountCode = employeeCodeKey(account.employeeCode);
+    const personCode = employeeCodeKey(person.employeeCode);
+    if (accountCode && personCode) return accountCode === personCode;
+    const sameName = getAccountIdentityNames(account).some((name) => sameNormalizedText(name, person.name));
+    return sameName && !hasAmbiguousCatalogEmployeeCode(person.name);
+  }
+
+  function catalogAccountBadgeHtml(person, type = activeCatalogScope) {
+    const catalogType = normalizeCatalogType(type);
+    const usernames = [...new Set((state?.accounts || [])
+      .filter((account) => hasAccountAccessType(account, catalogType) && accountMatchesCatalogPerson(account, person))
+      .map((account) => String(account.username || "").trim())
+      .filter(Boolean))];
+    return usernames.length
+      ? `<span class="catalog-meta-pill pill-user" title="Tài khoản đăng nhập">👤 ${escapeHtml(usernames.join(", "))}</span>`
+      : '<span class="catalog-meta-pill text-muted">Chưa có TK</span>';
+  }
+
+  function linkCatalogRolesByName(account, personName = account?.name, personEmployeeCode = account?.employeeCode) {
+    const name = String(personName || "").trim();
+    const employeeCode = String(personEmployeeCode || "").trim();
+    if (!account || (!name && !employeeCode)) return account;
+    if (employeeCode) account.employeeCode = employeeCode;
+    const accessTypes = new Set(normalizeAccountAccessTypes(account.accessTypes, account.role));
+    const rolesByType = { ...(account.rolesByType || {}) };
+    let matchedDepartmentHeadName = "";
+    [FIVE_S_PERIOD_TYPE, SAFETY_PERIOD_TYPE].forEach((type) => {
+      const periodId = getActivePeriodId(type);
+      const matchesPerson = (person) => accountMatchesCatalogPerson({ ...account, name, employeeCode }, person);
+      const hasManager = getPeriodCatalogManagers(type, periodId).some(matchesPerson);
+      const hasAssessor = getPeriodCatalogAssessors(type, periodId).some(matchesPerson);
+      const departmentHead = getDepartmentHeadRows(periodId).find(matchesPerson);
+      if (!hasManager && !hasAssessor && !departmentHead) return;
+      accessTypes.add(type);
+      if (departmentHead) matchedDepartmentHeadName = departmentHead.name;
+
+      const currentRole = rolesByType[type] ? normalizeScopedAccountRole(rolesByType[type], type) : "";
+      if (hasManager || hasAssessor) {
+        if (![ROLE_ZONE_OWNER, getAssessorRoleForScope(type)].includes(currentRole)) {
+          rolesByType[type] = hasManager ? ROLE_ZONE_OWNER : getAssessorRoleForScope(type);
+        }
+      } else if (departmentHead && !rolesByType[type]) {
+        rolesByType[type] = ROLE_DEPARTMENT_HEAD;
+      }
+    });
+    account.accessTypes = [...accessTypes];
+    account.rolesByType = rolesByType;
+    if (matchedDepartmentHeadName) account.departmentHeadName = matchedDepartmentHeadName;
+    return account;
+  }
+
+  function hasDepartmentHeadRole(account, periodId = "") {
+    if (!account) return false;
+    const requestedType = periodId ? getCatalogTypeForPeriod(periodId) : "";
+    const types = periodId
+      ? [requestedType]
+      : [FIVE_S_PERIOD_TYPE, SAFETY_PERIOD_TYPE];
+    return types.some((type) => {
+      const selectedPeriodId = periodId && requestedType === type
+        ? periodId
+        : getActivePeriodId(type);
+      const assignedInScope = isDepartmentHeadAccount(account)
+        && hasAccountAccessType(account, type)
+        && getAccountRoleForType(account, type) === ROLE_DEPARTMENT_HEAD;
+      return assignedInScope || getDepartmentHeadRows(selectedPeriodId)
+        .some((row) => accountMatchesCatalogPerson(account, row));
+    });
+  }
+
+  function getAccountRolesForType(account, type = FIVE_S_PERIOD_TYPE, periodId = getActivePeriodId(type)) {
+    if (!account) return [];
+    const catalogType = normalizeCatalogType(type);
+    const roles = new Set();
+    const primaryRole = getAccountRoleForType(account, catalogType);
+    if (primaryRole) roles.add(primaryRole);
+    const matchesPerson = (person) => accountMatchesCatalogPerson(account, person);
+    if (getPeriodCatalogManagers(catalogType, periodId).some(matchesPerson)) {
+      roles.add(ROLE_ZONE_OWNER);
+    }
+    if (getPeriodCatalogAssessors(catalogType, periodId).some(matchesPerson)) {
+      roles.add(getAssessorRoleForScope(catalogType));
+    }
+    if (getDepartmentHeadRows(periodId).some(matchesPerson) || hasDepartmentHeadRole(account, periodId)) {
+      roles.add(ROLE_DEPARTMENT_HEAD);
+    }
+    return [...roles];
+  }
+
+  function hasOperationalAccountRole(account, type = FIVE_S_PERIOD_TYPE, periodId = getActivePeriodId(type)) {
+    const roles = getAccountRolesForType(account, type, periodId);
+    return roles.includes(ROLE_ZONE_OWNER) || roles.includes(getAssessorRoleForScope(type));
+  }
+
+  function isDepartmentHeadOnlyAccount(account) {
+    return isDepartmentHeadAccount(account)
+      && ![FIVE_S_PERIOD_TYPE, SAFETY_PERIOD_TYPE].some((type) => hasOperationalAccountRole(account, type));
+  }
+
+  function getAccountPersonIdsForRole(account, type = FIVE_S_PERIOD_TYPE, role = "", periodId = getActivePeriodId(type)) {
+    if (!account) return [];
+    const catalogType = normalizeCatalogType(type);
+    const matchesPerson = (person) => accountMatchesCatalogPerson(account, person);
+    if (role === ROLE_ZONE_OWNER) {
+      return getPeriodCatalogManagers(catalogType, periodId)
+        .filter(matchesPerson)
+        .map((manager) => manager.id);
+    }
+    if (role === getAssessorRoleForScope(catalogType)) {
+      return getPeriodCatalogAssessors(catalogType, periodId)
+        .filter(matchesPerson)
+        .map((assessor) => assessor.id);
+    }
+    const primaryPersonId = getAccountPersonId(account, catalogType);
+    return primaryPersonId ? [primaryPersonId] : [];
+  }
+
   function isZoneOwnerAccount(account, type = FIVE_S_PERIOD_TYPE) {
-    return getAccountRoleForType(account, type) === ROLE_ZONE_OWNER;
+    return getAccountRolesForType(account, type).includes(ROLE_ZONE_OWNER);
   }
 
   function isFiveSAssessor(account) {
-    return !isViewerAccount(account) && !isDepartmentHeadAccount(account) && (isAdminAccount(account) || hasAccountAccessType(account, FIVE_S_PERIOD_TYPE));
+    return !isViewerAccount(account) && (isAdminAccount(account) || hasAccountAccessType(account, FIVE_S_PERIOD_TYPE));
   }
 
   function isSafetyAssessor(account) {
-    return !isViewerAccount(account) && !isDepartmentHeadAccount(account) && hasAccountAccessType(account, SAFETY_PERIOD_TYPE);
+    return !isViewerAccount(account) && hasAccountAccessType(account, SAFETY_PERIOD_TYPE)
+      && getAccountRolesForType(account, SAFETY_PERIOD_TYPE).some((role) => [ROLE_ZONE_OWNER, ROLE_ASSESSOR_SAFETY].includes(role));
   }
 
   function canUseSafety(account) {
-    return !isViewerAccount(account) && (isAdminAccount(account) || isDepartmentHeadAccount(account) || hasAccountAccessType(account, SAFETY_PERIOD_TYPE));
+    return !isViewerAccount(account) && (isAdminAccount(account) || hasDepartmentHeadRole(account) || hasAccountAccessType(account, SAFETY_PERIOD_TYPE));
   }
 
   function sameNormalizedText(left, right) {
@@ -3056,9 +3268,6 @@
     if (isAdminAccount(account)) {
       return true;
     }
-    if (isDepartmentHeadAccount(account)) {
-      return getDepartmentHeadManagedAreaIds(account, record.periodId).has(record.areaId);
-    }
     return canUseSafety(account) && isSafetyRecordOwnedByAccount(record, account);
   }
 
@@ -3070,12 +3279,15 @@
   }
 
   function isAreaManagedByDepartmentHead(area, account) {
+    const accountCode = employeeCodeKey(account?.employeeCode);
+    const areaCode = employeeCodeKey(area?.departmentHeadEmployeeCode);
+    if (accountCode && areaCode) return accountCode === areaCode;
     const key = departmentHeadKey(getDepartmentHeadAccountName(account));
     return Boolean(key && departmentHeadKey(area?.departmentHead) === key);
   }
 
   function getDepartmentHeadManagedAreaIds(account = currentUser, periodId = getActivePeriodId(SAFETY_PERIOD_TYPE)) {
-    if (!isDepartmentHeadAccount(account)) {
+    if (!hasDepartmentHeadRole(account, periodId)) {
       return new Set();
     }
     return new Set(
@@ -3093,7 +3305,8 @@
     if (isAdminAccount(account) || canManageSafetyRecord(record, account)) {
       return true;
     }
-    if (isDepartmentHeadAccount(account)) {
+    if (hasDepartmentHeadRole(account, record.periodId)
+      && getDepartmentHeadManagedAreaIds(account, record.periodId).has(record.areaId)) {
       return getDepartmentHeadManagedAreaIds(account, record.periodId).has(record.areaId);
     }
     if (isZoneOwnerAccount(account, SAFETY_PERIOD_TYPE)) {
@@ -3114,7 +3327,7 @@
     return Boolean(account) && (
       isAdminAccount(account) ||
       isViewerAccount(account) ||
-      isDepartmentHeadAccount(account) ||
+      hasDepartmentHeadRole(account) ||
       hasAccountAccessType(account, FIVE_S_PERIOD_TYPE) ||
       hasAccountAccessType(account, SAFETY_PERIOD_TYPE)
     );
@@ -3129,11 +3342,58 @@
   }
 
   function getScoreSourceForAccount(account = currentUser) {
-    return isZoneOwnerAccount(account, FIVE_S_PERIOD_TYPE) ? SCORE_SOURCE_SELF : SCORE_SOURCE_ASSESSOR;
+    return getAccountRoleForType(account, FIVE_S_PERIOD_TYPE) === ROLE_ZONE_OWNER ? SCORE_SOURCE_SELF : SCORE_SOURCE_ASSESSOR;
   }
 
-  function canEditFiveSScoreSource(account, scoreSource) {
-    return isAdminAccount(account) || normalizeScoreSource(scoreSource) === getScoreSourceForAccount(account);
+  function getAvailableFiveSScoreSources(account = currentUser, periodId = getActivePeriodId(FIVE_S_PERIOD_TYPE), areaId = "") {
+    const roles = getAccountRolesForType(account, FIVE_S_PERIOD_TYPE, periodId);
+    const sources = [];
+    if (roles.includes(ROLE_ZONE_OWNER)) sources.push(SCORE_SOURCE_SELF);
+    if (roles.includes(ROLE_ASSESSOR_5S)) sources.push(SCORE_SOURCE_ASSESSOR);
+    if (isViewerAccount(account)) sources.push(SCORE_SOURCE_ASSESSOR, SCORE_SOURCE_SELF);
+    if (hasDepartmentHeadRole(account, periodId) && !sources.includes(SCORE_SOURCE_ASSESSOR)) {
+      sources.push(SCORE_SOURCE_ASSESSOR);
+    }
+    const uniqueSources = [...new Set(sources)];
+    if (isAdminAccount(account)) return [SCORE_SOURCE_ASSESSOR, SCORE_SOURCE_SELF];
+    if (!areaId || isViewerAccount(account)) return uniqueSources;
+    if (!getAllowedAreaIds(account, periodId).has(areaId)) return [];
+    return uniqueSources.filter((source) => canEditFiveSScoreSource(account, source, areaId, periodId)
+      || (source === SCORE_SOURCE_ASSESSOR && hasDepartmentHeadRole(account, periodId)));
+  }
+
+  function getDefaultFiveSScoreSource(account = currentUser, periodId = getActivePeriodId(FIVE_S_PERIOD_TYPE), areaId = "") {
+    const sources = getAvailableFiveSScoreSources(account, periodId, areaId);
+    const accountDefault = getScoreSourceForAccount(account);
+    if (isAdminAccount(account) && sources.includes(accountDefault)) return accountDefault;
+    const editableSource = [SCORE_SOURCE_SELF, SCORE_SOURCE_ASSESSOR]
+      .find((source) => sources.includes(source) && canEditFiveSScoreSource(account, source, areaId, periodId));
+    return editableSource || sources[0] || accountDefault;
+  }
+
+  function getFiveSScoreSourceAreaIds(account, periodId, scoreSource) {
+    const areas = getAreasForPeriod(periodId);
+    if (isAdminAccount(account)) return new Set(areas.map((area) => area.id));
+    const source = normalizeScoreSource(scoreSource);
+    if (source === SCORE_SOURCE_SELF) {
+      const managerIds = new Set(getAccountPersonIdsForRole(account, FIVE_S_PERIOD_TYPE, ROLE_ZONE_OWNER, periodId));
+      return new Set(areas.filter((area) => managerIds.has(area.scorerId)).map((area) => area.id));
+    }
+    const assessorIds = new Set(getAccountPersonIdsForRole(account, FIVE_S_PERIOD_TYPE, ROLE_ASSESSOR_5S, periodId));
+    const allowedIds = new Set(areas
+      .filter((area) => assessorIds.has(area.assessorId) || (Array.isArray(area.assessorIds) && area.assessorIds.some((id) => assessorIds.has(id))))
+      .map((area) => area.id));
+    return allowedIds;
+  }
+
+  function canEditFiveSScoreSource(account, scoreSource, areaId = "", periodId = getActivePeriodId(FIVE_S_PERIOD_TYPE)) {
+    if (isAdminAccount(account)) return true;
+    if (isViewerAccount(account) || !isFiveSAssessor(account)) return false;
+    const roles = getAccountRolesForType(account, FIVE_S_PERIOD_TYPE, periodId);
+    const hasRole = normalizeScoreSource(scoreSource) === SCORE_SOURCE_SELF
+      ? roles.includes(ROLE_ZONE_OWNER)
+      : roles.includes(ROLE_ASSESSOR_5S);
+    return hasRole && (!areaId || getFiveSScoreSourceAreaIds(account, periodId, scoreSource).has(areaId));
   }
 
   function getRoleLabel(role) {
@@ -3157,12 +3417,12 @@
   function getAccountAccessLabel(account, type = "") {
     if (isAdminAccount(account)) return "Admin hệ thống";
     if (isViewerAccount(account)) return "Người xem";
-    if (isDepartmentHeadAccount(account)) return "Trưởng phòng";
     const accessTypes = type ? [normalizeCatalogType(type)] : normalizeAccountAccessTypes(account?.accessTypes, account?.role);
-    return accessTypes
+    const roleLabels = accessTypes
       .filter((accessType) => hasAccountAccessType(account, accessType))
-      .map((accessType) => getScopedRoleLabel(getAccountRoleForType(account, accessType), accessType))
-      .join(" + ") || getRoleLabel(account?.role);
+      .flatMap((accessType) => getAccountRolesForType(account, accessType)
+        .map((role) => getScopedRoleLabel(role, accessType)));
+    return [...new Set(roleLabels)].join(" + ") || getRoleLabel(account?.role);
   }
 
   function getAccountDisplayName(account, type = "", periodId = "") {
@@ -3449,26 +3709,29 @@
     if (isAdminAccount(account) || isViewerAccount(account)) {
       return new Set(periodAreas.map((area) => area.id));
     }
-    if (isDepartmentHeadAccount(account)) {
-      return new Set(periodAreas
-        .filter((area) => isAreaManagedByDepartmentHead(area, account))
-        .map((area) => area.id));
-    }
-    if (!hasAccountAccessType(account, catalogType)) {
+    const hasHeadRole = hasDepartmentHeadRole(account, periodId);
+    if (!hasAccountAccessType(account, catalogType) && !hasHeadRole) {
       return new Set();
     }
 
-    const scopedRole = getAccountRoleForType(account, catalogType);
-    const personId = getAccountPersonId(account, catalogType);
-    const explicitIds = getAccountAreaIds(account, catalogType);
-    const byPerson = periodAreas
-      .filter((area) => scopedRole === ROLE_ZONE_OWNER
-        ? personId && area.scorerId === personId
-        : personId && (area.assessorId === personId || (Array.isArray(area.assessorIds) && area.assessorIds.includes(personId)))
-      )
-      .map((area) => area.id);
-
-    return new Set(scopedRole === ROLE_ZONE_OWNER && personId ? byPerson : [...explicitIds, ...byPerson]);
+    const roles = getAccountRolesForType(account, catalogType, periodId);
+    const allowedIds = new Set();
+    if (hasHeadRole) {
+      periodAreas
+        .filter((area) => isAreaManagedByDepartmentHead(area, account))
+        .forEach((area) => allowedIds.add(area.id));
+    }
+    if (roles.includes(ROLE_ZONE_OWNER)) {
+      const managerIds = new Set(getAccountPersonIdsForRole(account, catalogType, ROLE_ZONE_OWNER, periodId));
+      periodAreas.filter((area) => managerIds.has(area.scorerId)).forEach((area) => allowedIds.add(area.id));
+    }
+    if (roles.includes(getAssessorRoleForScope(catalogType))) {
+      const assessorIds = new Set(getAccountPersonIdsForRole(account, catalogType, getAssessorRoleForScope(catalogType), periodId));
+      periodAreas
+        .filter((area) => assessorIds.has(area.assessorId) || (Array.isArray(area.assessorIds) && area.assessorIds.some((id) => assessorIds.has(id))))
+        .forEach((area) => allowedIds.add(area.id));
+    }
+    return allowedIds;
   }
 
   function isNotApplicable(itemId, criterionId, area) {
@@ -3755,7 +4018,7 @@
       const targetName = selectAll.getAttribute("data-select-all");
       const container = selectAll.closest(".zone-check-list, form, .modal-body, .form-field");
       if (container) {
-        const checkboxes = [...container.querySelectorAll(`input[name="${targetName}"]`)];
+        const checkboxes = [...container.querySelectorAll(`input[name="${targetName}"]:not(:disabled)`)];
         const allChecked = checkboxes.length > 0 && checkboxes.every((cb) => cb.checked);
         const someChecked = checkboxes.some((cb) => cb.checked);
         selectAll.checked = allChecked;
@@ -3764,7 +4027,7 @@
     });
   }
 
-  function areaCheckboxListHtml(selectedIds = [], type = activeAccountScope, periodId = getActivePeriodId(type), managerFilter = null, assessorFilter = null) {
+  function areaCheckboxListHtml(selectedIds = [], type = activeAccountScope, periodId = getActivePeriodId(type), managerFilter = null, assessorFilter = null, departmentHeadFilter = null, inputName = "areaIds") {
     const catalogType = normalizeCatalogType(type);
     const selected = new Set((selectedIds || []).filter(Boolean));
     const periodAreas = getAreasForPeriod(periodId)
@@ -3784,6 +4047,13 @@
     const areas = periodAreas
       .filter((area) => {
         if (catalogType !== SAFETY_PERIOD_TYPE && assessorFilter && areasAssignedToOtherAssessors.has(area.id) && !areasAssignedToCurrentAssessor.has(area.id)) return false;
+        if (departmentHeadFilter) {
+          const hasAssignedHead = Boolean(departmentHeadKey(area.departmentHead));
+          const isSelectedHead = departmentHeadFilter.employeeCode && area.departmentHeadEmployeeCode
+            ? sameEmployeeCode(departmentHeadFilter.employeeCode, area.departmentHeadEmployeeCode)
+            : departmentHeadKey(area.departmentHead) === departmentHeadKey(departmentHeadFilter.name || "");
+          if (hasAssignedHead && !isSelectedHead) return false;
+        }
         if (!managerFilter) return true;
         if (!area.scorerId && !area.responsibleName && !area.scorerName) return true;
         if (managerFilter.managerId && area.scorerId === managerFilter.managerId) return true;
@@ -3792,7 +4062,9 @@
         return Boolean(manager && !area.scorerId && assignedName.toLocaleLowerCase("vi") === manager.name.toLocaleLowerCase("vi"));
       });
     if (!areas.length) {
-      const message = catalogType !== SAFETY_PERIOD_TYPE && assessorFilter && periodAreas.length
+      const message = departmentHeadFilter && periodAreas.length
+        ? "Tất cả zone đã có trưởng phòng."
+        : catalogType !== SAFETY_PERIOD_TYPE && assessorFilter && periodAreas.length
         ? "Tất cả zone đã được phân công cho assessor khác."
         : managerFilter && periodAreas.length
           ? "Tất cả zone đã có người phụ trách."
@@ -3804,7 +4076,7 @@
     const headerHtml = `
       <div class="zone-check-header">
         <label class="check-line zone-select-all-label">
-          <input type="checkbox" data-select-all="areaIds" ${allChecked ? "checked" : ""}>
+          <input type="checkbox" data-select-all="${escapeHtml(inputName)}" ${allChecked ? "checked" : ""}>
           <span>Chọn tất cả</span>
         </label>
       </div>
@@ -3812,7 +4084,7 @@
 
     const itemsHtml = areas
       .map((area) => `<label class="check-line zone-check-item">
-        <input name="areaIds" type="checkbox" value="${escapeHtml(area.id)}" ${selected.has(area.id) ? "checked" : ""}>
+        <input name="${escapeHtml(inputName)}" type="checkbox" value="${escapeHtml(area.id)}" ${selected.has(area.id) ? "checked" : ""}>
         <span>Zone ${escapeHtml(area.code)} · ${escapeHtml(catalogType === SAFETY_PERIOD_TYPE ? getSafetyDepartmentForArea(area, periodId) : getAreaResponsibleNameForPeriod(periodId, area))}</span>
       </label>`)
       .join("");
@@ -3820,8 +4092,8 @@
     return headerHtml + `<div class="zone-check-items">${itemsHtml}</div>`;
   }
 
-  function getCheckedAreaIds(container) {
-    return [...container.querySelectorAll('input[name="areaIds"]:checked')].map((input) => input.value);
+  function getCheckedAreaIds(container, inputName = "areaIds") {
+    return [...container.querySelectorAll(`input[name="${inputName}"]:checked`)].map((input) => input.value);
   }
 
   function assessorCheckboxListHtml(selectedIds = [], type = activeCatalogScope, periodId = getActivePeriodId(type)) {
@@ -4464,7 +4736,11 @@
     const period = getPeriod(options.periodId);
     const periodId = period?.id || "";
     const scoreSource = normalizeScoreSource(options.scoreSource);
-    const areas = getAreasForPeriod(periodId);
+    const allAreas = getAreasForPeriod(periodId);
+    const visibleAreaIds = options.visibleAreaIds;
+    const areas = visibleAreaIds instanceof Set
+      ? allAreas.filter((area) => visibleAreaIds.has(area.id))
+      : allAreas;
     const editableAreaIds = options.editableAreaIds || new Set();
     const hasOpenPeriod = Boolean(periodId) && isPeriodOpen(periodId, FIVE_S_PERIOD_TYPE);
     const adminMode = Boolean(options.adminMode) && hasOpenPeriod && !isPeriodArchived(periodId);
@@ -5076,7 +5352,7 @@
 
   function getAppTitle() {
     if (["five-s-findings", "mobile-findings"].includes(activeTab)) return "Vấn đề 5S";
-    if (activeTab === "score-sheets") return "Phiếu chấm";
+    if (activeTab === "score-sheets") return "Phiếu 5S theo zone";
     if (activeTab === "safety" || activeTab === "mobile-safety") {
       const report = SAFETY_REPORT_BY_ID[activeSafetyReport];
       if (report?.id === "identification") {
@@ -5181,9 +5457,10 @@
   function renderRoleVisibility() {
     const isAdmin = isAdminAccount(currentUser);
     const isViewer = isViewerAccount(currentUser);
-    const isDepartmentHead = isDepartmentHeadAccount(currentUser);
-    const hasFiveSAccess = !isAdmin && Boolean(hasAccountAccessType(currentUser, FIVE_S_PERIOD_TYPE));
+    const hasFiveSAccess = !isAdmin && (Boolean(hasAccountAccessType(currentUser, FIVE_S_PERIOD_TYPE))
+      || hasDepartmentHeadRole(currentUser, getActivePeriodId(FIVE_S_PERIOD_TYPE)));
     const hasSafetyAccess = !isAdmin && canUseSafety(currentUser);
+    const isDepartmentHead = isDepartmentHeadAccount(currentUser);
     const isReadOnlyPageAccess = (element) => element.matches(".tab-button, .tab-panel, .nav-group, .account-menu-divider") ||
       Boolean(element.closest(".sidebar-nav, .header-quick-nav"));
 
@@ -5197,15 +5474,18 @@
       }
       element.hidden = !isAdmin && !isReadOnlyPageAccess(element);
     });
+    document.querySelectorAll("[data-tab='score-sheets'], #tab-score-sheets").forEach((element) => {
+      element.hidden = !isAdmin;
+    });
 
     // 2. 5S: điều hướng được mở để xem, thao tác nghiệp vụ vẫn theo quyền.
     document.querySelectorAll(".five-s-access-only").forEach((element) => {
-      element.hidden = !isAdmin && !isReadOnlyPageAccess(element);
+      element.hidden = !isAdmin && !hasFiveSAccess;
     });
 
     // 3. Phiếu chấm 5S: mở điều hướng xem, giữ quyền chấm theo role.
     document.querySelectorAll(".assessor-only").forEach((element) => {
-      element.hidden = isAdmin || isViewer || isDepartmentHead || (!isReadOnlyPageAccess(element) && !hasFiveSAccess);
+      element.hidden = isAdmin || isViewer || !hasFiveSAccess;
     });
 
     // 4. An toàn lao động: mở điều hướng xem, giữ quyền đánh giá theo role.
@@ -5265,13 +5545,22 @@
       return false;
     }
     if (tab === "score-sheets") return isAdminAccount(currentUser);
-    if (["five-s-findings", "mobile-findings", "mobile-5s", "mobile-safety"].includes(tab)) return true;
+    if (["assessor", "summary", "mobile-5s"].includes(tab)) {
+      const isAdmin = isAdminAccount(currentUser);
+      const isViewer = isViewerAccount(currentUser);
+      const hasFiveSAccess = isAdmin || hasAccountAccessType(currentUser, FIVE_S_PERIOD_TYPE)
+        || hasDepartmentHeadRole(currentUser, getActivePeriodId(FIVE_S_PERIOD_TYPE));
+      if (tab === "assessor") return !isAdmin && !isViewer && hasFiveSAccess;
+      if (tab === "mobile-5s") return !isViewer && hasFiveSAccess;
+      return hasFiveSAccess;
+    }
+    if (["five-s-findings", "mobile-findings", "mobile-safety"].includes(tab)) return true;
 
     if (isViewerAccount(currentUser)) {
       return ["home", "summary", "safety", "issue-stats"].includes(tab);
     }
     if (isDepartmentHeadAccount(currentUser)) {
-      return ["home", "summary", "safety", "issue-stats", "mobile-safety"].includes(tab);
+      return ["home", "assessor", "summary", "safety", "issue-stats", "mobile-safety"].includes(tab);
     }
 
     if (tab === "assessor" && isAdminAccount(currentUser)) {
@@ -5483,10 +5772,14 @@
       getFiveSChartTargets,
       getScoreSourceLabel,
       getScoreSourceForAccount,
+      getAvailableFiveSScoreSources,
+      getDefaultFiveSScoreSource,
+      getFiveSScoreSourceAreaIds,
       goToSafetyReport,
       updateSafetyZoneTarget,
       isAdminAccount,
       isDepartmentHeadAccount,
+      hasDepartmentHeadRole,
       hasAccountAccessType,
       renderRoleVisibility,
       isFiveSAssessor,
@@ -5569,7 +5862,7 @@
     const fiveSActive = getActivePeriodId(FIVE_S_PERIOD_TYPE);
     const safetyActive = getActivePeriodId(SAFETY_PERIOD_TYPE);
     const isAdmin = isAdminAccount(currentUser);
-    const canViewAllPeriods = isAdmin || isViewerAccount(currentUser) || isDepartmentHeadAccount(currentUser);
+    const canViewAllPeriods = isAdmin || isViewerAccount(currentUser) || hasDepartmentHeadRole(currentUser);
     const canViewAllSafetyPeriods = canViewAllPeriods || canUseSafety(currentUser);
 
     const visibleFiveSPeriods = canViewAllPeriods
@@ -5634,7 +5927,9 @@
     const fiveSPeriodId = getActivePeriodId(FIVE_S_PERIOD_TYPE);
     const fiveSAreas = getAreasForPeriod(fiveSPeriodId);
     const allowedAreaIds = getAllowedAreaIds(currentUser, fiveSPeriodId);
-    const assignedAreas = fiveSAreas.filter((area) => allowedAreaIds.has(area.id));
+    const assignedAreas = fiveSAreas
+      .filter((area) => allowedAreaIds.has(area.id))
+      .sort(compareZoneCodesByOrder);
     if (elements.assessorAreaSelect) {
       const current = elements.assessorAreaSelect.value;
       elements.assessorAreaSelect.innerHTML = assignedAreas
@@ -5687,8 +5982,8 @@
       ? departmentHeadOptions(current, true, periodId)
       : '<option value="">Thêm trưởng phòng trước khi tạo zone</option>';
     elements.areaHead.required = true;
-    elements.areaHead.value = rows.some((row) => departmentHeadKey(row.name) === departmentHeadKey(current))
-      ? rows.find((row) => departmentHeadKey(row.name) === departmentHeadKey(current)).name
+    elements.areaHead.value = rows.some((row) => row.employeeCode === current || row.name === current)
+      ? rows.find((row) => row.employeeCode === current || row.name === current).employeeCode || rows.find((row) => row.name === current)?.name || ""
       : "";
   }
 
@@ -5757,18 +6052,114 @@
     }
   }
 
-  function renderCatalogAssessorZoneList() {
-    if (elements.scorerZoneList) {
-      elements.scorerZoneList.innerHTML = areaCheckboxListHtml([], activeCatalogScope, getActivePeriodId(activeCatalogScope), { managerId: "" });
-      refreshSelectAllStates(elements.scorerZoneList);
+  function getCatalogPersonRoleScope(role, defaultScope = activeCatalogScope) {
+    if (role === ROLE_ASSESSOR_5S) return FIVE_S_PERIOD_TYPE;
+    if (role === ROLE_ASSESSOR_SAFETY) return SAFETY_PERIOD_TYPE;
+    return normalizeCatalogType(defaultScope);
+  }
+
+  function getAvailableCatalogPersonAreaIds(role, type = activeCatalogScope, periodId = getActivePeriodId(type)) {
+    const catalogType = normalizeCatalogType(type);
+    const areas = getAreasForPeriod(periodId)
+      .filter((area) => catalogType !== SAFETY_PERIOD_TYPE || isReportableSafetyArea(area));
+
+    if (role === ROLE_ZONE_OWNER) {
+      return new Set(areas
+        .filter((area) => !area.scorerId && !area.responsibleName && !area.scorerName)
+        .map((area) => area.id)
+        .filter(Boolean));
     }
-    if (!elements.catalogAssessorZoneList) {
+    if (["assessor", ROLE_ASSESSOR_5S, ROLE_ASSESSOR_SAFETY].includes(role)) {
+      const assessorType = role === ROLE_ASSESSOR_SAFETY
+        ? SAFETY_PERIOD_TYPE
+        : role === ROLE_ASSESSOR_5S
+          ? FIVE_S_PERIOD_TYPE
+          : catalogType;
+      if (assessorType !== catalogType) return getAvailableCatalogPersonAreaIds("assessor", assessorType, getActivePeriodId(assessorType));
+      if (catalogType === SAFETY_PERIOD_TYPE) return new Set(areas.map((area) => area.id).filter(Boolean));
+      const assignedAreaIds = new Set(getPeriodCatalogAssessors(catalogType, periodId)
+        .flatMap((assessor) => getAssessorAreaIds(assessor.id, catalogType, periodId)));
+      return new Set(areas.filter((area) => !assignedAreaIds.has(area.id)).map((area) => area.id).filter(Boolean));
+    }
+    if (role === ROLE_DEPARTMENT_HEAD) {
+      return new Set(areas
+        .filter((area) => !departmentHeadKey(area.departmentHead))
+        .map((area) => area.id)
+        .filter(Boolean));
+    }
+    return new Set();
+  }
+
+  function renderCatalogPersonZoneList() {
+    if (!elements.catalogPersonZoneList || !elements.catalogPersonZonesField) return;
+    const catalogType = activeCatalogScope;
+    elements.catalogPersonZoneList.querySelectorAll('input[name^="areaIds-"]').forEach((input) => {
+      const role = input.name.slice("areaIds-".length);
+      const roleScope = getCatalogPersonRoleScope(role, catalogType);
+      const rolePeriodId = getActivePeriodId(roleScope);
+      const stateKey = `${roleScope}:${rolePeriodId}:${role}`;
+      const selected = new Set(catalogPersonSelectedAreaIdsByRole[stateKey] || []);
+      if (input.checked) selected.add(input.value);
+      else selected.delete(input.value);
+      catalogPersonSelectedAreaIdsByRole[stateKey] = [...selected];
+    });
+    const roles = [...(elements.catalogPersonRoles?.querySelectorAll('input[name="catalogPersonRoles"]:checked') || [])]
+      .map((input) => input.value);
+    if (!roles.length) {
+      elements.catalogPersonZonesField.hidden = true;
+      elements.catalogPersonZoneList.innerHTML = "";
       return;
     }
-    const catalogType = activeCatalogScope;
-    const periodId = getActivePeriodId(catalogType);
-    elements.catalogAssessorZoneList.innerHTML = areaCheckboxListHtml([], catalogType, periodId, null, {});
-    refreshSelectAllStates(elements.catalogAssessorZoneList);
+
+    elements.catalogPersonZonesField.hidden = false;
+    elements.catalogPersonZonesLabel.textContent = "Zone có thể chọn theo từng vai trò";
+    const roleOptions = [
+      { value: ROLE_ZONE_OWNER, type: catalogType, label: "Quản lý zone", availableLabel: "Zone chưa có quản lý zone", filter: { manager: { managerId: "" } } },
+      { value: ROLE_ASSESSOR_5S, type: FIVE_S_PERIOD_TYPE, label: "Assessor 5S", availableLabel: "Zone chưa được phân công assessor 5S", filter: { assessor: {} } },
+      { value: ROLE_ASSESSOR_SAFETY, type: SAFETY_PERIOD_TYPE, label: "Assessor AT", availableLabel: "Zone đánh giá an toàn", filter: { assessor: {} } },
+      { value: ROLE_DEPARTMENT_HEAD, type: catalogType, label: "Trưởng phòng", availableLabel: "Zone chưa có trưởng phòng", filter: { departmentHead: {} } },
+    ];
+    elements.catalogPersonZoneList.innerHTML = roleOptions
+      .filter((option) => roles.includes(option.value))
+      .map((option) => {
+        const inputName = `areaIds-${option.value}`;
+        const optionPeriodId = getActivePeriodId(option.type);
+        const stateKey = `${option.type}:${optionPeriodId}:${option.value}`;
+        const listHtml = areaCheckboxListHtml(
+          catalogPersonSelectedAreaIdsByRole[stateKey] || [],
+          option.type,
+          optionPeriodId,
+          option.filter.manager || null,
+          option.filter.assessor || null,
+          option.filter.departmentHead || null,
+          inputName,
+        );
+        return `<section class="catalog-person-role-zone">
+          <strong>${escapeHtml(option.label)}</strong>
+          <span class="field-hint">${escapeHtml(option.availableLabel)}</span>
+          <div class="zone-check-list">${listHtml}</div>
+        </section>`;
+      })
+      .join("");
+    refreshSelectAllStates(elements.catalogPersonZoneList);
+  }
+
+  function findCatalogPersonByIdentity(people, name, employeeCode = "") {
+    const code = employeeCodeKey(employeeCode);
+    const rows = people || [];
+    if (code) {
+      const exact = rows.find((person) => employeeCodeKey(person.employeeCode) === code);
+      if (exact) return exact;
+      const legacyMatches = rows.filter((person) => !employeeCodeKey(person.employeeCode)
+        && sameNormalizedText(person.name, name));
+      return legacyMatches.length === 1 ? legacyMatches[0] : null;
+    }
+    return rows.find((person) => !employeeCodeKey(person.employeeCode)
+      && sameNormalizedText(person.name, name)) || null;
+  }
+
+  function renderCatalogAssessorZoneList() {
+    renderCatalogPersonZoneList();
   }
 
   function renderAccountZoneList(selectedIds = []) {
@@ -6005,17 +6396,34 @@
     const period = getPeriod(elements.assessorPeriodSelect?.value || getActivePeriodId(FIVE_S_PERIOD_TYPE));
     const periodId = period?.id || "";
 
-    if (!isAdminAccount(currentUser) && (!periodId || !isPeriodOpen(periodId, FIVE_S_PERIOD_TYPE))) {
+    if (!isAdminAccount(currentUser) && !hasDepartmentHeadRole(currentUser, periodId) && (!periodId || !isPeriodOpen(periodId, FIVE_S_PERIOD_TYPE))) {
       elements.assessorTitle.textContent = "Phiếu chấm 5S";
       elements.assessorProgress.textContent = "Kỳ đánh giá này hiện không mở. Bạn chỉ có thể xem và chấm điểm kỳ đang mở.";
       elements.assessorSheet.innerHTML = '<div class="admin-card-chart-empty" style="padding: 40px; text-align: center; color: var(--text-muted, #64748b);">Kỳ đánh giá này hiện không mở. Bạn chỉ có thể xem và chấm điểm kỳ đang mở.</div>';
       return;
     }
 
-    const scoreSource = getScoreSourceForAccount(currentUser);
     const allowedAreaIds = getAllowedAreaIds(currentUser, periodId);
     const assignedAreas = getAreasForPeriod(periodId).filter((area) => allowedAreaIds.has(area.id));
     const selectedArea = assignedAreas.find((area) => area.id === elements.assessorAreaSelect?.value) || assignedAreas[0] || null;
+
+    const areaKey = `${periodId}:${selectedArea?.id || ""}`;
+    const sourceSelect = elements.assessorScoreSourceSelect;
+    const areaChanged = Boolean(sourceSelect && sourceSelect.dataset.areaKey !== areaKey);
+    const availableScoreSources = getAvailableFiveSScoreSources(currentUser, periodId, selectedArea?.id || "");
+    const defaultScoreSource = getDefaultFiveSScoreSource(currentUser, periodId, selectedArea?.id || "");
+    const selectedScoreSource = !areaChanged ? sourceSelect?.value : "";
+    const scoreSource = availableScoreSources.includes(selectedScoreSource)
+      ? selectedScoreSource
+      : (availableScoreSources.includes(defaultScoreSource) ? defaultScoreSource : availableScoreSources[0] || SCORE_SOURCE_ASSESSOR);
+    if (sourceSelect) {
+      sourceSelect.innerHTML = availableScoreSources
+        .map((source) => `<option value="${escapeHtml(source)}">${source === SCORE_SOURCE_SELF ? "Quản lý zone tự chấm" : "Assessor chấm"}</option>`)
+        .join("");
+      sourceSelect.value = scoreSource;
+      sourceSelect.dataset.areaKey = areaKey;
+      if (elements.assessorScoreSourceField) elements.assessorScoreSourceField.hidden = availableScoreSources.length < 2;
+    }
 
     if (!selectedArea) {
       elements.assessorTitle.textContent = "Phiếu chấm 5S";
@@ -6034,7 +6442,7 @@
       periodId,
       area: selectedArea,
       scoreSource,
-      editable: canEditFiveSScoreSource(currentUser, scoreSource) && !isPeriodArchived(periodId),
+      editable: canEditFiveSScoreSource(currentUser, scoreSource, selectedArea.id, periodId) && !isPeriodArchived(periodId),
     });
   }
 
@@ -6366,6 +6774,7 @@
     mountScopeDetail(elements.catalogScopeSwitch, elements.catalogScopeDetail, expandedCatalogScope);
     syncCatalogPeriodFields();
     renderPeriodList();
+    renderCatalogEmployeeList();
     renderScorerList();
     populateAreaDepartmentHeadSelect();
     renderDepartmentHeadList();
@@ -6423,6 +6832,141 @@
   }
   function renderDataTab() {}
 
+  function catalogPersonMatchesIdentity(person, name, employeeCode = "") {
+    const expectedCode = employeeCodeKey(employeeCode);
+    const actualCode = employeeCodeKey(person?.employeeCode);
+    if (expectedCode && actualCode) return expectedCode === actualCode;
+    return sameNormalizedText(person?.name, name);
+  }
+
+  function getCatalogPersonRoleAndZoneSummary(name, employeeCode = "") {
+    const roles = [];
+    const zoneLabels = [];
+    [FIVE_S_PERIOD_TYPE, SAFETY_PERIOD_TYPE].forEach((type) => {
+      const periodId = getActivePeriodId(type);
+      if (!periodId) return;
+      const scopeLabel = getAccountScopeLabel(type);
+      const areas = getAreasForPeriod(periodId);
+      getPeriodCatalogManagers(type, periodId).filter((person) => catalogPersonMatchesIdentity(person, name, employeeCode)).forEach((manager) => {
+        roles.push(`${scopeLabel} · Quản lý zone`);
+        const codes = areas.filter((area) => area.scorerId === manager.id).map((area) => area.code);
+        zoneLabels.push(`${scopeLabel} · Quản lý: ${codes.join(", ") || "chưa gán"}`);
+      });
+      getPeriodCatalogAssessors(type, periodId).filter((person) => catalogPersonMatchesIdentity(person, name, employeeCode)).forEach((assessor) => {
+        roles.push(`${scopeLabel} · ${getScopedRoleLabel(getAssessorRoleForScope(type), type)}`);
+        const assignedIds = new Set(getAssessorAreaIds(assessor.id, type, periodId));
+        zoneLabels.push(`${scopeLabel} · Chấm: ${areas.filter((area) => assignedIds.has(area.id)).map((area) => area.code).join(", ") || "chưa gán"}`);
+      });
+      getDepartmentHeadRows(periodId).filter((person) => catalogPersonMatchesIdentity(person, name, employeeCode)).forEach((head) => {
+        roles.push(`${scopeLabel} · Trưởng phòng`);
+        zoneLabels.push(`${scopeLabel} · Trưởng phòng quản lý: ${head.areaCodes.join(", ") || "chưa gán"}`);
+      });
+    });
+    return { roles: [...new Set(roles)], zones: [...new Set(zoneLabels)] };
+  }
+
+  function catalogPersonContextHtml(name, employeeCode = "") {
+    const summary = getCatalogPersonRoleAndZoneSummary(name, employeeCode);
+    return `<div class="modal-context">
+      <span><strong>Mã nhân viên:</strong> ${escapeHtml(employeeCode || "chưa có")}</span>
+      <span><strong>Các vai trò:</strong> ${escapeHtml(summary.roles.join(" · ") || "chưa có vai trò khác")}</span>
+      <span><strong>Zone theo vai trò:</strong> ${escapeHtml(summary.zones.join(" · ") || "chưa gán")}</span>
+    </div>`;
+  }
+
+  async function updateCatalogPersonIdentity(oldPerson, nextName, nextEmployeeCode) {
+    const oldName = String(oldPerson?.name || "").trim();
+    const oldCode = employeeCodeKey(oldPerson?.employeeCode);
+    const nextCode = employeeCodeKey(nextEmployeeCode);
+    const matchesIdentity = (person) => {
+      const personCode = employeeCodeKey(person?.employeeCode);
+      if (personCode && (personCode === oldCode || personCode === nextCode)) return true;
+      return !personCode && sameNormalizedText(person?.name, oldName)
+        && !hasAmbiguousCatalogEmployeeCode(oldName);
+    };
+    const updates = {};
+    const stateUpdates = [];
+    const accountUpdates = [];
+
+    for (const type of [FIVE_S_PERIOD_TYPE, SAFETY_PERIOD_TYPE]) {
+      const periodId = getActivePeriodId(type);
+      const period = getPeriod(periodId);
+      const snapshot = period?.settingsSnapshot ? cloneValue(period.settingsSnapshot) : null;
+      const rootManagers = cloneValue(getMutableManagers(type));
+      const rootAssessors = cloneValue(getMutableAssessors(type));
+      const rootContacts = cloneValue(getDepartmentHeadContacts(type));
+      const rootAreas = cloneValue(getMutableAreas(type));
+      const snapshotArrays = snapshot ? getCatalogArrays(type, snapshot) : null;
+      const managerIds = new Set();
+      const assessorIds = new Set();
+      const updatePeople = (rows, ids, { head = false } = {}) => (rows || []).forEach((person) => {
+        if (!matchesIdentity(person)) return;
+        if (person.id && !head) ids.add(person.id);
+        person.name = nextName;
+        person.employeeCode = nextEmployeeCode;
+      });
+      updatePeople(rootManagers, managerIds);
+      updatePeople(rootAssessors, assessorIds);
+      updatePeople(rootContacts, new Set(), { head: true });
+      if (snapshotArrays) {
+        updatePeople(snapshotArrays.managers, managerIds);
+        updatePeople(snapshotArrays.assessors, assessorIds);
+        updatePeople(snapshotArrays.departmentHeadContacts, new Set(), { head: true });
+      }
+      const updateAreas = (areas) => (areas || []).forEach((area) => {
+        if (managerIds.has(area.scorerId)) {
+          area.scorerName = nextName;
+          area.responsibleName = nextName;
+        }
+        const areaAssessorIds = new Set([area.assessorId, ...(area.assessorIds || [])].filter(Boolean));
+        if ([...assessorIds].some((id) => areaAssessorIds.has(id))) area.assessorName = nextName;
+        const areaCode = employeeCodeKey(area.departmentHeadEmployeeCode);
+        const isHead = areaCode && (areaCode === oldCode || areaCode === nextCode)
+          ? true
+          : !areaCode && sameNormalizedText(area.departmentHead, oldName)
+            && !hasAmbiguousCatalogEmployeeCode(oldName);
+        if (isHead) {
+          if (sameNormalizedText(area.summaryGroup, oldName)) area.summaryGroup = nextName;
+          area.departmentHead = nextName;
+          area.departmentHeadEmployeeCode = nextEmployeeCode;
+        }
+      });
+      updateAreas(rootAreas);
+      if (snapshotArrays) updateAreas(snapshotArrays.areas);
+
+      updates[catalogDbPath(type, "managers")] = rootManagers;
+      updates[catalogDbPath(type, "assessors")] = rootAssessors;
+      updates[catalogDbPath(type, "departmentHeadContacts")] = rootContacts;
+      updates[catalogDbPath(type, "areas")] = rootAreas;
+      if (snapshot) updates[`periods/${periodId}/settingsSnapshot`] = snapshot;
+      stateUpdates.push({ type, rootManagers, rootAssessors, rootContacts, rootAreas, period, snapshot });
+    }
+
+    state.accounts.forEach((account) => {
+      const accountCode = employeeCodeKey(account.employeeCode);
+      const identityMatches = accountCode && (accountCode === oldCode || accountCode === nextCode)
+        ? true
+        : !accountCode && sameNormalizedText(account.name, oldName)
+          && !hasAmbiguousCatalogEmployeeCode(oldName);
+      if (!identityMatches) return;
+      const copy = { ...account, name: nextName, employeeCode: nextEmployeeCode };
+      if (account.departmentHeadName && sameNormalizedText(account.departmentHeadName, oldName)) copy.departmentHeadName = nextName;
+      updates[`accounts/${account.id}`] = copy;
+      accountUpdates.push({ account, copy });
+    });
+
+    await dbRef("").update(updates);
+    stateUpdates.forEach(({ type, rootManagers, rootAssessors, rootContacts, rootAreas, period, snapshot }) => {
+      getMutableManagers(type).splice(0, getMutableManagers(type).length, ...rootManagers);
+      getMutableAssessors(type).splice(0, getMutableAssessors(type).length, ...rootAssessors);
+      const contacts = getDepartmentHeadContacts(type);
+      contacts.splice(0, contacts.length, ...rootContacts);
+      getMutableAreas(type).splice(0, getMutableAreas(type).length, ...rootAreas);
+      if (period && snapshot) period.settingsSnapshot = snapshot;
+    });
+    accountUpdates.forEach(({ account, copy }) => Object.assign(account, copy));
+  }
+
   function renderScorerList() {
     const catalogType = activeCatalogScope;
     const periodId = getActivePeriodId(catalogType);
@@ -6432,6 +6976,7 @@
         const zones = areas
           .filter((area) => area.scorerId === manager.id)
           .map((area) => area.code);
+        const accountHtml = catalogAccountBadgeHtml(manager, catalogType);
         let zoneSummaryHtml = "";
         const allZonesStr = zones.join(", ");
         if (!zones.length) {
@@ -6447,6 +6992,8 @@
           <div class="compact-main">
             <div class="compact-title-row">
               <strong>${escapeHtml(manager.name)}</strong>
+              <span class="catalog-meta-pill">Mã NV: ${escapeHtml(manager.employeeCode || "chưa có")}</span>
+              ${accountHtml}
               ${zoneSummaryHtml}
             </div>
           </div>
@@ -6456,7 +7003,7 @@
           </div>
         </article>`;
       })
-      .join("") || '<article class="compact-item"><strong>Chưa có người phụ trách</strong><span>Thêm người phụ trách zone trước khi gán zone.</span></article>';
+      .join("") || '<article class="compact-item"><strong>Chưa có quản lý zone</strong><span>Dùng mục “Thêm người mới” để tạo người phụ trách zone.</span></article>';
   }
 
 
@@ -6471,20 +7018,23 @@
         const zoneSummary = row.areaCodes.length
           ? `<span class="catalog-meta-pill pill-zone">Zone: ${escapeHtml(row.areaCodes.join(", "))}</span>`
           : '<span class="catalog-meta-pill text-muted">Chưa gán zone</span>';
+        const accountHtml = catalogAccountBadgeHtml(row, activeCatalogScope);
         return `<article class="compact-item catalog-department-head-item">
           <div class="compact-main">
             <div class="compact-title-row">
               <strong>${escapeHtml(row.name)}</strong>
+              <span class="catalog-meta-pill">Mã NV: ${escapeHtml(row.employeeCode || "chưa có")}</span>
+              ${accountHtml}
               ${zoneSummary}
             </div>
           </div>
           <div class="compact-actions">
-            <button class="tiny-button" type="button" data-action="edit-catalog-department-head" data-id="${escapeHtml(row.name)}">Sửa</button>
-            <button class="tiny-button danger-text-button" type="button" data-action="delete-catalog-department-head" data-id="${escapeHtml(row.name)}">Xóa</button>
+            <button class="tiny-button" type="button" data-action="edit-catalog-department-head" data-id="${escapeHtml(row.employeeCode || row.name)}">Sửa</button>
+            <button class="tiny-button danger-text-button" type="button" data-action="delete-catalog-department-head" data-id="${escapeHtml(row.employeeCode || row.name)}">Xóa</button>
           </div>
         </article>`;
       })
-      .join("") || '<article class="compact-item"><strong>Chưa có trưởng phòng</strong><span>Thêm trưởng phòng trước khi tạo zone.</span></article>';
+      .join("") || '<article class="compact-item"><strong>Chưa có trưởng phòng</strong><span>Dùng mục “Thêm người mới” để tạo trưởng phòng.</span></article>';
   }
 
   function renderDepartmentHeadEmailList() {
@@ -6528,7 +7078,7 @@
           </div>
         </article>`;
       })
-      .join("") || "<article class=\"compact-item department-head-email-item\"><div><strong>Chưa có trưởng phòng</strong><span>Thêm trưởng phòng ở bước 4 trước khi thiết lập email.</span></div></article>";
+      .join("") || "<article class=\"compact-item department-head-email-item\"><div><strong>Chưa có trưởng phòng</strong><span>Dùng mục “Thêm người mới” để tạo trưởng phòng trước khi thiết lập email.</span></div></article>";
   }
 
   function renderAssessorList() {
@@ -6537,18 +7087,16 @@
     }
 
     const catalogType = activeCatalogScope;
+    const assessorTitle = elements.catalogAssessorList.closest(".panel")?.querySelector(".section-heading h2");
+    if (assessorTitle) assessorTitle.textContent = `Danh sách assessor ${getAccountScopeLabel(catalogType)}`;
     const periodId = getActivePeriodId(catalogType);
     const areas = getAreasForPeriod(periodId);
     elements.catalogAssessorList.innerHTML = getPeriodCatalogAssessors(catalogType, periodId)
       .map((assessor) => {
-        const linkedAccounts = state.accounts
-          .filter((account) => hasAccountAccessType(account, catalogType) && getAccountPersonId(account, catalogType) === assessor.id);
         const assignedAreaIds = new Set(getAssessorAreaIds(assessor.id, catalogType, periodId));
         const zones = areas
           .filter((area) => assignedAreaIds.has(area.id))
           .map((area) => area.code);
-        const accounts = linkedAccounts.map((account) => account.username);
-
         let zoneSummaryHtml = "";
         const allZonesStr = zones.join(", ");
         if (!zones.length) {
@@ -6563,14 +7111,13 @@
           zoneSummaryHtml = `<span class="catalog-meta-pill">${escapeHtml(allZonesStr)}</span>`;
         }
 
-        const accountHtml = accounts.length
-          ? `<span class="catalog-meta-pill pill-user" title="Tài khoản đăng nhập">👤 ${escapeHtml(accounts.join(", "))}</span>`
-          : '<span class="catalog-meta-pill text-muted">Chưa có TK</span>';
+        const accountHtml = catalogAccountBadgeHtml(assessor, catalogType);
 
         return `<article class="compact-item catalog-assessor-item">
           <div class="compact-main">
             <div class="compact-title-row">
               <strong>${escapeHtml(assessor.name)}</strong>
+              <span class="catalog-meta-pill">Mã NV: ${escapeHtml(assessor.employeeCode || "chưa có")}</span>
               ${accountHtml}
             </div>
             <div class="compact-meta-row">
@@ -6583,7 +7130,7 @@
           </div>
         </article>`;
       })
-      .join("") || '<article class="compact-item"><strong>Chưa có assessor</strong><span>Thêm assessor trước khi tạo zone hoặc tài khoản chấm.</span></article>';
+      .join("") || '<article class="compact-item"><strong>Chưa có assessor</strong><span>Dùng mục “Thêm người mới” để tạo assessor trước khi phân công zone hoặc tài khoản chấm.</span></article>';
   }
 
   function getAreaAllAssessorNamesForPeriod(periodId, area, catalogType = activeCatalogScope) {
@@ -6690,7 +7237,7 @@
     const assessorRole = getAssessorRoleForScope(type);
     const normalizedRole = normalizeScopedAccountRole(selectedRole || assessorRole, type);
     const choices = [
-      { value: assessorRole, label: "Assessor" },
+      { value: assessorRole, label: getScopedRoleLabel(assessorRole, type) },
       { value: ROLE_ZONE_OWNER, label: "Người phụ trách zone" },
     ];
     if (options.includeViewer !== false) {
@@ -6700,22 +7247,649 @@
   }
 
   function populateAccountRoleOptions(selectedRole = elements.accountRole?.value || "") {
-    if (!elements.accountRole) {
-      return;
+    if (elements.accountRole) {
+      elements.accountRole.innerHTML = accountRoleOptionsHtml(selectedRole, activeAccountScope, { includeViewer: false });
     }
-    elements.accountRole.innerHTML = accountRoleOptionsHtml(selectedRole, activeAccountScope, { includeViewer: false });
+    populateAccountPersonOptions();
+  }
+
+  function getCatalogPersonProfiles() {
+    const profiles = new Map();
+    const upsert = (type, person, role, areaIds = []) => {
+      const name = String(person?.name || "").trim();
+      const employeeCode = String(person?.employeeCode || "").trim();
+      if (!name && !employeeCode) return null;
+      const identityKey = employeeCode
+        ? `code:${employeeCodeKey(employeeCode)}`
+        : `name:${name.toLocaleLowerCase("vi")}`;
+      let profile = profiles.get(identityKey);
+      if (!profile) {
+        profile = { key: identityKey, employeeCode, name, rolesByType: {}, areaIdsByType: {} };
+        profiles.set(identityKey, profile);
+      }
+      if (employeeCode && !profile.employeeCode) profile.employeeCode = employeeCode;
+      if (!profile.name || (employeeCode && person?.employeeCode)) profile.name = name;
+      const scope = normalizeCatalogType(type);
+      profile.rolesByType[scope] ||= new Set();
+      profile.rolesByType[scope].add(role);
+      profile.areaIdsByType[scope] ||= new Set();
+      (areaIds || []).forEach((areaId) => areaId && profile.areaIdsByType[scope].add(areaId));
+      return profile;
+    };
+
+    [FIVE_S_PERIOD_TYPE, SAFETY_PERIOD_TYPE].forEach((type) => {
+      const periodId = getActivePeriodId(type);
+      if (!periodId) return;
+      getPeriodCatalogManagers(type, periodId).forEach((manager) => {
+        upsert(type, manager, ROLE_ZONE_OWNER, getManagerAreaIds(manager.id, periodId));
+      });
+      getPeriodCatalogAssessors(type, periodId).forEach((assessor) => {
+        upsert(type, assessor, getAssessorRoleForScope(type), getAssessorAreaIds(assessor.id, type, periodId));
+      });
+      getDepartmentHeadRows(periodId).forEach((row) => {
+        const areaIds = getAreasForPeriod(periodId)
+          .filter((area) => row.employeeCode && area.departmentHeadEmployeeCode
+            ? sameEmployeeCode(area.departmentHeadEmployeeCode, row.employeeCode)
+            : departmentHeadKey(area.departmentHead) === departmentHeadKey(row.name))
+          .map((area) => area.id);
+        upsert(type, row, ROLE_DEPARTMENT_HEAD, areaIds);
+      });
+    });
+    return [...profiles.values()]
+      .map((profile) => ({
+        ...profile,
+        rolesByType: Object.fromEntries(Object.entries(profile.rolesByType).map(([type, roles]) => [type, [...roles]])),
+        areaIdsByType: Object.fromEntries(Object.entries(profile.areaIdsByType).map(([type, ids]) => [type, [...ids]])),
+      }))
+      .sort(compareEmployeeCodeAscending);
+  }
+
+  function getCatalogEmployeeRoleOptions() {
+    return [
+      { key: "departmentHead", role: ROLE_DEPARTMENT_HEAD, scopes: [FIVE_S_PERIOD_TYPE, SAFETY_PERIOD_TYPE], label: "Trưởng phòng" },
+      { key: "zoneOwner", role: ROLE_ZONE_OWNER, scopes: [FIVE_S_PERIOD_TYPE, SAFETY_PERIOD_TYPE], label: "Quản lý zone" },
+      { key: "assessor5s", role: ROLE_ASSESSOR_5S, scopes: [FIVE_S_PERIOD_TYPE], label: "Assessor 5S" },
+      { key: "assessorSafety", role: ROLE_ASSESSOR_SAFETY, scopes: [SAFETY_PERIOD_TYPE], label: "Assessor AT" },
+    ];
+  }
+
+  function getCatalogEmployeeRoleRows(profile, type, role, periodId = getActivePeriodId(type)) {
+    if (role === ROLE_ZONE_OWNER) return getPeriodCatalogManagers(type, periodId).filter((person) => accountMatchesCatalogPerson(profile, person));
+    if (role === ROLE_DEPARTMENT_HEAD) return getDepartmentHeadRows(periodId).filter((person) => accountMatchesCatalogPerson(profile, person));
+    return getPeriodCatalogAssessors(type, periodId).filter((person) => accountMatchesCatalogPerson(profile, person));
+  }
+
+  function getCatalogEmployeeRoleAreaIds(profile, type, role, periodId = getActivePeriodId(type)) {
+    const areas = getAreasForPeriod(periodId);
+    const rows = getCatalogEmployeeRoleRows(profile, type, role, periodId);
+    if (role === ROLE_ZONE_OWNER) {
+      const ids = new Set(rows.map((person) => person.id));
+      return areas.filter((area) => ids.has(area.scorerId)).map((area) => area.id);
+    }
+    if (role === ROLE_DEPARTMENT_HEAD) {
+      return areas.filter((area) => profile.employeeCode && area.departmentHeadEmployeeCode
+        ? sameEmployeeCode(profile.employeeCode, area.departmentHeadEmployeeCode)
+        : departmentHeadKey(area.departmentHead) === departmentHeadKey(profile.name)).map((area) => area.id);
+    }
+    return [...new Set(rows.flatMap((person) => getAssessorAreaIds(person.id, type, periodId)))];
+  }
+
+  function getSharedCatalogEmployeeRoleZones(profile, role) {
+    const zones = new Map();
+    [FIVE_S_PERIOD_TYPE, SAFETY_PERIOD_TYPE].forEach((type) => {
+      const periodId = getActivePeriodId(type);
+      const areas = getAreasForPeriod(periodId)
+        .filter((area) => type !== SAFETY_PERIOD_TYPE || isReportableSafetyArea(area));
+      const selectedIds = new Set(getCatalogEmployeeRoleAreaIds(profile, type, role, periodId));
+      const roleRows = getCatalogEmployeeRoleRows(profile, type, role, periodId);
+      const personIds = new Set(roleRows.map((person) => person.id).filter(Boolean));
+      areas.forEach((area) => {
+        const code = String(area.code || "").trim();
+        if (!code) return;
+        const zoneKey = code.toLocaleLowerCase("vi");
+        let zone = zones.get(zoneKey);
+        if (!zone) {
+          zone = { key: zoneKey, code, entries: [], selected: false };
+          zones.set(zoneKey, zone);
+        }
+
+        let isCurrent = selectedIds.has(area.id);
+        let occupied = false;
+        if (role === ROLE_ZONE_OWNER) {
+          isCurrent ||= personIds.has(area.scorerId)
+            || (!area.scorerId && sameNormalizedText(area.responsibleName || area.scorerName, profile.name)
+              && !hasAmbiguousCatalogEmployeeCode(profile.name));
+          occupied = Boolean(area.scorerId || area.responsibleName || area.scorerName);
+        } else {
+          const areaCode = employeeCodeKey(area.departmentHeadEmployeeCode);
+          isCurrent ||= Boolean(profile.employeeCode && areaCode
+            ? sameEmployeeCode(profile.employeeCode, area.departmentHeadEmployeeCode)
+            : departmentHeadKey(area.departmentHead) === departmentHeadKey(profile.name)
+              && !hasAmbiguousCatalogEmployeeCode(profile.name));
+          occupied = Boolean(departmentHeadKey(area.departmentHead));
+        }
+        const canAssign = isCurrent || !occupied;
+        const label = type === SAFETY_PERIOD_TYPE
+          ? `AT: ${getSafetyDepartmentForArea(area, periodId) || "chưa có tên"}`
+          : `5S: ${getAreaResponsibleNameForPeriod(periodId, area) || "chưa có tên"}`;
+        zone.entries.push({ type, areaId: area.id, label, canAssign, isCurrent });
+        zone.selected ||= isCurrent;
+      });
+    });
+
+    return [...zones.values()]
+      .map((zone) => ({
+        ...zone,
+        entries: zone.entries.sort((left, right) => left.type.localeCompare(right.type)),
+      }))
+      .sort((left, right) => left.code.localeCompare(right.code, "vi", { numeric: true, sensitivity: "base" }));
+  }
+
+  function sharedCatalogEmployeeZoneListHtml(profile, role, inputName) {
+    const zones = getSharedCatalogEmployeeRoleZones(profile, role);
+    if (!zones.length) return '<p class="field-hint">Chưa có zone trong các danh mục đang mở.</p>';
+    const selectableZones = zones.filter((zone) => zone.entries.some((entry) => entry.canAssign));
+    const allChecked = selectableZones.length > 0 && selectableZones.every((zone) => zone.selected);
+    const items = zones.map((zone) => {
+      const disabled = !zone.entries.some((entry) => entry.canAssign) && !zone.selected;
+      const labels = [...new Set(zone.entries.map((entry) => entry.label))].join(" · ");
+      const hasOtherAssignment = zone.entries.some((entry) => !entry.canAssign);
+      return `<label class="check-line zone-check-item ${disabled ? "is-unavailable" : ""}">
+        <input name="${escapeHtml(inputName)}" type="checkbox" value="${escapeHtml(zone.key)}" ${zone.selected ? "checked" : ""} ${disabled ? "disabled" : ""}>
+        <span>Zone ${escapeHtml(zone.code)} · ${escapeHtml(labels)}${hasOtherAssignment ? ' <small>(đã có người phụ trách ở một danh mục)</small>' : ""}</span>
+      </label>`;
+    }).join("");
+    return `<div class="zone-check-list">
+      <div class="zone-check-header"><label class="check-line zone-select-all-label">
+        <input type="checkbox" data-select-all="${escapeHtml(inputName)}" ${allChecked ? "checked" : ""}>
+        <span>Chọn tất cả</span>
+      </label></div>
+      <div class="zone-check-items">${items}</div>
+    </div>`;
+  }
+
+  function renderCatalogEmployeeList() {
+    if (!elements.catalogEmployeeList) return;
+    const profiles = getCatalogPersonProfiles();
+    elements.catalogEmployeeList.innerHTML = profiles.map((profile) => {
+      const accountNames = [...new Set((state.accounts || [])
+        .filter((account) => !isAdminAccount(account) && !isViewerAccount(account) && accountMatchesCatalogPerson(account, profile))
+        .map((account) => account.username)
+        .filter(Boolean))];
+      const roles = getCatalogEmployeeRoleOptions()
+        .filter((option) => option.scopes.some((type) => (profile.rolesByType[type] || []).includes(option.role)))
+        .map((option) => option.label);
+      const zones = [FIVE_S_PERIOD_TYPE, SAFETY_PERIOD_TYPE].flatMap((type) => {
+        const periodId = getActivePeriodId(type);
+        const codes = (profile.areaIdsByType[type] || [])
+          .map((areaId) => getAreaForPeriod(periodId, areaId)?.code)
+          .filter(Boolean);
+        return codes.length ? [`${getAccountScopeLabel(type)}: ${codes.join(", ")}`] : [];
+      });
+      return `<article class="compact-item catalog-employee-item">
+        <div class="compact-main">
+          <div class="compact-title-row">
+            <strong>${escapeHtml(profile.name || "Chưa có tên")}</strong>
+            <span class="catalog-meta-pill">Mã NV: ${escapeHtml(profile.employeeCode || "chưa có")}</span>
+            ${accountNames.length ? `<span class="catalog-meta-pill pill-user">👤 ${escapeHtml(accountNames.join(", "))}</span>` : ""}
+          </div>
+          <div class="compact-meta-row"><span class="meta-label">Vai trò:</span> ${escapeHtml(roles.join(" · ") || "Chưa có quyền")}</div>
+          <div class="compact-meta-row"><span class="meta-label">Zone:</span> ${escapeHtml(zones.join(" · ") || "Chưa gán zone")}</div>
+        </div>
+        <div class="compact-actions">
+          <button class="tiny-button" type="button" data-action="edit-catalog-employee" data-id="${escapeHtml(profile.key)}">Sửa</button>
+          <button class="tiny-button danger-text-button" type="button" data-action="delete-catalog-employee" data-id="${escapeHtml(profile.key)}">Xóa</button>
+        </div>
+      </article>`;
+    }).join("") || '<article class="compact-item"><strong>Chưa có nhân viên trong danh mục.</strong><span>Thêm nhân viên ở mục “Thêm người mới”.</span></article>';
+  }
+
+  function editCatalogEmployee(profileKey) {
+    if (!requireAdminAction()) return;
+    const profile = getCatalogPersonProfiles().find((person) => person.key === profileKey);
+    if (!profile) return;
+    const roleOptions = getCatalogEmployeeRoleOptions();
+    const rolesHtml = roleOptions.map((option) => {
+      const isChecked = option.scopes.some((type) => (profile.rolesByType[type] || []).includes(option.role));
+      const sharedInputName = `employeeZones-${option.key}`;
+      const scopeZonesHtml = option.scopes.length > 1
+        ? sharedCatalogEmployeeZoneListHtml(profile, option.role, sharedInputName)
+        : option.scopes.map((type) => {
+          const periodId = getActivePeriodId(type);
+          const roleRows = getCatalogEmployeeRoleRows(profile, type, option.role, periodId);
+          const roleIds = roleRows.map((person) => person.id).filter(Boolean);
+          const currentAreaIds = getCatalogEmployeeRoleAreaIds(profile, type, option.role, periodId);
+          const assessorFilter = [ROLE_ASSESSOR_5S, ROLE_ASSESSOR_SAFETY].includes(option.role) ? { assessorId: roleIds[0] || "" } : null;
+          const inputName = `employeeAreas-${option.key}-${type}`;
+          return `<div class="catalog-employee-role-scope">
+            <strong>${escapeHtml(getAccountScopeLabel(type))}</strong>
+            <div class="zone-check-list">${areaCheckboxListHtml(currentAreaIds, type, periodId, null, assessorFilter, null, inputName)}</div>
+          </div>`;
+        }).join("");
+      const zoneHint = option.scopes.length > 1
+        ? "Một lựa chọn zone dùng chung cho 5S và An toàn; zone trùng mã được gom thành một dòng."
+        : "Chọn zone áp dụng cho vai trò này.";
+      return `<div class="catalog-employee-role-editor">
+        <label class="check-line">
+          <input name="employeeRoles" type="checkbox" value="${escapeHtml(option.key)}" data-employee-role="${escapeHtml(option.key)}" ${isChecked ? "checked" : ""}>
+          <span>${escapeHtml(option.label)}</span>
+        </label>
+        <div class="catalog-person-role-zone" data-employee-role-zones="${escapeHtml(option.key)}" ${isChecked ? "" : "hidden"}>
+          <span class="field-hint">${escapeHtml(zoneHint)}</span>
+          ${scopeZonesHtml}
+        </div>
+      </div>`;
+    }).join("");
+
+    openFormModal({
+      title: "Sửa thông tin và quyền nhân viên",
+      submitText: "Lưu thay đổi",
+      html: `${catalogPersonContextHtml(profile.name, profile.employeeCode)}
+        <label><span>Mã nhân viên</span><input name="employeeCode" type="text" value="${escapeHtml(profile.employeeCode || "")}" required></label>
+        <label><span>Tên nhân viên</span><input name="name" type="text" value="${escapeHtml(profile.name || "")}" required></label>
+        <div class="form-field"><span>Vai trò theo danh mục</span><div class="catalog-employee-role-grid">${rolesHtml}</div></div>
+        <p class="field-hint">Bỏ chọn vai trò để gỡ quyền và các zone đã gán trong vai trò đó. Khi gỡ hết vai trò, tài khoản liên kết sẽ mất quyền truy cập.</p>`,
+      async onSubmit(formData, form) {
+        const nextName = String(formData.get("name") || "").trim();
+        const nextEmployeeCode = String(formData.get("employeeCode") || "").trim();
+        if (!nextName || !nextEmployeeCode) {
+          showToast("Mã nhân viên và tên không được để trống.", true);
+          return false;
+        }
+        const duplicate = getCatalogPersonProfiles().find((person) => person.key !== profile.key
+          && employeeCodeKey(person.employeeCode) === employeeCodeKey(nextEmployeeCode));
+        if (duplicate) {
+          showToast(`Mã nhân viên ${nextEmployeeCode} đã thuộc về ${duplicate.name}.`, true);
+          return false;
+        }
+        const selectedRoles = new Set(formData.getAll("employeeRoles").map(String));
+        const selectedAreaIdsByRole = Object.fromEntries(roleOptions.map((option) => {
+          if (option.scopes.length > 1) {
+            const selectedZoneKeys = new Set(getCheckedAreaIds(form, `employeeZones-${option.key}`));
+            const selectedZones = getSharedCatalogEmployeeRoleZones(profile, option.role)
+              .filter((zone) => selectedZoneKeys.has(zone.key));
+            return [option.key, Object.fromEntries(option.scopes.map((type) => [
+              type,
+              selectedZones.flatMap((zone) => zone.entries
+                .filter((entry) => entry.type === type && entry.canAssign)
+                .map((entry) => entry.areaId)),
+            ]))];
+          }
+          const type = option.scopes[0];
+          return [option.key, {
+            [type]: getCheckedAreaIds(form, `employeeAreas-${option.key}-${type}`),
+          }];
+        }));
+        return saveCatalogEmployeeRoles(profile, nextName, nextEmployeeCode, selectedRoles, selectedAreaIdsByRole);
+      },
+    });
+    elements.modalBody.querySelectorAll("[data-employee-role]").forEach((checkbox) => {
+      checkbox.addEventListener("change", () => {
+        const zones = [...elements.modalBody.querySelectorAll("[data-employee-role-zones]")]
+          .find((item) => item.dataset.employeeRoleZones === checkbox.dataset.employeeRole);
+        if (zones) zones.hidden = !checkbox.checked;
+      });
+    });
+  }
+
+  function getEmployeeAccountRole(roleList, type) {
+    const preferred = [ROLE_ZONE_OWNER, getAssessorRoleForScope(type), ROLE_DEPARTMENT_HEAD];
+    return preferred.find((role) => roleList.includes(role)) || "";
+  }
+
+  function syncCatalogEmployeeAccount(profile, nextName, nextEmployeeCode, selectedRolesByType) {
+    const oldCode = employeeCodeKey(profile.employeeCode);
+    (state.accounts || []).forEach((account) => {
+      if (!account || isAdminAccount(account) || isViewerAccount(account)) return;
+      const accountCode = employeeCodeKey(account.employeeCode);
+      const matches = oldCode && accountCode
+        ? oldCode === accountCode || employeeCodeKey(nextEmployeeCode) === accountCode
+        : sameNormalizedText(account.name, profile.name) && !hasAmbiguousCatalogEmployeeCode(profile.name);
+      if (!matches) return;
+      account.name = nextName;
+      account.displayName = nextName;
+      account.employeeCode = nextEmployeeCode;
+      const roleMap = {};
+      [FIVE_S_PERIOD_TYPE, SAFETY_PERIOD_TYPE].forEach((type) => {
+        const roles = selectedRolesByType[type] || [];
+        const scopedRole = getEmployeeAccountRole(roles, type);
+        if (scopedRole) roleMap[type] = scopedRole;
+      });
+      account.accessTypes = Object.keys(roleMap);
+      account.rolesByType = roleMap;
+      const currentPrimaryScope = normalizeAccountRole(account.role) === ROLE_ASSESSOR_SAFETY
+        ? SAFETY_PERIOD_TYPE
+        : FIVE_S_PERIOD_TYPE;
+      account.role = roleMap[currentPrimaryScope] || roleMap[FIVE_S_PERIOD_TYPE] || roleMap[SAFETY_PERIOD_TYPE] || "unassigned";
+      account.departmentHeadName = roleMap[FIVE_S_PERIOD_TYPE] === ROLE_DEPARTMENT_HEAD
+        || roleMap[SAFETY_PERIOD_TYPE] === ROLE_DEPARTMENT_HEAD
+        ? nextName
+        : "";
+      account.fiveSAreaIds = roleMap[FIVE_S_PERIOD_TYPE] === ROLE_ASSESSOR_5S
+        ? getCatalogEmployeeRoleAreaIds({ ...profile, name: nextName, employeeCode: nextEmployeeCode }, FIVE_S_PERIOD_TYPE, ROLE_ASSESSOR_5S)
+        : [];
+      account.safetyAreaIds = roleMap[SAFETY_PERIOD_TYPE] === ROLE_ASSESSOR_SAFETY
+        ? getCatalogEmployeeRoleAreaIds({ ...profile, name: nextName, employeeCode: nextEmployeeCode }, SAFETY_PERIOD_TYPE, ROLE_ASSESSOR_SAFETY)
+        : [];
+      account.areaIds = [...account.fiveSAreaIds];
+    });
+  }
+
+  async function saveCatalogEmployeeRoles(profile, nextName, nextEmployeeCode, selectedRoles, selectedAreaIdsByRole) {
+    const options = getCatalogEmployeeRoleOptions();
+    const scopesByRole = {};
+    const selectedRolesByType = { [FIVE_S_PERIOD_TYPE]: [], [SAFETY_PERIOD_TYPE]: [] };
+
+    for (const option of options) {
+      if (!selectedRoles.has(option.key)) continue;
+      const targetScopes = option.scopes.filter((type) =>
+        [ROLE_ASSESSOR_5S, ROLE_ASSESSOR_SAFETY].includes(option.role)
+          || (profile.rolesByType[type] || []).includes(option.role)
+          || (selectedAreaIdsByRole[option.key]?.[type] || []).length > 0);
+      if (!targetScopes.length) {
+        showToast("Chọn ít nhất một zone trong 5S hoặc An toàn cho vai trò này.", true);
+        return false;
+      }
+      scopesByRole[option.key] = targetScopes;
+
+      for (const type of targetScopes) {
+        const periodId = getActivePeriodId(type);
+        const selected = new Set(selectedAreaIdsByRole[option.key]?.[type] || []);
+        const available = getAvailableCatalogPersonAreaIds(option.role, type, periodId);
+        getCatalogEmployeeRoleAreaIds(profile, type, option.role, periodId).forEach((areaId) => available.add(areaId));
+        if (option.scopes.length > 1) {
+          getSharedCatalogEmployeeRoleZones(profile, option.role)
+            .flatMap((zone) => zone.entries)
+            .filter((entry) => entry.type === type && entry.canAssign)
+            .forEach((entry) => available.add(entry.areaId));
+        }
+        if ([...selected].some((areaId) => !available.has(areaId))) {
+          showToast("Một số zone đã được giao cho người khác hoặc không còn khả dụng. Hãy mở lại danh sách và thử lại.", true);
+          return false;
+        }
+        selectedRolesByType[type].push(option.role);
+      }
+    }
+
+    for (const option of options) {
+      if (selectedRoles.has(option.key)) continue;
+      for (const type of option.scopes) {
+        if ((profile.rolesByType[type] || []).includes(option.role)) {
+          await removeCatalogEmployeeRole(profile, type, option.role);
+        }
+      }
+    }
+
+    await updateCatalogPersonIdentity(profile, nextName, nextEmployeeCode);
+    const nextProfile = { ...profile, name: nextName, employeeCode: nextEmployeeCode };
+
+    for (const option of options) {
+      if (!selectedRoles.has(option.key)) continue;
+      for (const type of scopesByRole[option.key] || []) {
+        const areaIds = selectedAreaIdsByRole[option.key]?.[type] || [];
+        const periodId = getActivePeriodId(type);
+        const selected = new Set(areaIds);
+        const currentRoleRows = getCatalogEmployeeRoleRows(nextProfile, type, option.role, periodId);
+        const currentRoleIds = new Set(currentRoleRows.map((person) => person.id).filter(Boolean));
+        const areas = getAreasForPeriod(periodId);
+        if (option.role === ROLE_ZONE_OWNER && areas.some((area) => selected.has(area.id) && area.scorerId && !currentRoleIds.has(area.scorerId))) {
+          showToast("Một số zone quản lý vừa được giao cho người khác. Hãy mở lại danh sách và chọn zone còn trống.", true);
+          return false;
+        }
+        if (option.role === ROLE_DEPARTMENT_HEAD && areas.some((area) => selected.has(area.id)
+          && departmentHeadKey(area.departmentHead)
+          && !(nextEmployeeCode && area.departmentHeadEmployeeCode
+            ? sameEmployeeCode(nextEmployeeCode, area.departmentHeadEmployeeCode)
+            : departmentHeadKey(area.departmentHead) === departmentHeadKey(nextName)))) {
+          showToast("Một số zone trưởng phòng vừa được giao cho người khác. Hãy mở lại danh sách và chọn zone còn trống.", true);
+          return false;
+        }
+
+        const input = { employeeCode: nextEmployeeCode, name: nextName, areaIds };
+        const fakeEvent = { preventDefault() {} };
+        let saved = true;
+        if (option.role === ROLE_ZONE_OWNER) {
+          saved = await handleScorerSubmit(fakeEvent, input, type);
+          if (saved) {
+            const manager = getPeriodCatalogManagers(type, periodId)
+              .find((person) => catalogPersonMatchesIdentity(person, nextName, nextEmployeeCode));
+            if (manager) await saveManagerWithAreas(manager, areaIds, type, periodId);
+          }
+        } else if ([ROLE_ASSESSOR_5S, ROLE_ASSESSOR_SAFETY].includes(option.role)) {
+          saved = await handleAssessorSubmit(fakeEvent, input, type);
+          if (saved) {
+            const assessor = getPeriodCatalogAssessors(type, periodId)
+              .find((person) => catalogPersonMatchesIdentity(person, nextName, nextEmployeeCode));
+            if (assessor) {
+              const updates = setAssessorAreaIds(assessor.id, areaIds, type, periodId);
+              if (Object.keys(updates).length) await dbRef("").update(updates);
+            }
+          }
+        } else {
+          saved = await handleDepartmentHeadSubmit(fakeEvent, input, type);
+          if (saved) await syncEmployeeDepartmentHeadAreas(nextProfile, type, areaIds);
+        }
+        if (!saved) return false;
+      }
+    }
+
+    syncCatalogEmployeeAccount(profile, nextName, nextEmployeeCode, selectedRolesByType);
+    const accountUpdates = {};
+    (state.accounts || []).forEach((account) => {
+      if (account && !isAdminAccount(account) && !isViewerAccount(account)
+        && employeeCodeKey(account.employeeCode) === employeeCodeKey(nextEmployeeCode)) {
+        accountUpdates[`accounts/${account.id}`] = account;
+      }
+    });
+    if (Object.keys(accountUpdates).length) await dbRef("").update(accountUpdates);
+    await logAdminChange({
+      subjectLabel: "Nhân viên",
+      beforeLabel: `${profile.employeeCode || "chưa có mã"} · ${profile.name}`,
+      afterLabel: `${nextEmployeeCode} · ${nextName}`,
+      changeLabel: `Cập nhật thông tin và quyền nhân viên ${profile.name}`,
+      scope: "",
+    });
+    showToast("Đã cập nhật nhân viên và quyền.");
+    renderAll();
+    return true;
+  }
+
+  async function syncEmployeeDepartmentHeadAreas(profile, type, areaIds) {
+    const periodId = getActivePeriodId(type);
+    const selected = new Set(areaIds || []);
+    const matches = (area) => profile.employeeCode && area.departmentHeadEmployeeCode
+      ? sameEmployeeCode(profile.employeeCode, area.departmentHeadEmployeeCode)
+      : departmentHeadKey(area.departmentHead) === departmentHeadKey(profile.name)
+        && !hasAmbiguousCatalogEmployeeCode(profile.name);
+    const apply = (areas) => areas.forEach((area) => {
+      if (selected.has(area.id) || matches(area)) {
+        if (selected.has(area.id)) {
+          area.departmentHead = profile.name;
+          area.departmentHeadEmployeeCode = profile.employeeCode;
+        } else {
+          area.departmentHead = "";
+          area.departmentHeadEmployeeCode = "";
+        }
+      }
+    });
+    const rootAreas = getMutableAreas(type);
+    apply(rootAreas);
+    const updates = { [catalogDbPath(type, "areas")]: rootAreas };
+    const period = getPeriod(periodId);
+    if (period?.settingsSnapshot) {
+      apply(getMutablePeriodAreas(type, periodId));
+      updates[`periods/${periodId}/settingsSnapshot`] = period.settingsSnapshot;
+    }
+    await dbRef("").update(updates);
+  }
+
+  async function removeCatalogEmployeeRole(profile, type, role) {
+    const collection = role === ROLE_ZONE_OWNER ? "managers" : role === ROLE_DEPARTMENT_HEAD ? "departmentHeadContacts" : "assessors";
+    const rootRows = collection === "managers" ? getMutableManagers(type)
+      : collection === "assessors" ? getMutableAssessors(type)
+        : getDepartmentHeadContacts(type);
+    const matchingIds = new Set();
+    [rootRows, ...state.periods
+      .filter((period) => normalizeCatalogType(period.type) === normalizeCatalogType(type) && period.settingsSnapshot)
+      .map((period) => getCatalogArrays(type, period.settingsSnapshot)[collection])]
+      .flat()
+      .filter((person) => accountMatchesCatalogPerson(profile, person))
+      .forEach((person) => person.id && matchingIds.add(person.id));
+    const isPerson = (person) => accountMatchesCatalogPerson(profile, person);
+    const removeFrom = (rows) => rows.splice(0, rows.length, ...rows.filter((person) => !isPerson(person)));
+    const updates = {};
+    removeFrom(rootRows);
+    updates[catalogDbPath(type, collection)] = rootRows;
+
+    const updateAreas = (areas, assessorRows = []) => areas.forEach((area) => {
+      if (role === ROLE_ZONE_OWNER && matchingIds.has(area.scorerId)) {
+        area.scorerId = "";
+        area.scorerName = "";
+        area.responsibleName = "";
+      } else if (role === ROLE_DEPARTMENT_HEAD && (profile.employeeCode && area.departmentHeadEmployeeCode
+        ? sameEmployeeCode(profile.employeeCode, area.departmentHeadEmployeeCode)
+        : departmentHeadKey(area.departmentHead) === departmentHeadKey(profile.name)
+          && !hasAmbiguousCatalogEmployeeCode(profile.name))) {
+        area.departmentHead = "";
+        area.departmentHeadEmployeeCode = "";
+      } else if (role !== ROLE_ZONE_OWNER && role !== ROLE_DEPARTMENT_HEAD) {
+        const ids = new Set(Array.isArray(area.assessorIds) ? area.assessorIds : [area.assessorId].filter(Boolean));
+        const before = ids.size;
+        matchingIds.forEach((id) => ids.delete(id));
+        if (ids.size !== before || matchingIds.has(area.assessorId)) {
+          area.assessorIds = [...ids];
+          if (matchingIds.has(area.assessorId)) {
+            area.assessorId = area.assessorIds[0] || "";
+            area.assessorName = assessorRows.find((person) => person.id === area.assessorId)?.name || "";
+          }
+        }
+      }
+    });
+
+    const rootAreas = getMutableAreas(type);
+    updateAreas(rootAreas, getMutableAssessors(type));
+    updates[catalogDbPath(type, "areas")] = rootAreas;
+    if (collection === "assessors") {
+      const accountUpdates = {};
+      (state.accounts || []).filter((account) => catalogPersonMatchesIdentity(account, profile.name, profile.employeeCode))
+        .forEach((account) => {
+          setAccountAreaIds(account, type, []);
+          accountUpdates[`accounts/${account.id}`] = account;
+        });
+      Object.assign(updates, accountUpdates);
+    }
+
+    state.periods.filter((period) => normalizeCatalogType(period.type) === normalizeCatalogType(type) && period.settingsSnapshot)
+      .forEach((period) => {
+        const arrays = getCatalogArrays(type, period.settingsSnapshot);
+        removeFrom(arrays[collection]);
+        updateAreas(arrays.areas, arrays.assessors);
+        updates[`periods/${period.id}/settingsSnapshot`] = period.settingsSnapshot;
+      });
+    await dbRef("").update(updates);
+  }
+
+  function deleteCatalogEmployee(profileKey) {
+    if (!requireAdminAction()) return;
+    const profile = getCatalogPersonProfiles().find((person) => person.key === profileKey);
+    if (!profile) return;
+    const roleLabels = getCatalogEmployeeRoleOptions()
+      .filter((option) => option.scopes.some((type) => (profile.rolesByType[type] || []).includes(option.role)))
+      .map((option) => option.label);
+    openConfirmModal({
+      title: "Xóa nhân viên khỏi danh mục",
+      message: `Xóa ${profile.employeeCode || "chưa có mã"} · ${profile.name} và các quyền ${roleLabels.join(", ") || "đang có"}? Phân công zone của các vai trò này sẽ được gỡ. Tài khoản đăng nhập được giữ lại nhưng mất quyền hệ thống.`,
+      confirmText: "Xóa nhân viên",
+      danger: true,
+      async onConfirm() {
+        const beforeState = stateToStorage(state);
+        try {
+          for (const option of getCatalogEmployeeRoleOptions()) {
+            for (const type of option.scopes) {
+              if ((profile.rolesByType[type] || []).includes(option.role)) {
+                await removeCatalogEmployeeRole(profile, type, option.role);
+              }
+            }
+          }
+          syncCatalogEmployeeAccount(profile, profile.name, profile.employeeCode, new Set());
+          const updates = {};
+          (state.accounts || []).forEach((account) => {
+            if (account && employeeCodeKey(account.employeeCode) === employeeCodeKey(profile.employeeCode)) {
+              updates[`accounts/${account.id}`] = account;
+            }
+          });
+          if (Object.keys(updates).length) await dbRef("").update(updates);
+          await logAdminChange({
+            subjectLabel: "Nhân viên",
+            beforeLabel: `${profile.employeeCode || "chưa có mã"} · ${profile.name}`,
+            afterLabel: "Đã xóa khỏi danh mục",
+            changeLabel: `Xóa nhân viên ${profile.name}`,
+            scope: "",
+          });
+          showToast("Đã xóa nhân viên khỏi danh mục và gỡ các quyền.");
+          renderAll();
+        } catch (error) {
+          state = normalizeState(beforeState);
+          renderAll();
+          showToast(error?.message || "Không xóa được nhân viên. Vui lòng thử lại.", true);
+          return false;
+        }
+      },
+    });
+  }
+
+  function populateAccountPersonOptions(selectedKey = elements.accountDisplayName?.value || "") {
+    const select = elements.accountDisplayName;
+    if (!select) return;
+    const scope = normalizeCatalogType(activeAccountScope);
+    const profiles = getCatalogPersonProfiles().filter((profile) => (profile.rolesByType[scope] || []).length);
+    if (elements.accountPersonSearchOptions) {
+      elements.accountPersonSearchOptions.innerHTML = profiles.map((profile) => {
+        const roleNames = (profile.rolesByType[scope] || []).map((role) => getScopedRoleLabel(role, scope)).join(" + ");
+        const label = `${profile.employeeCode || "Chưa có mã NV"} · ${profile.name} · ${roleNames}`;
+        return `<option value="${escapeHtml(label)}" data-profile-key="${escapeHtml(profile.key)}"></option>`;
+      }).join("");
+    }
+    select.innerHTML = '<option value="">Chọn nhân viên trong danh mục</option>' + profiles
+      .map((profile) => {
+        const roleNames = (profile.rolesByType[scope] || []).map((role) => getScopedRoleLabel(role, scope)).join(" + ");
+        const label = `${profile.employeeCode || "Chưa có mã NV"} · ${profile.name} · ${roleNames}`;
+        return `<option value="${escapeHtml(profile.key)}">${escapeHtml(label)}</option>`;
+      }).join("");
+    if (profiles.some((profile) => profile.key === selectedKey)) select.value = selectedKey;
+    syncAccountPersonSearchFromSelection();
+  }
+
+  function syncAccountPersonSearchFromSelection() {
+    const search = elements.accountPersonSearch;
+    const select = elements.accountDisplayName;
+    if (!search || !select) return;
+    const selectedOption = select.selectedOptions?.[0];
+    search.value = selectedOption?.value ? selectedOption.textContent.trim() : "";
+  }
+
+  function selectAccountPersonFromSearch() {
+    const search = elements.accountPersonSearch;
+    const select = elements.accountDisplayName;
+    if (!search || !select) return;
+    const query = search.value.trim().toLocaleLowerCase("vi");
+    const options = [...(elements.accountPersonSearchOptions?.options || [])];
+    const match = options.find((option) => option.value.trim().toLocaleLowerCase("vi") === query)
+      || options.find((option) => {
+        const code = option.value.split("·")[0].trim().toLocaleLowerCase("vi");
+        return code && code !== "chưa có mã nv" && code === query;
+      });
+    if (match?.dataset.profileKey && [...select.options].some((option) => option.value === match.dataset.profileKey)) {
+      select.value = match.dataset.profileKey;
+    } else {
+      select.value = "";
+    }
   }
 
 
   function accountZoneCodesForScope(account, type = activeAccountScope) {
     if (isViewerAccount(account)) {
       return ["Toàn bộ bảng biểu"];
-    }
-    if (isDepartmentHeadAccount(account)) {
-      return getAreasForPeriod(getActivePeriodId(type))
-        .filter((area) => (normalizeCatalogType(type) !== SAFETY_PERIOD_TYPE || isReportableSafetyArea(area)) && isAreaManagedByDepartmentHead(area, account))
-        .map((area) => area.code)
-        .filter(Boolean);
     }
     const periodId = getActivePeriodId(type);
     const catalogType = normalizeCatalogType(type);
@@ -6732,7 +7906,8 @@
     if (isViewerAccount(account)) {
       return `${account.username} · Người xem · ${account.name || account.displayName || account.username}${account.position ? ` · ${account.position}` : ""}`;
     }
-    if (isDepartmentHeadAccount(account)) {
+    if (isDepartmentHeadAccount(account) && !getAccountRolesForType(account, type)
+      .some((role) => [ROLE_ZONE_OWNER, ROLE_ASSESSOR_5S, ROLE_ASSESSOR_SAFETY].includes(role))) {
       const headName = getDepartmentHeadAccountName(account);
       const zones = [FIVE_S_PERIOD_TYPE, SAFETY_PERIOD_TYPE]
         .flatMap((scope) => accountZoneCodesForScope(account, scope))
@@ -6764,11 +7939,11 @@
   }
 
   function missingAccountAccessTypes(account) {
-    if (!account || isAdminAccount(account) || isViewerAccount(account) || isDepartmentHeadAccount(account)) {
+    if (!account || isAdminAccount(account) || isViewerAccount(account) || hasDepartmentHeadRole(account)) {
       return [];
     }
 
-    const accessTypes = new Set(normalizeAccountAccessTypes(account.accessTypes, account.role));
+    const accessTypes = new Set(existingAccountAccessTypes(account));
     return [FIVE_S_PERIOD_TYPE, SAFETY_PERIOD_TYPE].filter((type) => !accessTypes.has(type));
   }
 
@@ -6782,12 +7957,12 @@
     if (isViewerAccount(account)) {
       return [];
     }
-    if (isDepartmentHeadAccount(account)) {
+    if (hasDepartmentHeadRole(account)) {
       return [FIVE_S_PERIOD_TYPE, SAFETY_PERIOD_TYPE];
     }
 
-    return normalizeAccountAccessTypes(account.accessTypes, account.role)
-      .filter((type) => [FIVE_S_PERIOD_TYPE, SAFETY_PERIOD_TYPE].includes(type));
+    return [FIVE_S_PERIOD_TYPE, SAFETY_PERIOD_TYPE]
+      .filter((type) => hasAccountAccessType(account, type));
   }
 
   function accountAccessSummary(account) {
@@ -6799,11 +7974,15 @@
     if (isViewerAccount(account)) {
       return "Quyền hiện có: Người xem · toàn bộ bảng biểu";
     }
-    if (isDepartmentHeadAccount(account)) {
+    if (isDepartmentHeadAccount(account) && ![FIVE_S_PERIOD_TYPE, SAFETY_PERIOD_TYPE]
+      .some((type) => getAccountRolesForType(account, type)
+        .some((role) => [ROLE_ZONE_OWNER, ROLE_ASSESSOR_5S, ROLE_ASSESSOR_SAFETY].includes(role)))) {
       return "Quyền hiện có: Trưởng phòng · xem toàn bộ bảng biểu · thêm, sửa, xóa đánh giá an toàn theo Zone quản lý";
     }
 
-    return "Quyền hiện có: " + (labels.join(", ") || "chưa có") + " · " + accessTypes.length + " quyền";
+    const roles = [...new Set(accessTypes.flatMap((type) => getAccountRolesForType(account, type)
+      .map((role) => getScopedRoleLabel(role, type))))];
+    return "Quyền hiện có: " + (roles.join(" + ") || labels.join(", ") || "chưa có") + " · " + accessTypes.length + " luồng";
   }
 
   function viewerAccountCardHtml(account) {
@@ -6839,8 +8018,15 @@
   }
 
   function departmentHeadAccountZoneSummary(account) {
-    const fiveSZones = accountZoneCodesForScope(account, FIVE_S_PERIOD_TYPE);
-    const safetyZones = accountZoneCodesForScope(account, SAFETY_PERIOD_TYPE);
+    const zoneCodesForHead = (type) => {
+      const periodId = getActivePeriodId(type);
+      const areaIds = getDepartmentHeadManagedAreaIds(account, periodId);
+      return getAreasForPeriod(periodId)
+        .filter((area) => areaIds.has(area.id) && (type !== SAFETY_PERIOD_TYPE || isReportableSafetyArea(area)))
+        .map((area) => area.code);
+    };
+    const fiveSZones = zoneCodesForHead(FIVE_S_PERIOD_TYPE);
+    const safetyZones = zoneCodesForHead(SAFETY_PERIOD_TYPE);
     const fiveSText = fiveSZones.join(", ") || "chưa có";
     const safetyText = safetyZones.join(", ") || "chưa có";
     return `5S: ${fiveSText} · AT: ${safetyText}`;
@@ -6852,8 +8038,9 @@
       <div>
         <strong>${escapeHtml(account.username)}</strong>
         <span>Trưởng phòng: ${escapeHtml(name)}</span>
+        <span>Mã NV: ${escapeHtml(account.employeeCode || "chưa có")}</span>
         <span>Hiển thị: ${escapeHtml(getAccountProfileName(account) || name)}</span>
-        <span>Quyền hiện có: Trưởng phòng · xem toàn bộ bảng biểu</span>
+        <span>Quyền hiện có: ${escapeHtml(getAccountAccessLabel(account))}</span>
         <span>Zone nhập xử lý: ${escapeHtml(departmentHeadAccountZoneSummary(account))}</span>
       </div>
       <div class="account-actions">
@@ -6863,7 +8050,51 @@
     </article>`;
   }
 
+  function accountCardForScope(account, type = activeAccountScope) {
+    const isAdmin = isAdminAccount(account);
+    const scope = normalizeCatalogType(type);
+    const scopedRole = account.rolesByType?.[scope] || getAccountRoleForType(account, scope) || account.role;
+    const roleLabel = isAdmin ? "Admin hệ thống" : getScopedRoleLabel(scopedRole, scope);
+    let zones = "chưa có zone";
+    try {
+      zones = isAdmin ? "Toàn quyền" : accountZoneCodesForScope(account, scope).join(", ") || zones;
+    } catch {}
+
+    const actions = `<button class="tiny-button" type="button" data-action="edit-account" data-id="${escapeHtml(account.id)}">Sửa</button>${isAdmin ? "" : `<button class="tiny-button danger-text-button" type="button" data-action="delete-account" data-id="${escapeHtml(account.id)}">Xóa tài khoản</button>`}`;
+
+    return `<article class="account-card">
+      <div>
+        <strong>${escapeHtml(account.username || "Tài khoản chưa có tên")}</strong>
+        <span>Mã NV: ${escapeHtml(account.employeeCode || "chưa có")}</span>
+        <span>Hiển thị: ${escapeHtml(account.displayName || account.name || account.username || "")}</span>
+        <span>${escapeHtml(roleLabel)} · Zone ${escapeHtml(zones)}</span>
+      </div>
+      <div class="account-actions">${actions}</div>
+    </article>`;
+  }
+
   function renderAccountsTab() {
+    const accounts = Array.isArray(state?.accounts) ? state.accounts : [];
+    const scopedAccounts = accounts.filter((account) => {
+      if (!account || isViewerAccount(account)) return false;
+      if (isAdminAccount(account)) return true;
+      try {
+        return normalizeAccountAccessTypes(account.accessTypes, account.role).includes(normalizeCatalogType(activeAccountScope))
+          || hasAccountAccessType(account, activeAccountScope);
+      } catch {
+        return true;
+      }
+    }).sort(compareEmployeeCodeAscending);
+    if (elements.accountList) {
+      elements.accountList.innerHTML = scopedAccounts.map((account) => {
+        try {
+          return accountCardForScope(account, activeAccountScope);
+        } catch {
+          return `<article class="account-card"><div><strong>${escapeHtml(account?.username || "Tài khoản")}</strong><span>Mã NV: ${escapeHtml(account?.employeeCode || "chưa có")}</span><span>Hiển thị: ${escapeHtml(account?.displayName || account?.name || account?.username || "")}</span><span>Quyền: ${escapeHtml(account?.role || "chưa xác định")}</span></div><div class="account-actions"><button class="tiny-button" type="button" data-action="edit-account" data-id="${escapeHtml(account?.id || "")}">Sửa</button><button class="tiny-button danger-text-button" type="button" data-action="delete-account" data-id="${escapeHtml(account?.id || "")}">Xóa tài khoản</button></div></article>`;
+        }
+      }).join("") || `<article class="account-card account-empty-card"><div><strong>Chưa có tài khoản ${escapeHtml(getAccountScopeLabel(activeAccountScope))}</strong><span>Chọn nhân viên đã được phân vai trò trong Danh mục để tạo tài khoản đăng nhập.</span></div></article>`;
+    }
+
     const accountScopeOptions = [
       ...ACCOUNT_SCOPE_OPTIONS,
       { value: ACCOUNT_VIEWER_SCOPE, label: "Người xem", icon: "Xem" },
@@ -6907,39 +8138,6 @@
     populateManagerSelects();
     renderAccountZoneList();
     syncAccountAssignedZones();
-    const scopedAccounts = state.accounts.filter((account) => !isViewerAccount(account) && !isDepartmentHeadAccount(account) && (isAdminAccount(account) || hasAccountAccessType(account, activeAccountScope)));
-    elements.accountList.innerHTML = scopedAccounts
-      .map((account) => {
-        const isAdmin = isAdminAccount(account);
-        const zones = isAdmin ? "Toàn quyền" : accountZoneCodesForScope(account, activeAccountScope).join(", ") || "chưa có zone";
-        const addAccessButtons = missingAccountAccessTypes(account)
-          .map((type) => `<button class="tiny-button" type="button" data-action="add-account-access" data-id="${escapeHtml(account.id)}" data-account-scope="${escapeHtml(type)}">Thêm quyền ${escapeHtml(getAccountScopeLabel(type))}</button>`)
-          .join("");
-        const removeAccessButtons = existingAccountAccessTypes(account)
-          .map((type) => `<button class="tiny-button danger-text-button" type="button" data-action="remove-account-access" data-id="${escapeHtml(account.id)}" data-account-scope="${escapeHtml(type)}">Xóa quyền ${escapeHtml(getAccountScopeLabel(type))}</button>`)
-          .join("");
-
-        return `<article class="account-card">
-          <div>
-            <strong>${escapeHtml(account.username)}</strong>
-            <span>Hiển thị: ${escapeHtml(getAccountProfileName(account) || account.username)}</span>
-            ${account.position ? `<span>Chức vụ: ${escapeHtml(account.position)}</span>` : ""}
-            <span>${escapeHtml(getAccountAccessLabel(account, activeAccountScope))} · ${escapeHtml(getAccountDisplayName(account, activeAccountScope) || account.username)} · ${escapeHtml(zones)}</span>
-            <span>${escapeHtml(accountAccessSummary(account))}</span>
-          </div>
-          <div class="account-actions">
-            ${
-              isAdmin
-                ? `<button class="tiny-button" type="button" data-action="edit-account" data-id="${escapeHtml(account.id)}">Sửa</button>`
-                : `${addAccessButtons}
-                   <button class="tiny-button" type="button" data-action="edit-account" data-id="${escapeHtml(account.id)}">Sửa</button>
-                   ${removeAccessButtons}`
-            }
-          </div>
-        </article>`;
-      })
-      .join("") || `<article class="account-card account-empty-card"><div><strong>Chưa có tài khoản ${escapeHtml(getAccountScopeLabel(activeAccountScope))}</strong><span>Tạo tài khoản assessor hoặc người phụ trách zone cho luồng này.</span></div></article>`;
-
     if (elements.viewerAccountList) {
       const viewerAccounts = state.accounts.filter(isViewerAccount);
       elements.viewerAccountList.innerHTML = viewerAccounts
@@ -6947,7 +8145,7 @@
         .join("") || `<article class="account-card account-empty-card"><div><strong>Chưa có tài khoản người xem</strong><span>Tạo tài khoản người xem để theo dõi toàn bộ bảng biểu.</span></div></article>`;
     }
     if (elements.departmentHeadAccountList) {
-      const departmentHeadAccounts = state.accounts.filter(isDepartmentHeadAccount);
+      const departmentHeadAccounts = state.accounts.filter(isDepartmentHeadOnlyAccount);
       elements.departmentHeadAccountList.innerHTML = departmentHeadAccounts
         .map(departmentHeadAccountCardHtml)
         .join("") || `<article class="account-card account-empty-card"><div><strong>Chưa có tài khoản trưởng phòng</strong><span>Tạo tài khoản trưởng phòng để thêm, sửa, xóa đánh giá an toàn theo Zone quản lý.</span></div></article>`;
@@ -7047,7 +8245,7 @@
       return;
     }
 
-    if (!canEditFiveSScoreSource(currentUser, scoreSource)) {
+    if (!canEditFiveSScoreSource(currentUser, scoreSource, area?.id, periodId)) {
       showToast("Bạn không có quyền sửa bảng điểm này.", true);
       return;
     }
@@ -7098,7 +8296,7 @@
           return false;
         }
 
-        if (!canEditFiveSScoreSource(currentUser, scoreSource)) {
+        if (!canEditFiveSScoreSource(currentUser, scoreSource, area.id, periodId)) {
           showToast("Bạn không có quyền sửa bảng điểm này.", true);
           return false;
         }
@@ -7911,7 +9109,7 @@
       showToast("Không có kỳ đánh giá 5S đang mở nên không thể nhập dữ liệu.", true);
       return;
     }
-    if (!canEditFiveSScoreSource(currentUser, normalizedSource) || !getAllowedAreaIds(currentUser, periodId).has(area.id)) {
+    if (!canEditFiveSScoreSource(currentUser, normalizedSource, area.id, periodId) || !getAllowedAreaIds(currentUser, periodId).has(area.id)) {
       showToast("Bạn không có quyền sửa ô này.", true);
       return;
     }
@@ -8587,14 +9785,16 @@
     firstInput?.focus();
   }
 
-  function openConfirmModal({ title, message, confirmText = "Xác nhận", danger = false, renderAfter = true, onConfirm }) {
+  function openConfirmModal({ title, message, confirmText = "Xác nhận", danger = false, renderAfter = true, onConfirm, onError = null }) {
     openFormModal({
       title,
       submitText: confirmText,
       submitClass: danger ? "danger-button" : "primary-button",
       html: `<p>${escapeHtml(message)}</p>`,
+      onError,
       async onSubmit() {
-        await onConfirm();
+        const result = await onConfirm();
+        if (result === false) return false;
         if (renderAfter) {
           renderAll();
         }
@@ -8950,40 +10150,93 @@
     showToast("Đã tạo kỳ mới.");
     renderAll();
   }
-  async function handleScorerSubmit(event) {
+  async function handleCatalogPersonSubmit(event) {
+    event.preventDefault();
+    if (!requireAdminAction()) return;
+
+    const employeeCode = String(elements.catalogPersonCode?.value || "").trim();
+    const name = String(elements.catalogPersonName?.value || "").trim();
+    const roles = [...(elements.catalogPersonRoles?.querySelectorAll('input[name="catalogPersonRoles"]:checked') || [])]
+      .map((input) => input.value);
+    if (!employeeCode || !name) {
+      showToast("Vui lòng nhập mã nhân viên và tên người mới.", true);
+      return;
+    }
+    if (!roles.length) {
+      showToast("Vui lòng chọn ít nhất một vai trò.", true);
+      return;
+    }
+
+    for (const role of roles) {
+      const roleScope = getCatalogPersonRoleScope(role, activeCatalogScope);
+      const input = { employeeCode, name, areaIds: getCheckedAreaIds(elements.catalogPersonForm, `areaIds-${role}`) };
+      let saved = false;
+      if (role === ROLE_ZONE_OWNER) {
+        saved = await handleScorerSubmit(event, input, roleScope);
+      } else if ([ROLE_ASSESSOR_5S, ROLE_ASSESSOR_SAFETY].includes(role)) {
+        saved = await handleAssessorSubmit(event, input, roleScope);
+      } else if (role === ROLE_DEPARTMENT_HEAD) {
+        saved = await handleDepartmentHeadSubmit(event, input, roleScope);
+      }
+      if (!saved) return;
+    }
+
+    elements.catalogPersonForm.reset();
+    renderCatalogPersonZoneList();
+    catalogPersonSelectedAreaIdsByRole = {};
+  }
+
+  async function handleScorerSubmit(event, input = {}, catalogTypeOverride = activeCatalogScope) {
     event.preventDefault();
     if (!requireAdminAction()) {
-      return;
+      return false;
     }
 
-    const name = elements.scorerName.value.trim();
-    if (!name) {
-      showToast("Vui lòng nhập tên người phụ trách zone.", true);
-      return;
+    const name = String(input.name || "").trim();
+    const employeeCode = String(input.employeeCode || "").trim();
+    if (!name || !employeeCode) {
+      showToast("Vui lòng nhập mã nhân viên và tên người phụ trách zone.", true);
+      return false;
     }
 
-    const catalogType = activeCatalogScope;
+    const catalogType = normalizeCatalogType(catalogTypeOverride);
     const periodId = getActivePeriodId(catalogType);
-    if (getPeriodCatalogManagers(catalogType, periodId).some((manager) => manager.name.toLocaleLowerCase("vi") === name.toLocaleLowerCase("vi"))) {
-      showToast("Người phụ trách zone này đã tồn tại trong kỳ đang mở.", true);
-      return;
+    const areaIds = [...new Set((input.areaIds || []).filter(Boolean))];
+    const existingManager = findCatalogPersonByIdentity(getPeriodCatalogManagers(catalogType, periodId), name, employeeCode);
+    const availableAreaIds = new Set([
+      ...getAvailableCatalogPersonAreaIds(ROLE_ZONE_OWNER, catalogType, periodId),
+      ...(existingManager ? getManagerAreaIds(existingManager.id, periodId) : []),
+    ]);
+    if (areaIds.some((id) => !availableAreaIds.has(id))) {
+      showToast("Một số zone đã có người phụ trách hoặc không còn khả dụng.", true);
+      return false;
     }
+    const manager = existingManager || {
+      id: makeId(catalogType === SAFETY_PERIOD_TYPE ? "safety-scorer" : "scorer"),
+      employeeCode,
+      name,
+      emails: [],
+      createdAt: new Date().toISOString(),
+    };
+    manager.employeeCode = employeeCode;
+    manager.name = name;
+    const targetAreaIds = [...new Set([...getManagerAreaIds(manager.id, periodId), ...areaIds])];
 
     const beforeSnapshot = capturePeriodSnapshot(periodId);
     const beforeCatalog = captureCatalogState(catalogType);
-    const newManager = { id: makeId(catalogType === SAFETY_PERIOD_TYPE ? "safety-scorer" : "scorer"), name, emails: [], createdAt: new Date().toISOString() };
     try {
-      await saveManagerWithAreas(newManager, getCheckedAreaIds(elements.scorerForm), catalogType, periodId);
+      await saveManagerWithAreas(manager, targetAreaIds, catalogType, periodId);
+      await updateCatalogPersonIdentity(manager, name, employeeCode);
     } catch (error) {
       showToast("Không lưu được người phụ trách zone. Vui lòng thử lại.", true);
-      return;
+      return false;
     }
     await Promise.all([
       saveCatalogPeriodSnapshot(catalogType, periodId),
       logAdminChange({
         subjectLabel: "Người phụ trách zone",
         afterLabel: name,
-        changeLabel: `Thêm người phụ trách zone ${name}`,
+        changeLabel: `${existingManager ? "Cập nhật" : "Thêm"} người phụ trách zone ${name}`,
         scope: catalogType,
         periodId,
       }),
@@ -9000,9 +10253,9 @@
       beforeCatalog,
       afterCatalog,
     });
-    elements.scorerForm.reset();
     showToast("Đã thêm người phụ trách zone.");
     renderAll();
+    return true;
   }
 
 
@@ -9020,44 +10273,67 @@
     return snapshot.departmentHeadContacts;
   }
 
-  function ensureDepartmentHeadContactForPeriod(name, type = activeCatalogScope, periodId = getActivePeriodId(type)) {
+  function ensureDepartmentHeadContactForPeriod(name, type = activeCatalogScope, periodId = getActivePeriodId(type), employeeCode = "") {
     const cleanName = normalizeDepartmentHeadName(name);
     if (!cleanName) {
       return null;
     }
 
     const contacts = getMutableDepartmentHeadContactsForPeriod(type, periodId);
-    let contact = contacts.find((item) => departmentHeadKey(item.name) === departmentHeadKey(cleanName)) || null;
+    let contact = getDepartmentHeadContact(cleanName, type, employeeCode);
+    if (contact && !contacts.includes(contact)) {
+      contact = contacts.find((item) => employeeCode && sameEmployeeCode(item.employeeCode, employeeCode))
+        || contacts.find((item) => !item.employeeCode && departmentHeadKey(item.name) === departmentHeadKey(cleanName))
+        || null;
+    }
+    if (!contact) contact = contacts.find((item) => !employeeCodeKey(item.employeeCode)
+      && departmentHeadKey(item.name) === departmentHeadKey(cleanName)) || null;
     if (!contact) {
       contact = {
         id: makeStableId(normalizeCatalogType(type) === SAFETY_PERIOD_TYPE ? "safety-department-head" : "department-head", cleanName),
         name: cleanName,
+        employeeCode,
         emails: [],
         createdAt: new Date().toISOString(),
       };
       contacts.push(contact);
     }
+    contact.name = cleanName;
+    if (employeeCode) contact.employeeCode = employeeCode;
     return contact;
   }
 
-  async function handleDepartmentHeadSubmit(event) {
+  async function handleDepartmentHeadSubmit(event, input = {}, catalogTypeOverride = activeCatalogScope) {
     event.preventDefault();
     if (!requireAdminAction()) {
-      return;
+      return false;
     }
 
-    const name = normalizeDepartmentHeadName(elements.departmentHeadName?.value);
-    if (!name) {
-      showToast("Vui lòng nhập tên trưởng phòng.", true);
-      return;
+    const name = normalizeDepartmentHeadName(input.name);
+    const employeeCode = String(input.employeeCode || "").trim();
+    if (!name || !employeeCode) {
+      showToast("Vui lòng nhập mã nhân viên và tên trưởng phòng.", true);
+      return false;
     }
 
-    const catalogType = normalizeCatalogType(activeCatalogScope);
+    const catalogType = normalizeCatalogType(catalogTypeOverride);
     const periodId = getActivePeriodId(catalogType);
-    if (getDepartmentHeadRows(periodId).some((row) => departmentHeadKey(row.name) === departmentHeadKey(name))) {
-      showToast("Trưởng phòng này đã có trong danh mục kỳ đang mở.", true);
-      return;
+    let areaIds = [...new Set((input.areaIds || []).filter(Boolean))];
+    const existingHead = findCatalogPersonByIdentity(getDepartmentHeadRows(periodId), name, employeeCode);
+    const existingAreaIds = getAreasForPeriod(periodId)
+      .filter((area) => (area.departmentHeadEmployeeCode && employeeCode
+        ? sameEmployeeCode(area.departmentHeadEmployeeCode, employeeCode)
+        : departmentHeadKey(area.departmentHead) === departmentHeadKey(name)))
+      .map((area) => area.id);
+    const availableAreaIds = new Set([
+      ...getAvailableCatalogPersonAreaIds(ROLE_DEPARTMENT_HEAD, catalogType, periodId),
+      ...existingAreaIds,
+    ]);
+    if (areaIds.some((id) => !availableAreaIds.has(id))) {
+      showToast("Một số zone đã có trưởng phòng hoặc không còn khả dụng.", true);
+      return false;
     }
+    areaIds = [...new Set([...existingAreaIds, ...areaIds])];
 
     const activePeriod = getPeriod(periodId);
     if (activePeriod && !activePeriod.settingsSnapshot) {
@@ -9074,44 +10350,70 @@
         snapshot: period.settingsSnapshot ? cloneValue(period.settingsSnapshot) : null,
       }));
 
+    const selectedAreaIds = new Set(areaIds);
+    const periodAreas = getMutablePeriodAreas(catalogType, periodId);
+    periodAreas.forEach((area) => {
+      if (selectedAreaIds.has(area.id)) {
+        area.departmentHead = name;
+        area.departmentHeadEmployeeCode = employeeCode;
+      }
+    });
+    const rootAreas = getMutableAreas(catalogType);
+    rootAreas.forEach((area) => {
+      if (selectedAreaIds.has(area.id)) {
+        area.departmentHead = name;
+        area.departmentHeadEmployeeCode = employeeCode;
+      }
+    });
+
     const createdAt = new Date().toISOString();
     const rootContacts = getDepartmentHeadContacts(catalogType);
-    let rootContact = rootContacts.find((contact) => departmentHeadKey(contact.name) === departmentHeadKey(name));
+    let rootContact = findCatalogPersonByIdentity(rootContacts, name, employeeCode);
     if (!rootContact) {
       rootContact = {
-        id: makeStableId(catalogType === SAFETY_PERIOD_TYPE ? "safety-department-head" : "department-head", name),
+        id: makeId(catalogType === SAFETY_PERIOD_TYPE ? "safety-department-head" : "department-head"),
         name,
+        employeeCode,
         emails: [],
         createdAt,
       };
       rootContacts.push(rootContact);
     }
+    rootContact.name = name;
+    rootContact.employeeCode = employeeCode;
 
     const periodContacts = getMutableDepartmentHeadContactsForPeriod(catalogType, periodId);
-    if (!periodContacts.some((contact) => departmentHeadKey(contact.name) === departmentHeadKey(name))) {
-      periodContacts.push({ ...rootContact });
-    }
+    const periodContact = findCatalogPersonByIdentity(periodContacts, name, employeeCode);
+    if (!periodContact) periodContacts.push({ ...rootContact });
+    else Object.assign(periodContact, { name, employeeCode });
 
     const updates = {
       [`${catalogDbPath(catalogType, "departmentHeadContacts")}/${rootContact.id}`]: rootContact,
     };
+    if (areaIds.length) {
+      updates[catalogDbPath(catalogType, "areas")] = rootAreas;
+    }
     if (activePeriod?.settingsSnapshot) {
       updates[`periods/${periodId}/settingsSnapshot`] = activePeriod.settingsSnapshot;
     }
     addAdminChangeToUpdates({
       subjectLabel: "Trưởng phòng",
       afterLabel: name,
-      changeLabel: `Thêm trưởng phòng ${name}`,
+      changeLabel: `${existingHead ? "Cập nhật" : "Thêm"} trưởng phòng ${name}`,
+      note: areaIds.length ? `Zone: ${periodAreas.filter((area) => selectedAreaIds.has(area.id)).map((area) => area.code).join(", ")}` : "",
       scope: catalogType,
       periodId,
     }, updates);
 
     try {
       await updateRootWithOptionalRenderSuppression(updates, { suppressRender: true });
+      await updateCatalogPersonIdentity({ name, employeeCode }, name, employeeCode);
     } catch (error) {
       if (catalogType === SAFETY_PERIOD_TYPE) {
+        state.safetyAreas = cloneValue(beforeCatalog.areas);
         state.safetyDepartmentHeadContacts = cloneValue(beforeCatalog.departmentHeadContacts);
       } else {
+        state.areas = cloneValue(beforeCatalog.areas);
         state.departmentHeadContacts = cloneValue(beforeCatalog.departmentHeadContacts);
       }
       beforePeriodSnapshots.forEach((entry) => {
@@ -9123,7 +10425,7 @@
       state.history = beforeHistory;
       renderAll();
       showToast(error?.message || "Không lưu được trưởng phòng. Vui lòng thử lại.", true);
-      return;
+      return false;
     }
 
     pushUndoAction({
@@ -9136,12 +10438,12 @@
       beforeCatalog,
       afterCatalog: captureCatalogState(catalogType),
     });
-    elements.departmentHeadForm?.reset();
     showToast("Đã thêm trưởng phòng.");
     renderAll();
+    return true;
   }
 
-  function editCatalogDepartmentHead(name) {
+  function editCatalogDepartmentHead(identity) {
     if (!requireAdminAction()) {
       return;
     }
@@ -9149,35 +10451,74 @@
     const catalogType = normalizeCatalogType(activeCatalogScope);
     const periodId = getActivePeriodId(catalogType);
     const current = getDepartmentHeadRows(periodId)
-      .find((row) => departmentHeadKey(row.name) === departmentHeadKey(name));
+      .find((row) => (employeeCodeKey(row.employeeCode) && employeeCodeKey(row.employeeCode) === employeeCodeKey(identity))
+        || departmentHeadKey(row.name) === departmentHeadKey(identity));
     if (!current) {
       return;
     }
 
+    const currentAreaIds = getAreasForPeriod(periodId)
+      .filter((area) => (catalogType !== SAFETY_PERIOD_TYPE || isReportableSafetyArea(area))
+        && (current.employeeCode && area.departmentHeadEmployeeCode
+          ? sameEmployeeCode(area.departmentHeadEmployeeCode, current.employeeCode)
+          : departmentHeadKey(area.departmentHead) === departmentHeadKey(current.name)))
+      .map((area) => area.id);
+
     openFormModal({
       title: "Sửa trưởng phòng",
-      html: `<div class="modal-context"><span><strong>Zone đang phụ trách:</strong> ${escapeHtml(current.areaCodes.join(", ") || "chưa gán zone")}</span></div>
+      html: `${catalogPersonContextHtml(current.name, current.employeeCode)}
+        <label>
+          <span>Mã nhân viên</span>
+          <input name="employeeCode" type="text" value="${escapeHtml(current.employeeCode || "")}" required>
+        </label>
         <label>
           <span>Tên trưởng phòng</span>
           <input name="name" type="text" value="${escapeHtml(current.name)}" required>
-        </label>`,
-      async onSubmit(formData) {
+        </label>
+        <div class="form-field">
+          <span>Zone trưởng phòng quản lý</span>
+          <div class="zone-check-list" style="max-height: 240px; overflow-y: auto;">
+            ${areaCheckboxListHtml(currentAreaIds, catalogType, periodId, null, null, { name: current.name, employeeCode: current.employeeCode })}
+          </div>
+          <small class="field-hint">Bỏ chọn zone để gỡ phân công; chỉ có thể thêm zone chưa có trưởng phòng.</small>
+        </div>`,
+      async onSubmit(formData, form) {
         const nextName = normalizeDepartmentHeadName(formData.get("name"));
-        if (!nextName) {
-          showToast("Vui lòng nhập tên trưởng phòng.", true);
+        const nextEmployeeCode = String(formData.get("employeeCode") || "").trim();
+        if (!nextName || !nextEmployeeCode) {
+          showToast("Vui lòng nhập mã nhân viên và tên trưởng phòng.", true);
           return false;
         }
 
-        const duplicate = getDepartmentHeadRows(periodId).some((row) => (
-          departmentHeadKey(row.name) !== departmentHeadKey(current.name)
-          && departmentHeadKey(row.name) === departmentHeadKey(nextName)
-        ));
-        if (duplicate) {
-          showToast("Trưởng phòng này đã có trong danh mục kỳ đang mở.", true);
+        const selectedAreaIds = getCheckedAreaIds(form);
+        const eligibleAreaIds = new Set(getAreasForPeriod(periodId)
+          .filter((area) => {
+            if (catalogType === SAFETY_PERIOD_TYPE && !isReportableSafetyArea(area)) return false;
+            const assignedHead = departmentHeadKey(area.departmentHead);
+            const isCurrent = current.employeeCode && area.departmentHeadEmployeeCode
+              ? sameEmployeeCode(current.employeeCode, area.departmentHeadEmployeeCode)
+              : assignedHead === departmentHeadKey(current.name);
+            return !assignedHead || isCurrent;
+          })
+          .map((area) => area.id));
+        if (selectedAreaIds.some((areaId) => !eligibleAreaIds.has(areaId))) {
+          showToast("Một hoặc nhiều zone đã được phân công cho trưởng phòng khác. Vui lòng tải lại danh sách.", true);
           return false;
         }
-        if (nextName === current.name) {
-          showToast("Tên trưởng phòng không thay đổi.");
+
+        const duplicate = getDepartmentHeadRows(periodId).some((row) => row.employeeCode
+          && employeeCodeKey(row.employeeCode) === employeeCodeKey(nextEmployeeCode)
+          && employeeCodeKey(row.employeeCode) !== employeeCodeKey(current.employeeCode));
+        if (duplicate) {
+          showToast("Mã nhân viên này đã có trong danh mục kỳ đang mở.", true);
+          return false;
+        }
+        const currentAreaIdSet = new Set(currentAreaIds);
+        const selectedAreaIdSet = new Set(selectedAreaIds);
+        const areasUnchanged = currentAreaIdSet.size === selectedAreaIdSet.size
+          && [...currentAreaIdSet].every((areaId) => selectedAreaIdSet.has(areaId));
+        if (nextName === current.name && nextEmployeeCode === current.employeeCode && areasUnchanged) {
+          showToast("Không có thay đổi mới.");
           return true;
         }
 
@@ -9195,30 +10536,65 @@
             hadSnapshot: Boolean(period.settingsSnapshot),
             snapshot: period.settingsSnapshot ? cloneValue(period.settingsSnapshot) : null,
           }));
+        const affectedAccounts = state.accounts.filter((account) => accountMatchesCatalogPerson(account, current));
+        const beforeAccounts = affectedAccounts.map((account) => cloneValue(account));
 
         const previousName = current.name;
         const previousKey = departmentHeadKey(previousName);
-        const renameAreas = (areas) => areas.forEach((area) => {
-          if (departmentHeadKey(area.departmentHead) !== previousKey) return;
-          area.departmentHead = nextName;
-          if (departmentHeadKey(area.summaryGroup) === previousKey) {
-            area.summaryGroup = nextName;
+        const selectedAreas = new Set(selectedAreaIds);
+        const updateDepartmentHeadAreas = (areas) => areas.forEach((area) => {
+          if (!eligibleAreaIds.has(area.id)) return;
+          const wasManaged = current.employeeCode && area.departmentHeadEmployeeCode
+            ? sameEmployeeCode(area.departmentHeadEmployeeCode, current.employeeCode)
+            : departmentHeadKey(area.departmentHead) === previousKey;
+          const isSelected = selectedAreas.has(area.id);
+          if (!wasManaged && !isSelected) return;
+
+          if (isSelected) {
+            area.departmentHead = nextName;
+            area.departmentHeadEmployeeCode = nextEmployeeCode;
+            if (wasManaged && departmentHeadKey(area.summaryGroup) === previousKey) {
+              area.summaryGroup = nextName;
+            }
+            return;
           }
+
+          area.departmentHead = "";
+          area.departmentHeadEmployeeCode = "";
         });
 
         const periodAreas = getMutablePeriodAreas(catalogType, periodId);
         const periodContacts = getMutableDepartmentHeadContactsForPeriod(catalogType, periodId);
         const rootAreas = getMutableAreas(catalogType);
         const rootContacts = getDepartmentHeadContacts(catalogType);
-        renameAreas(periodAreas);
-        renameAreas(rootAreas);
-        renameDepartmentHeadContact(previousName, nextName, periodContacts, catalogType);
-        renameDepartmentHeadContact(previousName, nextName, rootContacts, catalogType);
+        updateDepartmentHeadAreas(periodAreas);
+        updateDepartmentHeadAreas(rootAreas);
+        const updateContactIdentity = (contacts) => {
+          let contact = findCatalogPersonByIdentity(contacts, previousName, current.employeeCode);
+          if (!contact) {
+            contact = { id: makeId("department-head"), name: previousName, emails: [], createdAt: new Date().toISOString() };
+            contacts.push(contact);
+          }
+          contact.name = nextName;
+          contact.employeeCode = nextEmployeeCode;
+        };
+        updateContactIdentity(periodContacts);
+        updateContactIdentity(rootContacts);
+        affectedAccounts.forEach((account) => {
+          account.name = nextName;
+          account.departmentHeadName = nextName;
+          account.employeeCode = nextEmployeeCode;
+        });
 
         const updates = {};
-        const affectedRootAreaIds = new Set(beforeCatalog.areas
-          .filter((area) => departmentHeadKey(area.departmentHead) === previousKey)
-          .map((area) => area.id));
+        const affectedRootAreaIds = new Set([
+          ...beforeCatalog.areas
+            .filter((area) => current.employeeCode && area.departmentHeadEmployeeCode
+              ? sameEmployeeCode(area.departmentHeadEmployeeCode, current.employeeCode)
+              : departmentHeadKey(area.departmentHead) === previousKey)
+            .map((area) => area.id),
+          ...selectedAreaIds,
+        ]);
         rootAreas
           .filter((area) => affectedRootAreaIds.has(area.id))
           .forEach((area) => {
@@ -9234,6 +10610,9 @@
         allRootContactIds.forEach((contactId) => {
           updates[`${catalogDbPath(catalogType, "departmentHeadContacts")}/${contactId}`] = rootContactsById.get(contactId) || null;
         });
+        affectedAccounts.forEach((account) => {
+          updates[`accounts/${account.id}`] = account;
+        });
         if (activePeriod?.settingsSnapshot) {
           updates[`periods/${periodId}/settingsSnapshot`] = activePeriod.settingsSnapshot;
         }
@@ -9242,12 +10621,14 @@
           beforeLabel: previousName,
           afterLabel: nextName,
           changeLabel: `Sửa trưởng phòng ${previousName}`,
+          note: `Zone: ${periodAreas.filter((area) => selectedAreas.has(area.id)).map((area) => area.code).join(", ") || "chưa gán zone"}`,
           scope: catalogType,
           periodId,
         }, updates);
 
         try {
           await updateRootWithOptionalRenderSuppression(updates, { suppressRender: true });
+          await updateCatalogPersonIdentity(current, nextName, nextEmployeeCode);
         } catch (error) {
           if (catalogType === SAFETY_PERIOD_TYPE) {
             state.safetyAreas = cloneValue(beforeCatalog.areas);
@@ -9263,6 +10644,8 @@
             else delete period.settingsSnapshot;
           });
           state.history = beforeHistory;
+          const accountById = new Map(beforeAccounts.map((account) => [account.id, account]));
+          state.accounts = state.accounts.map((account) => accountById.get(account.id) || account);
           renderAll();
           showToast(error?.message || "Không lưu được thay đổi trưởng phòng. Vui lòng thử lại.", true);
           return false;
@@ -9293,7 +10676,8 @@
     const catalogType = normalizeCatalogType(activeCatalogScope);
     const periodId = getActivePeriodId(catalogType);
     const current = getDepartmentHeadRows(periodId)
-      .find((row) => departmentHeadKey(row.name) === departmentHeadKey(name));
+      .find((row) => (row.employeeCode && employeeCodeKey(row.employeeCode) === employeeCodeKey(name))
+        || departmentHeadKey(row.name) === departmentHeadKey(name));
     if (!current) {
       return;
     }
@@ -9323,23 +10707,35 @@
           }));
 
         const currentKey = departmentHeadKey(current.name);
+        const isCurrentArea = (area) => current.employeeCode && area.departmentHeadEmployeeCode
+          ? sameEmployeeCode(current.employeeCode, area.departmentHeadEmployeeCode)
+          : departmentHeadKey(area.departmentHead) === currentKey;
+        const isCurrentContact = (contact) => current.employeeCode && contact.employeeCode
+          ? sameEmployeeCode(current.employeeCode, contact.employeeCode)
+          : departmentHeadKey(contact.name) === currentKey;
         const periodAreas = getMutablePeriodAreas(catalogType, periodId);
         const periodContacts = getMutableDepartmentHeadContactsForPeriod(catalogType, periodId);
         const rootAreas = getMutableAreas(catalogType);
         const rootContacts = getDepartmentHeadContacts(catalogType);
         const affectedRootAreaIds = new Set(beforeCatalog.areas
-          .filter((area) => departmentHeadKey(area.departmentHead) === currentKey)
+          .filter(isCurrentArea)
           .map((area) => area.id));
 
         periodAreas.forEach((area) => {
-          if (departmentHeadKey(area.departmentHead) === currentKey) area.departmentHead = "";
+          if (isCurrentArea(area)) {
+            area.departmentHead = "";
+            area.departmentHeadEmployeeCode = "";
+          }
         });
         rootAreas.forEach((area) => {
-          if (departmentHeadKey(area.departmentHead) === currentKey) area.departmentHead = "";
+          if (isCurrentArea(area)) {
+            area.departmentHead = "";
+            area.departmentHeadEmployeeCode = "";
+          }
         });
 
-        const remainingPeriodContacts = periodContacts.filter((contact) => departmentHeadKey(contact.name) !== currentKey);
-        const remainingRootContacts = rootContacts.filter((contact) => departmentHeadKey(contact.name) !== currentKey);
+        const remainingPeriodContacts = periodContacts.filter((contact) => !isCurrentContact(contact));
+        const remainingRootContacts = rootContacts.filter((contact) => !isCurrentContact(contact));
         if (activePeriod?.settingsSnapshot) {
           activePeriod.settingsSnapshot.departmentHeadContacts = remainingPeriodContacts;
         }
@@ -9353,7 +10749,7 @@
             updates[`${catalogDbPath(catalogType, "areas")}/${area.id}`] = area;
           });
         beforeCatalog.departmentHeadContacts
-          .filter((contact) => departmentHeadKey(contact.name) === currentKey)
+          .filter(isCurrentContact)
           .forEach((contact) => {
             updates[`${catalogDbPath(catalogType, "departmentHeadContacts")}/${contact.id}`] = null;
           });
@@ -9576,26 +10972,37 @@
     renderAll();
   }
 
-  async function handleAssessorSubmit(event) {
+  async function handleAssessorSubmit(event, input = {}, catalogTypeOverride = activeCatalogScope) {
     event.preventDefault();
     if (!requireAdminAction()) {
-      return;
+      return false;
     }
 
-    const name = elements.catalogAssessorName.value.trim();
-    if (!name) {
-      showToast("Vui lòng nhập tên assessor.", true);
-      return;
+    const name = String(input.name || "").trim();
+    const employeeCode = String(input.employeeCode || "").trim();
+    if (!name || !employeeCode) {
+      showToast("Vui lòng nhập mã nhân viên và tên assessor.", true);
+      return false;
     }
 
-    const catalogType = activeCatalogScope;
+    const catalogType = normalizeCatalogType(catalogTypeOverride);
     const periodId = getActivePeriodId(catalogType);
-    if (getPeriodCatalogAssessors(catalogType, periodId).some((assessor) => assessor.name.toLocaleLowerCase("vi") === name.toLocaleLowerCase("vi"))) {
-      showToast("Assessor này đã tồn tại trong kỳ đang mở.", true);
-      return;
+    const existingAssessor = findCatalogPersonByIdentity(getPeriodCatalogAssessors(catalogType, periodId), name, employeeCode);
+    const requestedAreaIds = [...new Set((input.areaIds || []).filter(Boolean))];
+    const existingAssessorAreaIds = existingAssessor
+      ? getAreasForPeriod(periodId)
+        .filter((area) => area.assessorId === existingAssessor.id || (Array.isArray(area.assessorIds) && area.assessorIds.includes(existingAssessor.id)))
+        .map((area) => area.id)
+      : [];
+    const availableAreaIds = new Set([
+      ...getAvailableCatalogPersonAreaIds("assessor", catalogType, periodId),
+      ...existingAssessorAreaIds,
+    ]);
+    if (requestedAreaIds.some((id) => !availableAreaIds.has(id))) {
+      showToast("Một số zone đã được phân công assessor khác hoặc không còn khả dụng.", true);
+      return false;
     }
-
-    const checkedAreaIds = getCheckedAreaIds(elements.catalogAssessorForm);
+    const checkedAreaIds = [...new Set([...existingAssessorAreaIds, ...requestedAreaIds])];
     const beforeSnapshot = capturePeriodSnapshot(periodId);
     const beforeCatalog = captureCatalogState(catalogType);
     const beforePeriodSnapshots = (state.periods || [])
@@ -9607,8 +11014,10 @@
       }));
     const beforeHistory = cloneValue(state.history);
     const assessors = getMutablePeriodAssessors(catalogType, periodId);
-    const newAssessor = { id: makeId(catalogType === SAFETY_PERIOD_TYPE ? "safety-assessor" : "assessor"), name, createdAt: new Date().toISOString() };
-    assessors.push(newAssessor);
+    const newAssessor = existingAssessor || { id: makeId(catalogType === SAFETY_PERIOD_TYPE ? "safety-assessor" : "assessor"), employeeCode, name, createdAt: new Date().toISOString() };
+    newAssessor.employeeCode = employeeCode || newAssessor.employeeCode || "";
+    newAssessor.name = name;
+    if (!assessors.some((assessor) => assessor.id === newAssessor.id)) assessors.push(newAssessor);
 
     const rootAssessors = getMutableAssessors(catalogType);
     if (!rootAssessors.some((a) => a.id === newAssessor.id)) {
@@ -9625,12 +11034,13 @@
     addAdminChangeToUpdates({
       subjectLabel: "Assessor",
       afterLabel: name,
-      changeLabel: `Thêm assessor ${name}`,
+      changeLabel: `${existingAssessor ? "Cập nhật" : "Thêm"} assessor ${name}`,
       scope: catalogType,
       periodId,
     }, updates);
     try {
       await updateRootWithOptionalRenderSuppression(updates, { suppressRender: true });
+      await updateCatalogPersonIdentity(newAssessor, name, employeeCode);
     } catch (error) {
       if (normalizeCatalogType(catalogType) === SAFETY_PERIOD_TYPE) {
         state.safetyAreas = cloneValue(beforeCatalog.areas);
@@ -9648,7 +11058,7 @@
       state.history = beforeHistory;
       renderAll();
       showToast(error?.message || "Không lưu được assessor và phân công Zone. Vui lòng thử lại.", true);
-      return;
+      return false;
     }
     const afterSnapshot = capturePeriodSnapshot(periodId);
     const afterCatalog = captureCatalogState(catalogType);
@@ -9662,10 +11072,9 @@
       beforeCatalog,
       afterCatalog,
     });
-    elements.catalogAssessorForm.reset();
-    renderCatalogAssessorZoneList();
     showToast("Đã thêm assessor.");
     renderAll();
+    return true;
   }
 
   async function handleAreaSubmit(event) {
@@ -9679,7 +11088,10 @@
     const periodId = getActivePeriodId(catalogType);
     const areas = getMutablePeriodAreas(catalogType, periodId);
     const code = elements.areaCode.value.trim();
-    const departmentHead = normalizeDepartmentHeadName(elements.areaHead?.value);
+    const departmentHeadSelection = String(elements.areaHead?.value || "");
+    const departmentHeadRow = getDepartmentHeadRows(periodId).find((row) => row.employeeCode === departmentHeadSelection
+      || (!row.employeeCode && row.name === departmentHeadSelection));
+    const departmentHead = normalizeDepartmentHeadName(departmentHeadRow?.name || departmentHeadSelection);
     const scorerId = elements.areaScorer.value;
     const assessorId = isSafety ? "" : elements.areaAssessor.value;
     const checkedAssessorIds = isSafety ? getCheckedAssessorIds(elements.areaForm) : (assessorId ? [assessorId] : []);
@@ -9691,7 +11103,7 @@
       return;
     }
 
-    if (!getDepartmentHeadRows(periodId).some((row) => departmentHeadKey(row.name) === departmentHeadKey(departmentHead))) {
+    if (!departmentHeadRow) {
       showToast("Vui lòng chọn trưởng phòng có sẵn trong danh mục.", true);
       return;
     }
@@ -9714,6 +11126,7 @@
       code,
       templateCode: code,
       departmentHead,
+      departmentHeadEmployeeCode: departmentHeadRow.employeeCode || "",
       summaryGroup: elements.areaSummaryGroup?.value?.trim() || getDepartmentHeadSummaryGroup(departmentHead, areas),
       scorerId,
       assessorId: primaryAssessorId,
@@ -9910,139 +11323,116 @@
     }
 
     const scope = activeAccountScope;
-    const periodId = getActivePeriodId(scope);
-    const role = normalizeScopedAccountRole(elements.accountRole?.value, scope);
-    const isZoneOwnerRole = role === ROLE_ZONE_OWNER;
-    let areaIds = [];
     const username = elements.accountUsername.value.trim();
-    const displayName = (elements.accountDisplayName?.value || "").trim();
+    const profileKey = elements.accountDisplayName?.value || "";
+    const profile = getCatalogPersonProfiles().find((person) => person.key === profileKey) || null;
     const password = elements.accountPassword.value;
-    const existing = state.accounts.find((account) => account.username === username);
-    let personId = "";
-    let name = "";
-
-    if (!username || (!password && !existing)) {
+    if (!username || !profile || !password) {
       showToast("Vui lòng nhập đủ thông tin tài khoản.", true);
       return;
     }
-    if (password && password.length < 4) {
+    if (password.length < 4) {
       showToast("Mật khẩu phải có ít nhất 4 ký tự.", true);
       return;
     }
-
-    if (isZoneOwnerRole) {
-      personId = elements.accountManager?.value || "";
-      const manager = getPeriodCatalogManager(periodId, personId);
-      name = manager?.name || "";
-      if (!manager) {
-        showToast("Vui lòng chọn người phụ trách zone.", true);
-        return;
-      }
-      areaIds = getManagerAreaIds(personId, periodId);
-      if (!areaIds.length) {
-        showToast("Người này chưa được phân công Zone. Vui lòng chọn Zone trong Danh mục → Người phụ trách zone.", true);
-        return;
-      }
-    } else {
-      personId = elements.accountAssessor.value;
-      let assessor = null;
-      if (existing && !hasAccountAccessType(existing, scope)) {
-        assessor = await ensureMirroredAssessorForAccount(existing, scope, periodId);
-        if (assessor) personId = assessor.id;
-      }
-      if (!assessor) assessor = getPeriodCatalogAssessor(periodId, personId);
-      name = assessor?.name || "";
-      if (!assessor) {
-        showToast("Vui lòng chọn assessor.", true);
-        return;
-      }
-      areaIds = getAssessorAreaIds(personId, scope, periodId);
+    if (!profile.rolesByType[normalizeCatalogType(scope)]?.length) {
+      showToast("Người này chưa được cấp vai trò trong danh mục của luồng đang chọn.", true);
+      return;
     }
-
-    const applyScopeAssignment = (account) => {
-      const accessTypes = new Set(normalizeAccountAccessTypes(account.accessTypes, account.role));
-      accessTypes.add(scope);
-      account.accessTypes = [...accessTypes];
-      account.rolesByType = { ...normalizeAccountRolesByType(account), [scope]: role };
-      account.name = name || account.name || username;
-      account.displayName = displayName || username;
-      setAccountPersonForType(account, scope, role, personId);
-      setAccountAreaIds(account, scope, areaIds);
-      if (!account.role || !normalizeAccountAccessTypes(account.accessTypes, account.role).includes(FIVE_S_PERIOD_TYPE)) {
-        account.role = role;
-      }
-      delete account.position;
-      if (password) {
-        account.password = password;
-      }
-      delete account.email;
-      delete account.senderEmail;
-    };
-
-    if (existing) {
-      if (isAdminAccount(existing)) {
-        showToast("Không thể cấp thêm quyền bằng tài khoản admin cố định.", true);
-        return;
-      }
-      if (isViewerAccount(existing)) {
-        showToast("Tài khoản người xem được quản lý ở khu riêng bên dưới.", true);
-        return;
-      }
-      if (isDepartmentHeadAccount(existing)) {
-        showToast("Tài khoản trưởng phòng được quản lý ở khu riêng.", true);
-        return;
-      }
-      if (hasAccountAccessType(existing, scope)) {
-        showToast("Tên tài khoản đã tồn tại trong luồng này.", true);
-        return;
-      }
-
-      const beforeLabel = `${existing.username} · Chưa có quyền ${getAccountScopeLabel(scope)}`;
-      applyScopeAssignment(existing);
-      await dbRef(`accounts/${existing.id}`).set(existing);
-      await syncCatalogAreasForAccount(scope, areaIds, personId, role);
-      await logAdminChange({
-        subjectLabel: isZoneOwnerRole ? "Tài khoản người phụ trách zone" : "Tài khoản assessor",
-        beforeLabel,
-        afterLabel: describeAccountForScope(existing, scope),
-        changeLabel: `Cấp thêm quyền ${getAccountScopeLabel(scope)} cho ${username}`,
-        scope,
-      });
-      elements.accountForm.reset();
-      populateAccountRoleOptions();
-      syncAccountRoleFields();
-      showToast("Đã cấp thêm quyền cho tài khoản.");
-      renderAll();
+    const sameNameProfiles = getCatalogPersonProfiles().filter((person) => sameNormalizedText(person.name, profile.name));
+    const duplicateEmployeeAccount = state.accounts.find((account) => {
+      if (!account || isAdminAccount(account) || isViewerAccount(account)) return false;
+      if (profile.employeeCode && account.employeeCode && sameEmployeeCode(profile.employeeCode, account.employeeCode)) return true;
+      if (account.employeeCode) return false;
+      return sameNameProfiles.length === 1
+        && getAccountIdentityNames(account).some((accountName) => sameNormalizedText(accountName, profile.name));
+    });
+    if (duplicateEmployeeAccount) {
+      const codeLabel = profile.employeeCode ? `Mã NV ${profile.employeeCode}` : `Nhân viên ${profile.name}`;
+      showToast(`${codeLabel} đã được cấp tài khoản ${duplicateEmployeeAccount.username || ""}. Mỗi người chỉ được cấp một tài khoản.`, true);
+      return;
+    }
+    const duplicateUsername = state.accounts.find((account) => String(account.username || "").toLocaleLowerCase("vi") === username.toLocaleLowerCase("vi"));
+    if (duplicateUsername) {
+      showToast("Tên tài khoản đã tồn tại. Hãy sửa tài khoản trong danh sách thay vì cấp thêm.", true);
       return;
     }
 
-    const newAccount = {
-      id: makeId("account"),
-      role,
+    const name = profile.name;
+    const account = { id: makeId("account"), createdAt: new Date().toISOString() };
+    const rolesByType = {};
+    const accessTypes = new Set(Object.keys(profile.rolesByType));
+    accessTypes.forEach((type) => {
+      const roles = profile.rolesByType[type] || [];
+      const selectedRole = roles.includes(ROLE_ZONE_OWNER)
+        ? ROLE_ZONE_OWNER
+        : roles.includes(getAssessorRoleForScope(type))
+          ? getAssessorRoleForScope(type)
+          : roles.includes(ROLE_DEPARTMENT_HEAD) || !roles.length
+            ? ROLE_DEPARTMENT_HEAD
+            : "";
+      if (selectedRole) rolesByType[type] = selectedRole;
+    });
+    const primaryRole = rolesByType[normalizeCatalogType(scope)] || Object.values(rolesByType)[0] || ROLE_ASSESSOR_5S;
+    Object.assign(account, {
+      role: primaryRole,
       name,
-      accessTypes: [scope],
-      rolesByType: {},
+      displayName: name,
+      employeeCode: profile.employeeCode || "",
       username,
       password,
-      createdAt: new Date().toISOString(),
-    };
-    applyScopeAssignment(newAccount);
-
-    state.accounts.push(newAccount);
-    await dbRef(`accounts/${newAccount.id}`).set(newAccount);
-    await syncCatalogAreasForAccount(scope, areaIds, personId, role);
-    await logAdminChange({
-      subjectLabel: isZoneOwnerRole ? "Tài khoản người phụ trách zone" : "Tài khoản assessor",
-      afterLabel: describeAccountForScope(newAccount, scope),
-      changeLabel: `Thêm tài khoản ${username}`,
-      scope,
+      accessTypes: [...accessTypes],
+      rolesByType,
+      areaIds: [],
     });
+    ["scorerId", "assessorId", "fiveSScorerId", "fiveSAssessorId", "safetyScorerId", "safetyAssessorId"]
+      .forEach((key) => delete account[key]);
+    delete account.position;
+    delete account.email;
+    delete account.senderEmail;
+    delete account.departmentHeadName;
+    [FIVE_S_PERIOD_TYPE, SAFETY_PERIOD_TYPE].forEach((type) => {
+      const periodId = getActivePeriodId(type);
+      const roles = profile.rolesByType[type] || [];
+      const role = rolesByType[type] || "";
+      if (!accessTypes.has(type)) {
+        if (type === FIVE_S_PERIOD_TYPE) account.fiveSAreaIds = [];
+        else account.safetyAreaIds = [];
+        return;
+      }
+      const primaryIds = role === ROLE_ZONE_OWNER
+        ? getAccountPersonIdsForRole(account, type, ROLE_ZONE_OWNER, periodId)
+        : role === getAssessorRoleForScope(type)
+          ? getAccountPersonIdsForRole(account, type, getAssessorRoleForScope(type), periodId)
+          : [];
+      setAccountPersonForType(account, type, role, primaryIds[0] || "");
+      setAccountAreaIds(account, type, profile.areaIdsByType[type] || []);
+      if (roles.includes(ROLE_DEPARTMENT_HEAD)) account.departmentHeadName = name;
+    });
+    linkCatalogRolesByName(account, name, profile.employeeCode);
 
+    try {
+      await dbRef(`accounts/${account.id}`).set(account);
+    } catch (error) {
+      showToast(error?.message || "Không lưu được tài khoản. Vui lòng thử lại.", true);
+      return;
+    }
+    state.accounts.push(account);
     elements.accountForm.reset();
     populateAccountRoleOptions();
     syncAccountRoleFields();
-    showToast("Đã thêm tài khoản.");
     renderAll();
+    try {
+      await logAdminChange({
+        subjectLabel: "Tài khoản nhân viên",
+        afterLabel: describeAccountForScope(account, scope),
+        changeLabel: `Thêm tài khoản ${username} với các vai trò đã phân quyền trong danh mục`,
+        scope,
+      });
+      showToast("Đã thêm tài khoản theo các vai trò trong danh mục.");
+    } catch {
+      showToast("Tài khoản đã lưu và hiển thị, nhưng không ghi được nhật ký thay đổi.", true);
+    }
   }
 
   async function handleViewerAccountSubmit(event) {
@@ -10114,8 +11504,9 @@
     const displayName = (elements.departmentHeadAccountDisplayName?.value || "").trim();
     const password = elements.departmentHeadAccountPassword?.value || "";
     const rows = departmentHeadAccountSourceRows(source);
+    const existing = state.accounts.find((account) => account.username === username);
 
-    if (!name || !username || !password) {
+    if (!name || !username || (!password && !existing)) {
       showToast("Vui lòng nhập đủ thông tin trưởng phòng.", true);
       return;
     }
@@ -10123,46 +11514,52 @@
       showToast("Vui lòng chọn trưởng phòng có sẵn trong danh mục.", true);
       return;
     }
-    if (password.length < 4) {
+    if (password && password.length < 4) {
       showToast("Mật khẩu phải có ít nhất 4 ký tự.", true);
       return;
     }
-    if (state.accounts.some((account) => account.username === username)) {
-      showToast("Tên tài khoản đã tồn tại.", true);
+    if (existing && (isAdminAccount(existing) || isViewerAccount(existing)
+      || !sameNormalizedText(existing.name || existing.departmentHeadName, name))) {
+      showToast("Tài khoản này đã được cấp cho người khác.", true);
       return;
     }
 
-    const account = {
+    const account = existing || {
       id: makeId("account"),
       role: ROLE_DEPARTMENT_HEAD,
       accessTypes: [FIVE_S_PERIOD_TYPE, SAFETY_PERIOD_TYPE],
       rolesByType: { [FIVE_S_PERIOD_TYPE]: ROLE_DEPARTMENT_HEAD, [SAFETY_PERIOD_TYPE]: ROLE_DEPARTMENT_HEAD },
       name,
-      departmentHeadName: name,
-      departmentHeadSource: source,
       displayName: displayName || name,
       username,
-      password,
       areaIds: [],
       fiveSAreaIds: [],
       safetyAreaIds: [],
       createdAt: new Date().toISOString(),
     };
+    account.name = name;
+    account.departmentHeadName = name;
+    account.departmentHeadSource = source;
+    account.displayName = displayName || account.displayName || name;
+    account.username = username;
+    account.accessTypes = [...new Set([...normalizeAccountAccessTypes(account.accessTypes, account.role), FIVE_S_PERIOD_TYPE, SAFETY_PERIOD_TYPE])];
+    if (password) account.password = password;
+    linkCatalogRolesByName(account, name);
 
-    state.accounts.push(account);
+    if (!existing) state.accounts.push(account);
     await Promise.all([
       dbRef(`accounts/${account.id}`).set(account),
       logAdminChange({
         subjectLabel: "Tài khoản trưởng phòng",
         afterLabel: describeAccountForScope(account, activeAccountScope),
-        changeLabel: `Thêm tài khoản trưởng phòng ${username}`,
+        changeLabel: `${existing ? "Cấp thêm quyền trưởng phòng cho" : "Thêm tài khoản trưởng phòng"} ${username}`,
         scope: "",
       }),
     ]);
 
     elements.departmentHeadAccountForm?.reset();
     populateDepartmentHeadAccountSelect();
-    showToast("Đã thêm tài khoản trưởng phòng.");
+    showToast(existing ? "Đã cấp thêm quyền trưởng phòng cho tài khoản." : "Đã thêm tài khoản trưởng phòng.");
     renderAll();
   }
 
@@ -10180,26 +11577,34 @@
 
     openFormModal({
       title: "Sửa người phụ trách zone",
-      html: "<label>" +
+      html: catalogPersonContextHtml(manager.name, manager.employeeCode) +
+      "<label>" +
+        "<span>Mã nhân viên</span>" +
+        "<input name=\"employeeCode\" type=\"text\" value=\"" + escapeHtml(manager.employeeCode || "") + "\" required>" +
+      "</label>" +
+      "<label>" +
         "<span>Tên người phụ trách zone</span>" +
         "<input name=\"name\" type=\"text\" value=\"" + escapeHtml(manager.name) + "\" required>" +
       "</label>" +
       '<div class="form-field"><span>Zone quản lý và tự chấm điểm</span><div class="zone-check-list">' + areaCheckboxListHtml(getManagerAreaIds(id, periodId), catalogType, periodId, { managerId: id }) + '</div></div>',
       async onSubmit(formData) {
         const name = String(formData.get("name") || "").trim();
-        if (!name) {
-          showToast("Tên người phụ trách zone không được trống.", true);
+        const employeeCode = String(formData.get("employeeCode") || "").trim();
+        if (!name || !employeeCode) {
+          showToast("Mã nhân viên và tên người phụ trách zone không được để trống.", true);
           return false;
         }
 
         const beforeSnapshot = capturePeriodSnapshot(periodId);
         const beforeName = manager.name;
-        if (getPeriodCatalogManagers(catalogType, periodId).some((item) => item.id !== id && item.name.toLocaleLowerCase("vi") === name.toLocaleLowerCase("vi"))) {
-          showToast("Người phụ trách zone này đã tồn tại trong kỳ đang mở.", true);
+        if (getPeriodCatalogManagers(catalogType, periodId).some((item) => item.id !== id
+          && employeeCodeKey(item.employeeCode) === employeeCodeKey(employeeCode))) {
+          showToast("Mã nhân viên này đã có trong danh sách quản lý zone.", true);
           return false;
         }
         try {
-          await saveManagerWithAreas({ ...manager, name }, formData.getAll("areaIds"), catalogType, periodId, { periodOnly: true });
+          await saveManagerWithAreas({ ...manager, employeeCode, name }, formData.getAll("areaIds"), catalogType, periodId, { periodOnly: true });
+          await updateCatalogPersonIdentity(manager, name, employeeCode);
         } catch (error) {
           showToast("Không lưu được phân công Zone. Vui lòng thử lại.", true);
           return false;
@@ -10380,6 +11785,11 @@
     openFormModal({
       title: "Sửa assessor",
       html: `
+        ${catalogPersonContextHtml(assessor.name, assessor.employeeCode)}
+        <label>
+          <span>Mã nhân viên</span>
+          <input name="employeeCode" type="text" value="${escapeHtml(assessor.employeeCode || "")}" required>
+        </label>
         <label>
           <span>Tên assessor</span>
           <input name="name" type="text" value="${escapeHtml(assessor.name)}" required>
@@ -10393,13 +11803,15 @@
       `,
       async onSubmit(formData, form) {
         const name = String(formData.get("name") || "").trim();
-        if (!name) {
-          showToast("Tên assessor không được trống.", true);
+        const employeeCode = String(formData.get("employeeCode") || "").trim();
+        if (!name || !employeeCode) {
+          showToast("Mã nhân viên và tên assessor không được để trống.", true);
           return false;
         }
 
-        if (getPeriodCatalogAssessors(catalogType, periodId).some((item) => item.id !== id && item.name.toLocaleLowerCase("vi") === name.toLocaleLowerCase("vi"))) {
-          showToast("Assessor này đã tồn tại trong kỳ đang mở.", true);
+        if (getPeriodCatalogAssessors(catalogType, periodId).some((item) => item.id !== id
+          && employeeCodeKey(item.employeeCode) === employeeCodeKey(employeeCode))) {
+          showToast("Mã nhân viên này đã có trong danh sách assessor.", true);
           return false;
         }
 
@@ -10409,7 +11821,7 @@
         const beforeName = assessor.name;
         const rootAssessors = getMutableAssessors(catalogType);
         const rootAssessor = rootAssessors.find((item) => item.id === id);
-        const affectedAccounts = state.accounts.filter((account) => hasAccountAccessType(account, catalogType) && getAccountPersonId(account, catalogType) === assessor.id);
+        const affectedAccounts = state.accounts.filter((account) => hasAccountAccessType(account, catalogType) && accountMatchesCatalogPerson(account, assessor));
         const beforeAccounts = affectedAccounts.map((account) => cloneValue(account));
         const beforePeriodSnapshots = (state.periods || [])
           .filter((period) => normalizeCatalogType(period.type) === catalogType)
@@ -10421,11 +11833,14 @@
         const beforeHistory = cloneValue(state.history);
 
         assessor.name = name;
+        assessor.employeeCode = employeeCode;
         if (rootAssessor) {
           rootAssessor.name = name;
+          rootAssessor.employeeCode = employeeCode;
         }
         affectedAccounts.forEach((account) => {
           account.name = name;
+          account.employeeCode = employeeCode;
         });
 
         const updates = setAssessorAreaIds(assessor.id, checkedAreaIds, catalogType, periodId);
@@ -10444,6 +11859,7 @@
 
         try {
           await updateRootWithOptionalRenderSuppression(updates, { suppressRender: true });
+          await updateCatalogPersonIdentity(assessor, name, employeeCode);
         } catch (error) {
           const isSafety = catalogType === SAFETY_PERIOD_TYPE;
           if (isSafety) {
@@ -10631,7 +12047,7 @@
             </label>
           </div>
           <select name="departmentHeadSelect" id="edit-area-depthead-select" style="${initialDeptHeadMode === 'catalog' ? '' : 'display: none;'}">
-            ${departmentHeadOptions(area.departmentHead, true, targetPeriodId)}
+            ${departmentHeadOptions(area.departmentHeadEmployeeCode || area.departmentHead, true, targetPeriodId)}
           </select>
           <input name="departmentHeadCustom" id="edit-area-depthead-name" type="text" value="${escapeHtml(area.departmentHead || "")}" placeholder="Nhập tên trưởng phòng mới..." style="${initialDeptHeadMode === 'custom' ? '' : 'display: none;'}">
         </div>
@@ -10701,6 +12117,7 @@
         const previousAssessorId = area.assessorId || "";
         const previousAssessorName = getAreaConfiguredAssessorNameForPeriod(targetPeriodId, area);
         const previousDepartmentHead = String(area.departmentHead || "").trim();
+        const previousDepartmentHeadEmployeeCode = String(area.departmentHeadEmployeeCode || "").trim();
         const previousSummaryGroup = String(area.summaryGroup || "").trim();
         const mutableAreas = isSnapshotEdit ? getMutablePeriodAreas(catalogType, targetPeriodId) : getMutableAreas(catalogType);
         const managers = getMutablePeriodManagers(catalogType, targetPeriodId);
@@ -10735,10 +12152,17 @@
 
         const deptHeadMode = String(formData.get("deptHeadMode") || "catalog");
         let nextDepartmentHead = "";
+        let nextDepartmentHeadEmployeeCode = "";
         if (deptHeadMode === "catalog") {
-          nextDepartmentHead = normalizeDepartmentHeadName(String(formData.get("departmentHeadSelect") || "").trim());
+          const selectedHead = String(formData.get("departmentHeadSelect") || "").trim();
+          const selectedRow = getDepartmentHeadRows(targetPeriodId).find((row) => row.employeeCode === selectedHead
+            || (!row.employeeCode && row.name === selectedHead));
+          nextDepartmentHead = normalizeDepartmentHeadName(selectedRow?.name || selectedHead);
+          nextDepartmentHeadEmployeeCode = selectedRow?.employeeCode || "";
         } else {
           nextDepartmentHead = normalizeDepartmentHeadName(String(formData.get("departmentHeadCustom") || "").trim());
+          const matchingHeads = getDepartmentHeadRows(targetPeriodId).filter((row) => row.name === nextDepartmentHead);
+          if (matchingHeads.length === 1) nextDepartmentHeadEmployeeCode = matchingHeads[0].employeeCode || "";
         }
         const departmentHeadWasRenamed = deptHeadMode === "custom"
           && previousDepartmentHead
@@ -10747,6 +12171,7 @@
           mutableAreas.forEach((peer) => {
             if (departmentHeadKey(peer.departmentHead) === departmentHeadKey(previousDepartmentHead)) {
               peer.departmentHead = nextDepartmentHead;
+              peer.departmentHeadEmployeeCode = nextDepartmentHeadEmployeeCode;
             }
           });
           const contacts = isSnapshotEdit
@@ -10755,13 +12180,14 @@
           renameDepartmentHeadContact(previousDepartmentHead, nextDepartmentHead, contacts, catalogType);
         } else {
           area.departmentHead = nextDepartmentHead;
+          area.departmentHeadEmployeeCode = nextDepartmentHeadEmployeeCode;
         }
 
         if (nextDepartmentHead) {
           if (isSnapshotEdit) {
-            ensureDepartmentHeadContactForPeriod(nextDepartmentHead, catalogType, targetPeriodId);
+            ensureDepartmentHeadContactForPeriod(nextDepartmentHead, catalogType, targetPeriodId, nextDepartmentHeadEmployeeCode);
           } else {
-            ensureDepartmentHeadContact(nextDepartmentHead, catalogType);
+            ensureDepartmentHeadContact(nextDepartmentHead, catalogType, nextDepartmentHeadEmployeeCode);
           }
         }
 
@@ -11271,10 +12697,15 @@
     }
     const headNames = [...new Set(areas.map((area) => area.departmentHead || ""))];
     const currentName = headNames.length === 1 ? headNames[0] : String(fallbackName || "").trim();
+    const headCodes = [...new Set(areas.map((area) => area.departmentHeadEmployeeCode || "").filter(Boolean))];
+    const currentEmployeeCode = headCodes.length === 1 ? headCodes[0] : "";
 
     const deptHeadRows = getDepartmentHeadRows(targetPeriodId);
+    const currentDeptHeadRow = deptHeadRows.find((row) => currentEmployeeCode
+      ? sameEmployeeCode(row.employeeCode, currentEmployeeCode)
+      : departmentHeadKey(row.name) === departmentHeadKey(currentName));
     const currentDeptHeadClean = normalizeDepartmentHeadName(currentName);
-    const hasCatalogDeptHead = Boolean(currentDeptHeadClean && deptHeadRows.some((row) => departmentHeadKey(row.name) === departmentHeadKey(currentDeptHeadClean)));
+    const hasCatalogDeptHead = Boolean(currentDeptHeadClean && currentDeptHeadRow);
     const initialDeptHeadMode = hasCatalogDeptHead ? "catalog" : (currentDeptHeadClean ? "custom" : "catalog");
 
     openFormModal({
@@ -11298,7 +12729,7 @@
             </label>
           </div>
           <select name="departmentHeadSelect" id="edit-depthead-group-select" style="${initialDeptHeadMode === 'catalog' ? '' : 'display: none;'}">
-            ${departmentHeadOptions(currentName, true, targetPeriodId)}
+            ${departmentHeadOptions(currentEmployeeCode || currentName, true, targetPeriodId)}
           </select>
           <input name="departmentHeadCustom" id="edit-depthead-group-input" type="text" value="${escapeHtml(currentName)}" placeholder="Nhập tên trưởng phòng mới..." style="${initialDeptHeadMode === 'custom' ? '' : 'display: none;'}">
         </div>
@@ -11308,10 +12739,17 @@
         const beforeCatalog = captureCatalogState(catalogType);
         const deptHeadMode = String(formData.get("deptHeadMode") || "catalog");
         let nextName = "";
+        let nextEmployeeCode = "";
         if (deptHeadMode === "catalog") {
-          nextName = normalizeDepartmentHeadName(String(formData.get("departmentHeadSelect") || "").trim());
+          const selectedHead = String(formData.get("departmentHeadSelect") || "").trim();
+          const selectedRow = deptHeadRows.find((row) => row.employeeCode === selectedHead
+            || (!row.employeeCode && row.name === selectedHead));
+          nextName = normalizeDepartmentHeadName(selectedRow?.name || selectedHead);
+          nextEmployeeCode = selectedRow?.employeeCode || "";
         } else {
           nextName = normalizeDepartmentHeadName(String(formData.get("departmentHeadCustom") || "").trim());
+          const matchingHeads = deptHeadRows.filter((row) => row.name === nextName);
+          if (matchingHeads.length === 1) nextEmployeeCode = matchingHeads[0].employeeCode || "";
         }
         const beforeLabel = currentName || "Chưa có";
         const allPeriodAreas = isSnapshotEdit ? getAreasForPeriod(targetPeriodId) : getAreas(catalogType);
@@ -11320,6 +12758,7 @@
 
         areas.forEach((area) => {
           area.departmentHead = nextName;
+          area.departmentHeadEmployeeCode = nextEmployeeCode;
           if (nextName) {
             area.summaryGroup = targetSummary || nextName;
           }
@@ -11334,8 +12773,8 @@
         }
 
         if (nextName) {
-          ensureDepartmentHeadContactForPeriod(nextName, catalogType, targetPeriodId);
-          ensureDepartmentHeadContact(nextName, catalogType);
+          ensureDepartmentHeadContactForPeriod(nextName, catalogType, targetPeriodId, nextEmployeeCode);
+          ensureDepartmentHeadContact(nextName, catalogType, nextEmployeeCode);
         }
 
         if (isSnapshotEdit) {
@@ -11620,580 +13059,163 @@
   }
 
   function editAccount(id) {
-    if (!requireAdminAction()) {
-      return;
-    }
+    if (!requireAdminAction()) return;
 
     const scope = activeAccountScope;
-    const periodId = getActivePeriodId(scope);
     const account = state.accounts.find((item) => item.id === id);
-    if (!account) {
-      return;
-    }
+    if (!account) return;
 
-    if (isAdminAccount(account)) {
-      openFormModal({
-        title: "Sửa tên Admin",
-        html: `
-          <div style="margin-bottom: 14px; padding: 10px 12px; background: rgba(0, 240, 255, 0.05); border: 1px solid rgba(0, 240, 255, 0.2); border-radius: 6px; font-size: 13px;">
-            <div style="margin-bottom: 4px;"><strong>Tài khoản đăng nhập:</strong> <span class="cyber-badge">${escapeHtml(account.username || "admin")}</span></div>
-            <div style="color: #94a3b8; font-size: 12px;">(Tài khoản và mật khẩu Admin được cố định để bảo mật hệ thống, chỉ cho phép chỉnh sửa tên hiển thị)</div>
-          </div>
-          <label>
-            <span>Tên hiển thị người quản trị</span>
-            <input name="name" type="text" value="${escapeHtml(account.name || "")}" required placeholder="Họ và tên admin">
-          </label>
-        `,
-        async onSubmit(formData) {
-          if (!requireAdminAction()) {
-            return false;
-          }
-          const name = String(formData.get("name") || "").trim();
+    const isAdmin = isAdminAccount(account);
+    const isViewer = isViewerAccount(account);
+    const displayName = isAdmin
+      ? account.displayName || account.name || account.username
+      : isViewer
+        ? account.displayName || account.name || account.username
+        : account.displayName || getAccountDisplayName(account, scope) || account.username;
+    const personName = isDepartmentHeadAccount(account)
+      ? getDepartmentHeadAccountName(account)
+      : getAccountDisplayName(account, scope);
+    const roleSummary = isAdmin
+      ? 'Admin hệ thống · toàn quyền'
+      : isViewer
+        ? 'Người xem'
+        : `${getAccountAccessLabel(account)} · Zone ${accountZoneCodesForScope(account, scope).join(', ') || 'chưa có'}`;
+    const identitySummary = isAdmin
+      ? `Tài khoản đăng nhập: ${account.username || 'admin'} · Tên hiển thị: ${displayName}`
+      : isViewer
+        ? `Người xem: ${account.name || displayName}${account.position ? ` · ${account.position}` : ''}`
+        : `Mã NV: ${account.employeeCode || 'chưa có'} · ${personName || account.name || displayName} · ${roleSummary}`;
 
-          if (!name) {
-            showToast("Vui lòng nhập tên hiển thị người quản trị.", true);
-            return false;
-          }
-
-          const beforeLabel = describeAccountForScope(account, scope);
-          account.name = name;
-          account.displayName = name;
-
-          if (currentUser && (currentUser.id === account.id || currentUser.role === "admin")) {
-            currentUser.name = name;
-            currentUser.displayName = name;
-            saveSession(currentUser);
-          }
-
-          await Promise.all([
-            dbRef(`accounts/${account.id}`).set(account),
-            logAdminChange({
-              subjectLabel: "Tài khoản Admin hệ thống",
-              beforeLabel,
-              afterLabel: describeAccountForScope(account, scope),
-              changeLabel: `Sửa tên hiển thị tài khoản Admin thành ${account.name}`,
-              scope,
-            }),
-          ]);
-
-          showToast("Đã cập nhật tên Admin thành công.");
-          renderAll();
-          return true;
-        },
-      });
-      return;
-    }
-
-    if (isViewerAccount(account)) {
-      openFormModal({
-        title: "Sửa tài khoản người xem",
-        html: `
+    openFormModal({
+      title: isAdmin ? 'Sửa tên Admin' : 'Sửa thông tin tài khoản',
+      html: `
+        <div class="modal-context"><span>${escapeHtml(identitySummary)}</span></div>
+        ${isViewer ? `
           <label>
             <span>Tên người xem</span>
-            <input name="viewerName" type="text" value="${escapeHtml(account.name || account.displayName || "")}" required>
+            <input name="viewerName" type="text" value="${escapeHtml(account.name || '')}" required>
           </label>
           <label>
             <span>Chức vụ</span>
-            <input name="viewerPosition" type="text" value="${escapeHtml(account.position || "")}" required>
+            <input name="viewerPosition" type="text" value="${escapeHtml(account.position || '')}" required>
           </label>
+        ` : ''}
+        ${!isAdmin ? `
           <label>
             <span>Tài khoản</span>
-            <input name="username" type="text" value="${escapeHtml(account.username)}" required>
+            <input name="username" type="text" value="${escapeHtml(account.username || '')}" required>
           </label>
-          <label>
-            <span>Tên hiển thị</span>
-            <input name="displayName" type="text" value="${escapeHtml(account.displayName || "")}" placeholder="Mặc định theo tên người xem">
-          </label>
-          <label>
-            <span>Mật khẩu</span>
-            <input name="password" type="password" value="" minlength="4" placeholder="Để trống nếu không đổi">
-          </label>
-        `,
-        async onSubmit(formData) {
-          if (!requireAdminAction()) {
-            return false;
-          }
-
-          const name = String(formData.get("viewerName") || "").trim();
-          const position = String(formData.get("viewerPosition") || "").trim();
-          const username = String(formData.get("username") || "").trim();
-          const displayName = String(formData.get("displayName") || "").trim();
-          const password = String(formData.get("password") || "");
-
-          if (!name || !position || !username) {
-            showToast("Vui lòng nhập đủ thông tin người xem.", true);
-            return false;
-          }
-          if (password && password.length < 4) {
-            showToast("Mật khẩu mới phải có ít nhất 4 ký tự.", true);
-            return false;
-          }
-          if (state.accounts.some((item) => item.id !== id && item.username === username)) {
-            showToast("Tên tài khoản đã tồn tại.", true);
-            return false;
-          }
-
-          const beforeLabel = describeAccountForScope(account, scope);
-          account.role = ROLE_VIEWER;
-          account.accessTypes = [FIVE_S_PERIOD_TYPE, SAFETY_PERIOD_TYPE];
-          account.rolesByType = { [FIVE_S_PERIOD_TYPE]: ROLE_VIEWER, [SAFETY_PERIOD_TYPE]: ROLE_VIEWER };
-          account.name = name;
-          account.position = position;
-          account.displayName = displayName || name;
-          account.username = username;
-          account.areaIds = [];
-          account.fiveSAreaIds = [];
-          account.safetyAreaIds = [];
-          setAccountPersonForType(account, FIVE_S_PERIOD_TYPE, ROLE_VIEWER, "");
-          setAccountPersonForType(account, SAFETY_PERIOD_TYPE, ROLE_VIEWER, "");
-          if (password) {
-            account.password = password;
-          } else {
-            delete account.password;
-          }
-          delete account.email;
-          delete account.senderEmail;
-
-          await Promise.all([
-            dbRef(`accounts/${account.id}`).set(account),
-            logAdminChange({
-              subjectLabel: "Tài khoản người xem",
-              beforeLabel,
-              afterLabel: describeAccountForScope(account, scope),
-              changeLabel: `Sửa tài khoản người xem ${account.username}`,
-              scope: "",
-            }),
-          ]);
-
-          showToast("Đã cập nhật tài khoản người xem.");
-          renderAll();
-          return true;
-        },
-      });
-      return;
-    }
-
-    if (isDepartmentHeadAccount(account)) {
-      const allHeadRows = [
-        ...getDepartmentHeadRows(getActivePeriodId(FIVE_S_PERIOD_TYPE)).map((row) => ({ ...row, source: FIVE_S_PERIOD_TYPE, sourceLabel: "5S" })),
-        ...getDepartmentHeadRows(getActivePeriodId(SAFETY_PERIOD_TYPE)).map((row) => ({ ...row, source: SAFETY_PERIOD_TYPE, sourceLabel: "AT" })),
-      ];
-      const uniqueRows = [...new Map(allHeadRows.map((row) => [departmentHeadKey(row.name), row])).values()];
-      const selectedName = getDepartmentHeadAccountName(account);
-      openFormModal({
-        title: "Sửa tài khoản trưởng phòng",
-        html: `
-          <label>
-            <span>Trưởng phòng</span>
-            <select name="departmentHeadName" required>
-              ${uniqueRows.map((row) => `<option value="${escapeHtml(row.name)}" ${departmentHeadKey(row.name) === departmentHeadKey(selectedName) ? "selected" : ""}>${escapeHtml(row.name)} · ${escapeHtml(row.sourceLabel)} · Zone ${escapeHtml(row.areaCodes.join(", ") || "chưa có")}</option>`).join("")}
-            </select>
-          </label>
-          <label>
-            <span>Tài khoản</span>
-            <input name="username" type="text" value="${escapeHtml(account.username)}" required>
-          </label>
-          <label>
-            <span>Tên hiển thị</span>
-            <input name="displayName" type="text" value="${escapeHtml(account.displayName || "")}" placeholder="Mặc định theo tên trưởng phòng">
-          </label>
-          <label>
-            <span>Mật khẩu</span>
-            <input name="password" type="password" value="" minlength="4" placeholder="Để trống nếu không đổi">
-          </label>
-        `,
-        async onSubmit(formData) {
-          if (!requireAdminAction()) {
-            return false;
-          }
-
-          const name = normalizeDepartmentHeadName(formData.get("departmentHeadName"));
-          const username = String(formData.get("username") || "").trim();
-          const displayName = String(formData.get("displayName") || "").trim();
-          const password = String(formData.get("password") || "");
-
-          if (!name || !username) {
-            showToast("Vui lòng nhập đủ thông tin trưởng phòng.", true);
-            return false;
-          }
-          if (password && password.length < 4) {
-            showToast("Mật khẩu mới phải có ít nhất 4 ký tự.", true);
-            return false;
-          }
-          if (!uniqueRows.some((row) => departmentHeadKey(row.name) === departmentHeadKey(name))) {
-            showToast("Vui lòng chọn trưởng phòng có sẵn trong danh mục.", true);
-            return false;
-          }
-          if (state.accounts.some((item) => item.id !== id && item.username === username)) {
-            showToast("Tên tài khoản đã tồn tại.", true);
-            return false;
-          }
-
-          const beforeLabel = describeAccountForScope(account, scope);
-          const isEditingCurrentAccount = currentUser && (currentUser.id === account.id || currentUser.username === account.username);
-          account.role = ROLE_DEPARTMENT_HEAD;
-          account.accessTypes = [FIVE_S_PERIOD_TYPE, SAFETY_PERIOD_TYPE];
-          account.rolesByType = { [FIVE_S_PERIOD_TYPE]: ROLE_DEPARTMENT_HEAD, [SAFETY_PERIOD_TYPE]: ROLE_DEPARTMENT_HEAD };
-          account.name = name;
-          account.departmentHeadName = name;
-          account.displayName = displayName || name;
-          account.username = username;
-          account.areaIds = [];
-          account.fiveSAreaIds = [];
-          account.safetyAreaIds = [];
-          setAccountPersonForType(account, FIVE_S_PERIOD_TYPE, ROLE_DEPARTMENT_HEAD, "");
-          setAccountPersonForType(account, SAFETY_PERIOD_TYPE, ROLE_DEPARTMENT_HEAD, "");
-          if (password) {
-            account.password = password;
-          } else {
-            delete account.password;
-          }
-          delete account.position;
-          delete account.email;
-          delete account.senderEmail;
-          if (isEditingCurrentAccount) {
-            currentUser = account;
-            saveSession(currentUser);
-          }
-
-          await Promise.all([
-            dbRef(`accounts/${account.id}`).set(account),
-            logAdminChange({
-              subjectLabel: "Tài khoản trưởng phòng",
-              beforeLabel,
-              afterLabel: describeAccountForScope(account, scope),
-              changeLabel: `Sửa tài khoản trưởng phòng ${account.username}`,
-              scope: "",
-            }),
-          ]);
-
-          showToast("Đã cập nhật tài khoản trưởng phòng.");
-          renderAll();
-          return true;
-        },
-      });
-      return;
-    }
-
-    if (!hasAccountAccessType(account, scope)) {
-      return;
-    }
-
-    const selectedRole = getAccountRoleForType(account, scope) || getAssessorRoleForScope(scope);
-    const selectedPersonId = getAccountPersonId(account, scope);
-    openFormModal({
-      title: "Sửa tài khoản " + getAccountScopeLabel(scope),
-      html: `
-        <label>
-          <span>Loại quyền</span>
-          <select name="role" required>
-            ${accountRoleOptionsHtml(selectedRole, scope, { includeViewer: false })}
-          </select>
-        </label>
-        <label data-account-assessor-field>
-          <span>Assessor</span>
-          <select name="assessorId">${assessorOptions(selectedRole === ROLE_ZONE_OWNER ? "" : selectedPersonId, true, scope)}</select>
-        </label>
-        <label data-account-manager-field hidden>
-          <span>Người phụ trách zone</span>
-          <select name="scorerId">${managerOptions(selectedRole === ROLE_ZONE_OWNER ? selectedPersonId : "", true, scope)}</select>
-        </label>
-        <label>
-          <span>Tài khoản</span>
-          <input name="username" type="text" value="${escapeHtml(account.username)}" required>
-        </label>
+        ` : ''}
         <label>
           <span>Tên hiển thị</span>
-          <input name="displayName" type="text" value="${escapeHtml(account.displayName || "")}" placeholder="Mặc định theo tài khoản">
+          <input name="displayName" type="text" value="${escapeHtml(displayName || '')}" required>
         </label>
-        <label>
-          <span>Mật khẩu</span>
-          <input name="password" type="password" value="" minlength="4" placeholder="Để trống nếu không đổi">
-        </label>
+        ${!isAdmin ? `
+          <label>
+            <span>Mật khẩu mới</span>
+            <input name="password" type="password" value="" minlength="4" autocomplete="new-password" placeholder="Để trống nếu không đổi">
+          </label>
+        ` : ''}
       `,
-      async onSubmit(formData, form) {
-        if (!requireAdminAction()) {
-          return false;
-        }
+      async onSubmit(formData) {
+        if (!requireAdminAction()) return false;
 
-        const role = normalizeScopedAccountRole(formData.get("role"), scope);
-        const isZoneOwnerRole = role === ROLE_ZONE_OWNER;
-        let areaIds = [];
-        const username = String(formData.get("username") || "").trim();
-        const displayName = String(formData.get("displayName") || "").trim();
-        const password = String(formData.get("password") || "");
-        let personId = "";
-        let name = "";
-
-        if (!username) {
-          showToast("Vui lòng nhập đủ thông tin tài khoản.", true);
+        const username = isAdmin ? account.username : String(formData.get('username') || '').trim();
+        const nextDisplayName = String(formData.get('displayName') || '').trim();
+        const password = String(formData.get('password') || '');
+        const viewerName = isViewer ? String(formData.get('viewerName') || '').trim() : '';
+        const viewerPosition = isViewer ? String(formData.get('viewerPosition') || '').trim() : '';
+        if (!nextDisplayName || (!isAdmin && !username) || (isViewer && (!viewerName || !viewerPosition))) {
+          showToast('Vui lòng nhập đủ thông tin tài khoản.', true);
           return false;
         }
         if (password && password.length < 4) {
-          showToast("Mật khẩu mới phải có ít nhất 4 ký tự.", true);
+          showToast('Mật khẩu mới phải có ít nhất 4 ký tự.', true);
           return false;
         }
-
-        if (isZoneOwnerRole) {
-          personId = String(formData.get("scorerId") || "");
-          const manager = getPeriodCatalogManager(periodId, personId);
-          name = manager?.name || "";
-          if (!manager) {
-            showToast("Vui lòng chọn người phụ trách zone.", true);
-            return false;
-          }
-          areaIds = getManagerAreaIds(personId, periodId);
-          if (!areaIds.length) {
-            showToast("Người này chưa được phân công Zone. Vui lòng chọn Zone trong Danh mục → Người phụ trách zone.", true);
-            return false;
-          }
-        } else {
-          personId = String(formData.get("assessorId") || "");
-          const assessor = getPeriodCatalogAssessor(periodId, personId);
-          name = assessor?.name || "";
-          if (!assessor) {
-            showToast("Vui lòng chọn assessor.", true);
-            return false;
-          }
-          areaIds = getAssessorAreaIds(personId, scope, periodId);
-        }
-
-        if (state.accounts.some((item) => item.id !== id && item.username === username)) {
-          showToast("Tên tài khoản đã tồn tại.", true);
+        if (!isAdmin && state.accounts.some((item) => item.id !== id && item.username === username)) {
+          showToast('Tên tài khoản đã tồn tại.', true);
           return false;
         }
 
         const beforeLabel = describeAccountForScope(account, scope);
-        const isEditingCurrentAccount = currentUser && (currentUser.id === account.id || currentUser.username === account.username);
-        account.accessTypes = [...new Set([...normalizeAccountAccessTypes(account.accessTypes, account.role), scope])];
-        account.rolesByType = { ...normalizeAccountRolesByType(account), [scope]: role };
-        account.name = name || account.name || username;
-        account.displayName = displayName || username;
-        setAccountPersonForType(account, scope, role, personId);
-        setAccountAreaIds(account, scope, areaIds);
-        if (!hasAccountAccessType(account, FIVE_S_PERIOD_TYPE)) {
-          account.role = getAccountRoleForType(account, SAFETY_PERIOD_TYPE) || role;
-        } else if (scope === FIVE_S_PERIOD_TYPE) {
-          account.role = role;
+        const updatedAccount = {
+          ...account,
+          ...(isAdmin ? {} : { username }),
+          displayName: nextDisplayName,
+          ...(isViewer ? { name: viewerName, position: viewerPosition } : {}),
+        };
+        if (password) updatedAccount.password = password;
+
+        try {
+          await dbRef(`accounts/${id}`).set(updatedAccount);
+        } catch (error) {
+          showToast(error?.message || 'Không lưu được tài khoản. Vui lòng thử lại.', true);
+          return false;
         }
-        delete account.position;
-        account.username = username;
-        if (password) {
-          account.password = password;
-        } else {
-          delete account.password;
-        }
-        delete account.email;
-        delete account.senderEmail;
-        if (isEditingCurrentAccount) {
-          currentUser = account;
+
+        state.accounts = state.accounts.map((item) => item.id === id ? updatedAccount : item);
+        if (currentUser && (currentUser.id === id || currentUser.username === account.username)) {
+          currentUser = { ...currentUser, ...updatedAccount };
           saveSession(currentUser);
         }
-        await Promise.all([
-          dbRef(`accounts/${account.id}`).set(account),
-          logAdminChange({
-            subjectLabel: isZoneOwnerRole ? "Tài khoản người phụ trách zone" : "Tài khoản assessor",
-            beforeLabel,
-            afterLabel: describeAccountForScope(account, scope),
-            changeLabel: `Sửa tài khoản ${account.username}`,
-            scope,
-          }),
-        ]);
-        await syncCatalogAreasForAccount(scope, areaIds, personId, role);
-        showToast("Đã cập nhật tài khoản.");
         renderAll();
-        return true;
-      },
-    });
-
-    const form = document.getElementById("modal-form");
-    const roleSelect = form?.elements.role;
-    roleSelect?.addEventListener("change", () => syncAccountRoleFields(roleSelect.value, form, scope));
-    syncAccountRoleFields(roleSelect?.value || selectedRole, form, scope);
-  }
-
-  function addAccountAccess(id, type = "") {
-    if (!requireAdminAction()) {
-      return;
-    }
-
-    const scope = normalizeCatalogType(type);
-    const periodId = getActivePeriodId(scope);
-    const account = state.accounts.find((item) => item.id === id && item.role !== "admin");
-    if (!account) {
-      return;
-    }
-    if (hasAccountAccessType(account, scope)) {
-      showToast("Tài khoản này đã có quyền " + getAccountScopeLabel(scope) + ".", true);
-      renderAll();
-      return;
-    }
-
-    const selectedRole = getAssessorRoleForScope(scope);
-    openFormModal({
-      title: "Thêm quyền " + getAccountScopeLabel(scope),
-      submitText: "Thêm quyền",
-      html: `
-        <div class="modal-context">
-          <span>Tài khoản: <strong>${escapeHtml(account.username)}</strong></span>
-        </div>
-        <label>
-          <span>Loại quyền</span>
-          <select name="role" required>
-            ${accountRoleOptionsHtml(selectedRole, scope, { includeViewer: false })}
-          </select>
-        </label>
-        <label data-account-assessor-field ${selectedRole === ROLE_ZONE_OWNER ? "hidden" : ""}>
-          <span>Assessor</span>
-          <select name="assessorId">${assessorOptions("", true, scope)}</select>
-        </label>
-        <label data-account-manager-field ${selectedRole === ROLE_ZONE_OWNER ? "" : "hidden"}>
-          <span>Người phụ trách zone</span>
-          <select name="scorerId">${managerOptions("", true, scope)}</select>
-        </label>
-      `,
-      async onSubmit(formData, form) {
-        if (!requireAdminAction()) {
-          return false;
-        }
-
-        if (hasAccountAccessType(account, scope)) {
-          showToast("Tài khoản này đã có quyền " + getAccountScopeLabel(scope) + ".", true);
-          return true;
-        }
-
-        const role = normalizeScopedAccountRole(formData.get("role"), scope);
-        const isZoneOwnerRole = role === ROLE_ZONE_OWNER;
-        let areaIds = [];
-        let personId = "";
-        let name = "";
-
-        if (isZoneOwnerRole) {
-          personId = String(formData.get("scorerId") || "");
-          const manager = getPeriodCatalogManager(periodId, personId);
-          name = manager?.name || "";
-          if (!manager) {
-            showToast("Vui lòng chọn người phụ trách zone.", true);
-            return false;
-          }
-          areaIds = getManagerAreaIds(personId, periodId);
-          if (!areaIds.length) {
-            showToast("Người này chưa được phân công Zone. Vui lòng chọn Zone trong Danh mục → Người phụ trách zone.", true);
-            return false;
-          }
-        } else {
-          personId = String(formData.get("assessorId") || "");
-          let assessor = null;
-          if (!isZoneOwnerRole) {
-            assessor = await ensureMirroredAssessorForAccount(account, scope, periodId);
-            if (assessor) personId = assessor.id;
-          }
-          if (!assessor) assessor = getPeriodCatalogAssessor(periodId, personId);
-          name = assessor?.name || "";
-          if (!assessor) {
-            showToast("Vui lòng chọn assessor.", true);
-            return false;
-          }
-          areaIds = getAssessorAreaIds(personId, scope, periodId);
-        }
-
-        const beforeLabel = describeAccountForScope(account, account.accessTypes?.[0] || activeAccountScope);
-        account.accessTypes = [...new Set([...normalizeAccountAccessTypes(account.accessTypes, account.role), scope])];
-        account.rolesByType = { ...normalizeAccountRolesByType(account), [scope]: role };
-        account.name = name || account.name || account.username;
-        setAccountPersonForType(account, scope, role, personId);
-        setAccountAreaIds(account, scope, areaIds);
-        if (!hasAccountAccessType(account, FIVE_S_PERIOD_TYPE)) {
-          account.role = getAccountRoleForType(account, SAFETY_PERIOD_TYPE) || role;
-        } else if (scope === FIVE_S_PERIOD_TYPE) {
-          account.role = role;
-        }
-        delete account.email;
-        delete account.senderEmail;
-
-        await Promise.all([
-          dbRef(`accounts/${account.id}`).set(account),
-          logAdminChange({
-            subjectLabel: isZoneOwnerRole ? "Tài khoản người phụ trách zone" : "Tài khoản assessor",
+        try {
+          await logAdminChange({
+            subjectLabel: isAdmin ? 'Tài khoản Admin hệ thống' : isViewer ? 'Tài khoản người xem' : 'Tài khoản nhân viên',
             beforeLabel,
-            afterLabel: describeAccountForScope(account, scope),
-            changeLabel: `Cấp thêm quyền ${getAccountScopeLabel(scope)} cho ${account.username}`,
-            scope,
-          }),
-        ]);
-        await syncCatalogAreasForAccount(scope, areaIds, personId, role);
-        showToast("Đã cấp thêm quyền " + getAccountScopeLabel(scope) + ".");
-        renderAll();
-        return true;
-      },
-    });
-
-    const form = document.getElementById("modal-form");
-    const roleSelect = form?.elements.role;
-    roleSelect?.addEventListener("change", () => syncAccountRoleFields(roleSelect.value, form, scope));
-    syncAccountRoleFields(roleSelect?.value || selectedRole, form, scope);
-  }
-
-  function removeAccountAccess(id, type = activeAccountScope) {
-    if (!requireAdminAction()) {
-      return;
-    }
-
-    const scope = normalizeCatalogType(type);
-    const account = state.accounts.find((item) => item.id === id && item.role !== "admin" && hasAccountAccessType(item, scope));
-    if (!account) {
-      return;
-    }
-
-    const accessTypes = normalizeAccountAccessTypes(account.accessTypes, account.role);
-    const removeOnlyScope = accessTypes.length > 1;
-    openConfirmModal({
-      title: removeOnlyScope ? "Xóa quyền tài khoản" : "Xóa quyền cuối cùng",
-      message: removeOnlyScope
-        ? `Xóa quyền ${getAccountScopeLabel(scope)} khỏi tài khoản ${account.username}?`
-        : `Tài khoản ${account.username} chỉ còn quyền ${getAccountScopeLabel(scope)}. Xóa quyền này sẽ xóa luôn tài khoản.`,
-      confirmText: removeOnlyScope ? "Xóa quyền" : "Xóa tài khoản",
-      danger: true,
-      onConfirm() {
-        const beforeLabel = describeAccountForScope(account, scope);
-        if (removeOnlyScope) {
-          removeAccountScope(account, scope);
-          Promise.all([
-            dbRef(`accounts/${id}`).set(account),
-            logAdminChange({
-              subjectLabel: "Tài khoản",
-              beforeLabel,
-              afterLabel: `Đã gỡ quyền ${getAccountScopeLabel(scope)}`,
-              changeLabel: `Gỡ quyền ${getAccountScopeLabel(scope)} khỏi ${account.username}`,
-              scope,
-            }),
-          ]).then(() => {
-            showToast("Đã xóa quyền tài khoản.");
-            renderAll();
-          }).catch(() => showToast("Lỗi khi xóa quyền.", true));
-          return;
+            afterLabel: describeAccountForScope(updatedAccount, scope),
+            changeLabel: isAdmin
+              ? `Sửa tên hiển thị tài khoản Admin thành ${updatedAccount.displayName}`
+              : `Sửa thông tin tài khoản ${updatedAccount.username}`,
+            scope: isAdmin || isViewer ? '' : scope,
+          });
+          showToast(isAdmin ? 'Đã cập nhật tên Admin.' : 'Đã cập nhật thông tin tài khoản.');
+        } catch {
+          showToast('Thông tin tài khoản đã lưu, nhưng không ghi được nhật ký thay đổi.', true);
         }
-
-        state.accounts = state.accounts.filter((item) => item.id !== id);
-        Promise.all([
-          dbRef(`accounts/${id}`).remove(),
-          logAdminChange({
-            subjectLabel: "Tài khoản",
-            beforeLabel,
-            afterLabel: "Đã xóa",
-            changeLabel: `Xóa tài khoản ${account.username}`,
-            scope,
-          }),
-        ]).then(() => {
-          showToast("Đã xóa tài khoản.");
-          renderAll();
-        }).catch(() => showToast("Lỗi khi xóa.", true));
+        return true;
       },
     });
   }
 
   function deleteAccount(id) {
-    removeAccountAccess(id, activeAccountScope);
+    if (!requireAdminAction()) {
+      return;
+    }
+
+    const account = state.accounts.find((item) => item.id === id && !isAdminAccount(item));
+    if (!account) {
+      return;
+    }
+
+    openConfirmModal({
+      title: "Xóa tài khoản",
+      message: `Xóa tài khoản đăng nhập ${account.username}? Các vai trò và zone đã phân trong Danh mục vẫn được giữ nguyên.`,
+      confirmText: "Xóa tài khoản",
+      danger: true,
+      async onConfirm() {
+        const beforeLabel = describeAccountForScope(account, activeAccountScope);
+        await dbRef(`accounts/${id}`).remove();
+        state.accounts = state.accounts.filter((item) => item.id !== id);
+        renderAll();
+        try {
+          await logAdminChange({
+            subjectLabel: "Tài khoản",
+            beforeLabel,
+            afterLabel: "Đã xóa tài khoản đăng nhập; giữ nguyên Danh mục",
+            changeLabel: `Xóa tài khoản ${account.username}`,
+            scope: activeAccountScope,
+          });
+          showToast("Đã xóa tài khoản đăng nhập. Vai trò trong Danh mục vẫn được giữ.");
+        } catch {
+          showToast("Tài khoản đăng nhập đã xóa; không ghi được nhật ký thay đổi.", true);
+        }
+      },
+      onError(error) {
+        showToast(error?.message || "Không xóa được tài khoản. Vui lòng thử lại.", true);
+      },
+    });
   }
 
   function deleteViewerAccount(id) {
@@ -12268,21 +13290,25 @@
 
   function managerOptions(selectedId, includeBlank = true, type = activeCatalogScope, periodId = getActivePeriodId(type)) {
     const options = getPeriodCatalogManagers(type, periodId)
-      .map((manager) => `<option value="${escapeHtml(manager.id)}" ${manager.id === selectedId ? "selected" : ""}>${escapeHtml(manager.name)}</option>`)
+      .map((manager) => `<option value="${escapeHtml(manager.id)}" ${manager.id === selectedId ? "selected" : ""}>${escapeHtml(manager.employeeCode ? `${manager.employeeCode} · ${manager.name}` : manager.name)}</option>`)
       .join("");
     return `${includeBlank ? '<option value="">Chọn người phụ trách zone</option>' : ""}${options}`;
   }
   function assessorOptions(selectedId, includeBlank = true, type = activeCatalogScope, periodId = getActivePeriodId(type)) {
     const options = getPeriodCatalogAssessors(type, periodId)
-      .map((assessor) => `<option value="${escapeHtml(assessor.id)}" ${assessor.id === selectedId ? "selected" : ""}>${escapeHtml(assessor.name)}</option>`)
+      .map((assessor) => `<option value="${escapeHtml(assessor.id)}" ${assessor.id === selectedId ? "selected" : ""}>${escapeHtml(assessor.employeeCode ? `${assessor.employeeCode} · ${assessor.name}` : assessor.name)}</option>`)
       .join("");
     return `${includeBlank ? '<option value="">Chọn assessor</option>' : ""}${options}`;
   }
   function departmentHeadOptions(selectedName, includeBlank = true, periodId = getActivePeriodId(activeCatalogScope)) {
-    const selectedKey = departmentHeadKey(selectedName);
     const rows = getDepartmentHeadRows(periodId);
     const options = rows
-      .map((row) => `<option value="${escapeHtml(row.name)}" ${departmentHeadKey(row.name) === selectedKey ? "selected" : ""}>${escapeHtml(row.name)}</option>`)
+      .map((row) => {
+        const value = row.employeeCode || row.name;
+        const selected = value === selectedName || row.name === selectedName;
+        const label = row.employeeCode ? `${row.employeeCode} · ${row.name}` : row.name;
+        return `<option value="${escapeHtml(value)}" ${selected ? "selected" : ""}>${escapeHtml(label)}</option>`;
+      })
       .join("");
     return `${includeBlank ? '<option value="">Chọn trưởng phòng có sẵn</option>' : ""}${options}`;
   }
@@ -12826,7 +13852,7 @@
       return;
     }
     if (!canManageSafetyRecord(record)) {
-      showToast("Bạn chỉ được xóa nhiệm vụ đánh giá an toàn của mình.", true);
+      showToast("Bạn chỉ được xóa báo cáo đánh giá an toàn do mình ghi nhận.", true);
       return;
     }
 
@@ -16865,7 +17891,7 @@
         periodId,
         area,
         scoreSource,
-        editable: canEditFiveSScoreSource(currentUser, scoreSource) && !isPeriodArchived(periodId),
+        editable: canEditFiveSScoreSource(currentUser, scoreSource, area.id, periodId) && !isPeriodArchived(periodId),
       });
       syncFormControlValuesForHtml(wrapper);
 
@@ -17443,6 +18469,8 @@
       "edit-safety-period-date",
       "edit-scorer",
       "delete-scorer",
+      "edit-catalog-employee",
+      "delete-catalog-employee",
       "edit-assessor",
       "delete-assessor",
       "edit-area",
@@ -17462,8 +18490,6 @@
       "clear-department-head-email",
       "delete-area",
       "edit-account",
-      "add-account-access",
-      "remove-account-access",
       "delete-viewer-account",
       "delete-department-head-account",
       "delete-account",
@@ -17512,6 +18538,8 @@
       "edit-safety-period-date": () => editSafetyPeriodDate(id),
       "edit-scorer": () => editScorer(id),
       "delete-scorer": () => deleteScorer(id),
+      "edit-catalog-employee": () => editCatalogEmployee(id),
+      "delete-catalog-employee": () => deleteCatalogEmployee(id),
       "edit-assessor": () => editAssessor(id),
       "delete-assessor": () => deleteAssessor(id),
       "edit-area": () => editArea(id, periodId),
@@ -17532,8 +18560,6 @@
       "clear-department-head-email": () => clearDepartmentHeadEmail(id),
       "delete-area": () => deleteArea(id),
       "edit-account": () => editAccount(id),
-      "add-account-access": () => addAccountAccess(id, sourceElement?.dataset.accountScope || ""),
-      "remove-account-access": () => removeAccountAccess(id, sourceElement?.dataset.accountScope || activeAccountScope),
       "delete-viewer-account": () => deleteViewerAccount(id),
       "delete-department-head-account": () => deleteDepartmentHeadAccount(id),
       "delete-account": () => deleteAccount(id),
@@ -17548,7 +18574,7 @@
     if (scoreControl?.closest?.(".assessor-4m-wrap,.summary-matrix-wrap")) {
       return false;
     }
-    return Boolean(target?.closest?.("button,input,select,textarea,a,label,[contenteditable='true'],[contenteditable='plaintext-only']"));
+    return Boolean(target?.closest?.("button,input,select,textarea,a,label,.history-card[data-action='open-safety-card-detail'],[contenteditable='true'],[contenteditable='plaintext-only']"));
   }
 
   function bindEvents() {
@@ -17659,6 +18685,7 @@
     bindPeriodSelect(elements.issueStatsPeriodSelect, SAFETY_PERIOD_TYPE);
 
     elements.assessorAreaSelect?.addEventListener("change", renderAssessorTab);
+    elements.assessorScoreSourceSelect?.addEventListener("change", renderAssessorTab);
     elements.summaryScoreSource?.addEventListener("change", renderActiveTab);
     [elements.safetyAreaFilter, elements.safetyStatusFilter, elements.safetyYearFilter, elements.safetyMonthFilter, elements.safetyDepartmentFilter].forEach((select) => {
       select?.addEventListener("change", renderActiveTab);
@@ -17678,12 +18705,11 @@
     });
     elements.period5SForm?.addEventListener("submit", (event) => handlePeriodSubmit(event, FIVE_S_PERIOD_TYPE));
     elements.periodSafetyForm?.addEventListener("submit", (event) => handlePeriodSubmit(event, SAFETY_PERIOD_TYPE));
-    elements.scorerForm.addEventListener("submit", handleScorerSubmit);
-    elements.departmentHeadForm?.addEventListener("submit", handleDepartmentHeadSubmit);
+    elements.catalogPersonForm?.addEventListener("submit", handleCatalogPersonSubmit);
+    elements.catalogPersonRoles?.addEventListener("change", renderCatalogPersonZoneList);
     elements.departmentHeadEmailForm?.addEventListener("submit", handleDepartmentHeadEmailSubmit);
     elements.departmentHeadEmailName?.addEventListener("change", () => fillDepartmentHeadEmailForm(elements.departmentHeadEmailName.value));
     elements.safetyDepartmentGroupsForm?.addEventListener("submit", handleSafetyDepartmentGroupsSubmit);
-    elements.catalogAssessorForm?.addEventListener("submit", handleAssessorSubmit);
     elements.areaForm.addEventListener("submit", handleAreaSubmit);
     elements.accountRole?.addEventListener("change", () => {
       syncAccountRoleFields();
@@ -17691,6 +18717,8 @@
     });
     elements.accountAssessor?.addEventListener("change", () => syncAccountAssignedZones());
     elements.accountManager?.addEventListener("change", () => syncAccountAssignedZones());
+    elements.accountPersonSearch?.addEventListener("input", selectAccountPersonFromSearch);
+    elements.accountDisplayName?.addEventListener("change", syncAccountPersonSearchFromSelection);
     elements.accountForm.addEventListener("submit", handleAccountSubmit);
     elements.viewerAccountForm?.addEventListener("submit", handleViewerAccountSubmit);
     elements.departmentHeadAccountSource?.addEventListener("change", populateDepartmentHeadAccountSelect);
@@ -17897,7 +18925,8 @@
 
     // Global click suppressor: prevents accidental clicks after drag ends
     document.addEventListener("click", (event) => {
-      if (Date.now() < suppressClickUntil) {
+      const safetyRecordCard = event.target?.closest?.('.history-card[data-action="open-safety-card-detail"]');
+      if (!safetyRecordCard && Date.now() < suppressClickUntil) {
         event.stopPropagation();
         event.preventDefault();
       }
@@ -18000,7 +19029,7 @@
         const container = selectAll.closest(".zone-check-list, form, .modal-body, .form-field");
         if (container) {
           const isChecked = selectAll.checked;
-          const checkboxes = container.querySelectorAll(`input[name="${targetName}"]`);
+          const checkboxes = container.querySelectorAll(`input[name="${targetName}"]:not(:disabled)`);
           checkboxes.forEach((cb) => {
             cb.checked = isChecked;
           });
@@ -18009,8 +19038,18 @@
         return;
       }
 
-      const itemCheckbox = event.target?.closest?.('input[name="areaIds"], input[name="assessorIds"]');
+      const itemCheckbox = event.target?.closest?.('input[name="areaIds"], input[name^="areaIds-"], input[name="assessorIds"]');
       if (itemCheckbox) {
+        if (itemCheckbox.name.startsWith("areaIds-")) {
+          const role = itemCheckbox.name.slice("areaIds-".length);
+          const catalogType = getCatalogPersonRoleScope(role, activeCatalogScope);
+          const periodId = getActivePeriodId(catalogType);
+          const stateKey = `${catalogType}:${periodId}:${role}`;
+          const selected = new Set(catalogPersonSelectedAreaIdsByRole[stateKey] || []);
+          if (itemCheckbox.checked) selected.add(itemCheckbox.value);
+          else selected.delete(itemCheckbox.value);
+          catalogPersonSelectedAreaIdsByRole[stateKey] = [...selected];
+        }
         const container = itemCheckbox.closest(".zone-check-list, form, .modal-body, .form-field");
         if (container) {
           refreshSelectAllStates(container);

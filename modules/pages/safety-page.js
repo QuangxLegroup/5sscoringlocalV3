@@ -1130,17 +1130,18 @@
     const canEdit = typeof canManageSafetyRecord === "function"
       ? canManageSafetyRecord(row.score, context.currentUser)
       : Boolean(context.isAdminAccount?.(context.currentUser)) && !isPeriodArchived(row.score.periodId);
-    const statusLabel = getIssueStatusLabel ? getIssueStatusLabel(row.score.issueStatus) : (isIssueOpen(row.score) ? "Chưa xử lý" : "Đã xử lý");
-    const completionDate = getCompletionDateDisplay(row.score);
-    const actions = canEdit
-      ? `<div class="safety-actions">
-          <button class="tiny-button" type="button" data-action="edit-safety-record" data-id="${escapeHtml(row.score.id)}">Sửa</button>
-          <button class="tiny-button danger-text-button" type="button" data-action="delete-safety-record" data-id="${escapeHtml(row.score.id)}">Xóa</button>
-        </div>`
-      : "";
-    const canAnnotateCountermeasure = typeof canManageSafetyCountermeasure === "function"
+    const canEditCountermeasure = typeof canManageSafetyCountermeasure === "function"
       ? canManageSafetyCountermeasure(row.score, context.currentUser)
       : canEdit;
+    const statusLabel = getIssueStatusLabel ? getIssueStatusLabel(row.score.issueStatus) : (isIssueOpen(row.score) ? "Chưa xử lý" : "Đã xử lý");
+    const completionDate = getCompletionDateDisplay(row.score);
+    const actions = canEditCountermeasure
+      ? `<div class="safety-actions">
+          <button class="tiny-button" type="button" data-action="edit-safety-record" data-id="${escapeHtml(row.score.id)}">${canEdit ? "Sửa" : "Sửa xử lý"}</button>
+          ${canEdit ? `<button class="tiny-button danger-text-button" type="button" data-action="delete-safety-record" data-id="${escapeHtml(row.score.id)}">Xóa</button>` : ""}
+        </div>`
+      : "";
+    const canAnnotateCountermeasure = canEditCountermeasure;
     const photoAnnotationAttrs = (field, editable) =>
       `data-safety-record-id="${escapeHtml(row.score.id)}" data-safety-photo-field="${field}" data-safety-annotations="${escapeHtml(JSON.stringify(row.score[field] || []))}" data-safety-annotation-editable="${editable ? "true" : "false"}"`;
 

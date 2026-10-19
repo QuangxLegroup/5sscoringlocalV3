@@ -13,7 +13,7 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
-      <link rel="stylesheet" href="styles.css?v=2026101603">
+      <link rel="stylesheet" href="styles.css?v=2026101902">
   </head>
   <body>
     <section class="loading-screen" id="loading-screen">
@@ -97,7 +97,7 @@
             <div class="nav-group-title">An toàn lao động</div>
             <nav class="tabs" aria-label="Điều hướng An Toàn">
               <button class="tab-button" type="button" data-tab="five-s-findings" title="Vấn đề 5S"><span class="tab-icon">📝</span><span>Vấn đề 5S</span></button>
-              <button class="tab-button admin-only" type="button" data-tab="score-sheets" title="Phiếu chấm"><span class="tab-icon">📋</span><span>Phiếu chấm</span></button>
+              <button class="tab-button admin-only" type="button" data-tab="score-sheets" title="Xem phiếu 5S theo zone"><span class="tab-icon">📋</span><span>Phiếu theo zone</span></button>
               <button class="tab-button safety-access-only" type="button" data-tab="safety" data-safety-report="assessment">
                 <span class="tab-icon">🛡️</span>
                 <span>Đánh giá an toàn</span>
@@ -162,7 +162,7 @@
               <span>Bảng Điểm 5S</span>
             </button>
             <button class="tab-button" type="button" data-tab="five-s-findings" title="Vấn đề 5S"><span class="tab-icon">📝</span><span>Vấn đề 5S</span></button>
-            <button class="tab-button admin-only" type="button" data-tab="score-sheets" title="Phiếu chấm"><span class="tab-icon">📋</span><span>Phiếu chấm</span></button>
+            <button class="tab-button admin-only" type="button" data-tab="score-sheets" title="Xem phiếu 5S theo zone"><span class="tab-icon">📋</span><span>Phiếu theo zone</span></button>
             <button class="tab-button safety-access-only" type="button" data-tab="safety" data-safety-report="assessment" title="Đánh giá an toàn">
               <span class="tab-icon">🛡️</span>
               <span>Đánh giá AT</span>
@@ -248,6 +248,10 @@
                 <span>Zone cần chấm</span>
                 <select id="assessor-area-select"></select>
               </label>
+              <label id="assessor-score-source-field" hidden>
+                <span>Vai trò chấm điểm</span>
+                <select id="assessor-score-source-select"></select>
+              </label>
               <div class="permission-note" id="assessor-progress"></div>
             </div>
 
@@ -269,7 +273,7 @@
                 <span>Kỳ đánh giá</span>
                 <select id="summary-period-select"></select>
               </label>
-              <label class="admin-only source-toggle">
+              <label class="source-toggle">
                 <span>Bảng điểm</span>
                 <select id="summary-score-source"></select>
               </label>
@@ -442,62 +446,67 @@
                     <div class="compact-list period-section-list" id="period-safety-list"></div>
                   </section>
 
-                  <section class="panel catalog-people-panel">
+                  <section class="panel catalog-person-form-panel">
                     <div class="section-heading catalog-section-heading">
                       <div>
                         <span class="section-step">Bước 2</span>
-                        <h2>Người phụ trách zone</h2>
+                        <h2>Thêm người mới</h2>
                       </div>
                     </div>
-                    <form class="stacked-form" id="scorer-form">
+                    <form class="stacked-form" id="catalog-person-form">
                       <label>
-                        <span>Tên người phụ trách zone</span>
-                        <input id="scorer-name" type="text" autocomplete="off" required>
+                        <span>Mã nhân viên</span>
+                        <input id="catalog-person-code" type="text" autocomplete="off" required>
+                      </label>
+                      <label>
+                        <span>Tên người mới</span>
+                        <input id="catalog-person-name" type="text" autocomplete="off" required>
                       </label>
                       <div class="form-field">
-                        <span>Zone quản lý và tự chấm điểm</span>
-                        <div class="zone-check-list" id="scorer-zone-list"></div>
+                        <span>Vai trò (có thể chọn nhiều)</span>
+                        <div class="catalog-person-role-options" id="catalog-person-roles">
+                          <label class="check-line"><input name="catalogPersonRoles" type="checkbox" value="zoneOwner"><span>Quản lý zone</span></label>
+                          <label class="check-line"><input name="catalogPersonRoles" type="checkbox" value="assessor5s"><span>Assessor 5S</span></label>
+                          <label class="check-line"><input name="catalogPersonRoles" type="checkbox" value="assessorSafety"><span>Assessor AT</span></label>
+                          <label class="check-line"><input name="catalogPersonRoles" type="checkbox" value="departmentHead"><span>Trưởng phòng</span></label>
+                        </div>
                       </div>
-                      <button class="primary-button" type="submit">Thêm người</button>
+                      <div class="form-field" id="catalog-person-zones-field" hidden>
+                        <span id="catalog-person-zones-label">Zone có thể quản lý</span>
+                        <div id="catalog-person-zone-list"></div>
+                      </div>
+                      <button class="primary-button" type="submit">Thêm người mới</button>
                     </form>
+                  </section>
+
+                  <section class="panel catalog-employee-directory-panel">
+                    <div class="section-heading catalog-section-heading">
+                      <div>
+                        <h2>Danh sách toàn bộ nhân viên</h2>
+                        <p class="field-hint">Danh sách gộp từ danh mục 5S và An toàn; chỉnh sửa quyền tại đây sẽ cập nhật các danh sách vai trò tương ứng.</p>
+                      </div>
+                    </div>
+                    <div class="compact-list" id="catalog-employee-list"></div>
+                  </section>
+
+                  <section class="panel catalog-people-panel">
+                    <div class="section-heading catalog-section-heading">
+                      <h2>Danh sách quản lý zone</h2>
+                    </div>
                     <div class="compact-list" id="scorer-list"></div>
                   </section>
 
                   <section class="panel catalog-assessor-panel">
                     <div class="section-heading catalog-section-heading">
-                      <div>
-                        <span class="section-step">Bước 3</span>
-                        <h2>Assessor</h2>
-                      </div>
+                      <h2>Danh sách assessor</h2>
                     </div>
-                    <form class="stacked-form" id="catalog-assessor-form">
-                      <label>
-                        <span>Tên assessor</span>
-                        <input id="catalog-assessor-name" type="text" autocomplete="off" required>
-                      </label>
-                      <div class="form-field" id="catalog-assessor-zones-field">
-                        <span id="catalog-assessor-zones-label">Zone được chấm</span>
-                        <div class="zone-check-list" id="catalog-assessor-zone-list"></div>
-                      </div>
-                      <button class="primary-button" type="submit">Thêm assessor</button>
-                    </form>
                     <div class="compact-list" id="catalog-assessor-list"></div>
                   </section>
 
                   <section class="panel catalog-department-head-panel">
                     <div class="section-heading catalog-section-heading">
-                      <div>
-                        <span class="section-step">Bước 4</span>
-                        <h2>Trưởng phòng</h2>
-                      </div>
+                      <h2>Danh sách trưởng phòng</h2>
                     </div>
-                    <form class="stacked-form" id="department-head-form">
-                      <label>
-                        <span>Tên trưởng phòng</span>
-                        <input id="department-head-name" type="text" autocomplete="off" required>
-                      </label>
-                      <button class="primary-button" type="submit">Thêm trưởng phòng</button>
-                    </form>
                     <div class="compact-list" id="department-head-list"></div>
                   </section>
 
@@ -593,27 +602,17 @@
                     </div>
                     <form class="stacked-form" id="account-form">
                       <label>
-                        <span>Loại quyền</span>
-                        <select id="account-role" required>
-                          <option value="assessor5s">Assessor</option>
-                          <option value="zoneOwner">Người phụ trách zone</option>
-                        </select>
-                      </label>
-                      <label id="account-assessor-field">
-                        <span>Assessor</span>
-                        <select id="account-assessor" required></select>
-                      </label>
-                      <label id="account-manager-field" hidden>
-                        <span>Người phụ trách zone</span>
-                        <select id="account-manager"></select>
+                        <span>Tìm nhân viên theo mã NV hoặc tên</span>
+                        <input id="account-person-search" type="search" list="account-person-search-options" autocomplete="off" placeholder="Nhập mã NV hoặc tên để tìm">
+                        <datalist id="account-person-search-options"></datalist>
                       </label>
                       <label>
                         <span>Tài khoản</span>
                         <input id="account-username" type="text" autocomplete="off" required>
                       </label>
                       <label>
-                        <span>Tên hiển thị</span>
-                        <input id="account-display-name" type="text" autocomplete="off" placeholder="Mặc định theo tài khoản">
+                        <span>Nhân viên / tên hiển thị (Mã NV · Họ tên)</span>
+                        <select id="account-display-name" required></select>
                       </label>
                       <label>
                         <span>Mật khẩu</span>
@@ -670,40 +669,8 @@
                   </section>
                 </div>
               </section>
-              <section class="scope-detail-card" id="department-head-account-detail" aria-label="Cấp tài khoản trưởng phòng" hidden>
+              <section class="scope-detail-card" id="department-head-account-detail" aria-label="Tài khoản trưởng phòng" hidden>
                 <div class="accounts-grid department-head-accounts-grid">
-                  <section class="panel department-head-account-panel">
-                    <div class="section-heading">
-                      <h2>Tạo tài khoản trưởng phòng</h2>
-                    </div>
-                    <form class="stacked-form" id="department-head-account-form">
-                      <label>
-                        <span>Danh sách trưởng phòng</span>
-                        <select id="department-head-account-source" required>
-                          <option value="5s">5S</option>
-                          <option value="safety">AT</option>
-                        </select>
-                      </label>
-                      <label>
-                        <span>Trưởng phòng</span>
-                        <select id="department-head-account-name" required></select>
-                      </label>
-                      <label>
-                        <span>Tài khoản</span>
-                        <input id="department-head-account-username" type="text" autocomplete="off" required>
-                      </label>
-                      <label>
-                        <span>Tên hiển thị</span>
-                        <input id="department-head-account-display-name" type="text" autocomplete="off" placeholder="Mặc định theo tên trưởng phòng">
-                      </label>
-                      <label>
-                        <span>Mật khẩu</span>
-                        <input id="department-head-account-password" type="password" autocomplete="new-password" required minlength="4">
-                      </label>
-                      <button class="primary-button" type="submit">Thêm trưởng phòng</button>
-                    </form>
-                  </section>
-
                   <section class="panel department-head-account-list-panel">
                     <div class="section-heading">
                       <h2>Danh sách trưởng phòng</h2>
@@ -735,18 +702,18 @@
     <script src="modules/core/page-registry.js"></script>
     <script src="modules/core/safety-timeline.js?v=2026092823"></script>
       <script src="modules/core/image-circle-annotator.js?v=2026101603"></script>
-    <script src="modules/pages/admin-home-page.js?v=2026100101"></script>
+    <script src="modules/pages/admin-home-page.js?v=2026101702"></script>
     <script src="modules/pages/assessor-page.js"></script>
-    <script src="modules/pages/summary-page.js"></script>
+    <script src="modules/pages/summary-page.js?v=2026101702"></script>
     <script src="modules/pages/safety-page.js?v=2026101402"></script>
     <script src="modules/pages/issue-stats-page.js"></script>
     <script src="modules/pages/catalog-page.js"></script>
     <script src="modules/pages/accounts-page.js"></script>
     <script src="modules/pages/data-page.js"></script>
     <script src="modules/pages/five-s-findings-page.js?v=2026100101"></script>
-      <script src="modules/pages/mobile-prototype.js?v=2026101603"></script>
+      <script src="modules/pages/mobile-prototype.js?v=2026101902"></script>
     <script src="standards.js"></script>
-    <script src="app.js?v=2026101603"></script>
+    <script src="app.js?v=2026101710"></script>
   
     <script>
       (() => {
