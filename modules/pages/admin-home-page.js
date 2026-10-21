@@ -370,6 +370,13 @@
 
           <!-- Right Side: User Profile -->
           <div class="cyber-top-right">
+            <div class="issue-notification-control" data-issue-notification-control>
+              <button class="issue-notification-button" type="button" data-issue-notification-toggle aria-label="Mở thông báo" aria-expanded="false" title="Thông báo">
+                <i class="fa-regular fa-bell" aria-hidden="true"></i>
+                <span class="issue-notification-count" data-issue-notification-count hidden></span>
+              </button>
+              <section class="issue-notification-popover" data-issue-notification-popover hidden aria-label="Thông báo vấn đề"></section>
+            </div>
             <div class="cyber-user-box" id="cyberUserBox">
               <button class="cyber-user-pill" id="cyberUserMenuBtn" type="button" aria-haspopup="true" aria-expanded="false" title="Menu tài khoản">
                 <span class="cyber-user-avatar">${escapeHtml((currentUser.name || currentUser.username || "A").slice(0, 1).toUpperCase())}</span>

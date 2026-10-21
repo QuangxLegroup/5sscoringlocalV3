@@ -396,14 +396,28 @@ class DataService {
 
       assertZoneManagersNotReplaced(currentRoot, nextRoot, command.allowZoneManagerReassignment === true);
       const previousRecords = new Map(Object.entries(currentRoot?.safetyRecords || {}).map(([key, record]) => [record?.id || key, record]));
+      const legacyScores = Array.isArray(currentRoot?.scores) ? currentRoot.scores : Object.values(currentRoot?.scores || {});
       // Full collection imports may contain historical records without actual dates.
       // Keep them intact; reports explicitly flag missing dates instead of inferring them.
       const legacyImport = targetPath === "safetyRecords" || (targetPath === "" && Object.prototype.hasOwnProperty.call(command.value || {}, "safetyRecords"));
       for (const [key, record] of Object.entries(nextRoot?.safetyRecords || {})) {
-        const previous = previousRecords.get(record?.id || key);
+        const recordId = String(record?.id || key);
+        let previous = previousRecords.get(recordId);
+        if (!previous && recordId.startsWith("safety-")) {
+          const legacyScoreId = recordId.slice("safety-".length);
+          const legacyScore = legacyScores.find((score) => String(score?.id || "") === legacyScoreId);
+          if (legacyScore) {
+            previous = {
+              ...legacyScore,
+              id: recordId,
+              issueStatus: legacyScore.issueStatus || (legacyScore.note || legacyScore.photoDataUrl ? "open" : ""),
+            };
+          }
+        }
         if (!record || legacyImport || JSON.stringify(record) === JSON.stringify(previous)) continue;
         const period = Object.values(nextRoot?.periods || {}).find((item) => item?.id === record.periodId);
-        const error = SafetyTimeline.validate(record, previous, period?.year);
+        const allowMissingDates = SafetyTimeline.autoClosedForImprovementResponse(record, previous);
+        const error = SafetyTimeline.validate(record, previous, period?.year, { allowMissingDates });
         if (error) throw createHttpError(error, 400);
       }
       return this.authService ? this.authService.prepareRootForStorage(nextRoot, currentRoot) : nextRoot;

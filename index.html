@@ -13,7 +13,7 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
-      <link rel="stylesheet" href="styles.css?v=2026101904">
+      <link rel="stylesheet" href="styles.css?v=2026102116">
   </head>
   <body>
     <section class="loading-screen" id="loading-screen">
@@ -186,6 +186,13 @@
               <i class="fa-solid fa-mobile-screen-button"></i>
               <span>Chấm Mobile</span>
             </button>
+            <div class="issue-notification-control" data-issue-notification-control>
+              <button class="issue-notification-button" type="button" data-issue-notification-toggle aria-label="Mở thông báo" aria-expanded="false" title="Thông báo">
+                <i class="fa-regular fa-bell" aria-hidden="true"></i>
+                <span class="issue-notification-count" data-issue-notification-count hidden></span>
+              </button>
+              <section class="issue-notification-popover" data-issue-notification-popover hidden aria-label="Thông báo vấn đề"></section>
+            </div>
             <div class="user-box cyber-user-box" id="user-box">
               <button class="account-menu-button cyber-user-pill" id="account-menu-button" type="button" aria-haspopup="true" aria-expanded="false" title="Menu tài khoản">
                 <span class="account-avatar cyber-user-avatar" id="account-avatar">Đ</span>
@@ -703,23 +710,23 @@
     </div>
 
     <div class="toast" id="toast" role="status" aria-live="polite"></div>
-    <script src="modules/local-data-api.js?v=2026101902"></script>
+    <script src="modules/local-data-api.js?v=2026102123"></script>
     <script src="modules/core/page-registry.js"></script>
-    <script src="modules/core/safety-timeline.js?v=2026092823"></script>
+    <script src="modules/core/safety-timeline.js?v=2026102108"></script>
       <script src="modules/core/image-circle-annotator.js?v=2026101603"></script>
-    <script src="modules/pages/admin-home-page.js?v=2026101901"></script>
+    <script src="modules/pages/admin-home-page.js?v=2026102113"></script>
     <script src="modules/pages/assessor-page.js"></script>
     <script src="modules/pages/summary-page.js?v=2026101702"></script>
-    <script src="modules/pages/safety-page.js?v=2026101402"></script>
+    <script src="modules/pages/safety-page.js?v=2026102107"></script>
     <script src="modules/pages/issue-stats-page.js"></script>
     <script src="modules/pages/catalog-page.js"></script>
     <script src="modules/pages/accounts-page.js"></script>
     <script src="modules/pages/data-page.js"></script>
-    <script src="modules/pages/five-s-findings-page.js?v=2026100101"></script>
+    <script src="modules/pages/five-s-findings-page.js?v=2026102107"></script>
     <script src="modules/pages/user-guide-content.js?v=2026101901"></script>
-      <script src="modules/pages/mobile-prototype.js?v=2026101906"></script>
+      <script src="modules/pages/mobile-prototype.js?v=2026102114"></script>
     <script src="standards.js"></script>
-    <script src="app.js?v=2026101906"></script>
+    <script src="app.js?v=2026102123"></script>
   
     <script>
       (() => {

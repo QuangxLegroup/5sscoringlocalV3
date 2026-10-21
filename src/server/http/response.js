@@ -28,7 +28,9 @@ function sendError(response, error, referenceId = "") {
   const payload = {
     error: statusCode >= 500
       ? "Hệ thống đang gặp sự cố. Vui lòng thử lại sau."
-      : safeMessages[statusCode] || "Không thể thực hiện yêu cầu.",
+      : statusCode === 403 && typeof error.message === "string" && error.message.trim()
+        ? error.message.trim().slice(0, 240)
+        : safeMessages[statusCode] || "Không thể thực hiện yêu cầu.",
   };
   if (statusCode === 409 && error.scoreConflict) {
     payload.scoreConflict = error.scoreConflict;

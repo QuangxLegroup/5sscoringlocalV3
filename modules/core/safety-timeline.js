@@ -5,7 +5,26 @@
     const parsed = new Date(`${value}T00:00:00Z`);
     return Number.isFinite(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value ? value : "";
   }
-  function validate(record, previous = null, detectedYear = null) {
+  function status(value) {
+    const normalized = String(value || "").trim().toLowerCase().replace(/[\s-]+/g, "_");
+    if (["open", "chua_xu_ly", "chưa_xử_lý"].includes(normalized)) return "open";
+    if (["closed", "done", "da_xu_ly", "đã_xử_lý"].includes(normalized)) return "closed";
+    if (["in_progress", "processing", "dang_xu_ly", "đang_xử_lý"].includes(normalized)) return "in_progress";
+    if (["overdue", "qua_han", "quá_hạn"].includes(normalized)) return "overdue";
+    return normalized;
+  }
+  function autoClosedForImprovementResponse(record, previous) {
+    if (!record || !previous) return false;
+    const previousStatus = status(previous.issueStatus) || "open";
+    return ["open", "in_progress"].includes(previousStatus)
+      && status(record.issueStatus) === "closed"
+      && String(record.improvementContent || "").trim().length > 0
+      && String(record.improvementContent || "").trim() !== String(previous.improvementContent || "").trim()
+      && status(record.improvementResponsePreviousStatus) === previousStatus
+      && (record.countermeasureDate || "") === (previous.countermeasureDate || "")
+      && (record.completedDate || "") === (previous.completedDate || "");
+  }
+  function validate(record, previous = null, detectedYear = null, options = {}) {
     const started = date(record.countermeasureDate);
     const completed = date(record.completedDate);
     if ((record.countermeasureDate && !started) || (record.completedDate && !completed)) return "Ngày thực tế không hợp lệ.";
@@ -15,8 +34,10 @@
     const changed = !previous || record.issueStatus !== previous.issueStatus
       || (record.countermeasureDate || "") !== (previous.countermeasureDate || "")
       || (record.completedDate || "") !== (previous.completedDate || "");
-    if (changed && ["in_progress", "closed"].includes(record.issueStatus) && !started) return "Vui lòng nhập ngày thực tế triển khai đối sách.";
-    if (changed && record.issueStatus === "closed" && !completed) return "Vui lòng nhập ngày hoàn thành thực tế.";
+    const allowMissingDates = options.allowMissingDates || autoClosedForImprovementResponse(record, previous);
+    const issueStatus = status(record.issueStatus) || "open";
+    if (!allowMissingDates && changed && ["in_progress", "closed"].includes(issueStatus) && !started) return "Vui lòng nhập ngày thực tế triển khai đối sách.";
+    if (!allowMissingDates && changed && issueStatus === "closed" && !completed) return "Vui lòng nhập ngày hoàn thành thực tế.";
     return "";
   }
   function aggregate(records, year, periodYear) {
@@ -40,7 +61,7 @@
     }
     return result;
   }
-  const api = { date, validate, aggregate };
+  const api = { date, validate, aggregate, autoClosedForImprovementResponse };
   if (typeof module === "object" && module.exports) module.exports = api;
   else root.SafetyTimeline = api;
 })(typeof window === "object" ? window : globalThis);

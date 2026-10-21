@@ -688,7 +688,7 @@
     const matchesPerson = (person) => accountMatchesCatalogPerson(account, person);
     return getPeriodCatalogManagers(catalogType, periodId).some(matchesPerson)
       || getPeriodCatalogAssessors(catalogType, periodId).some(matchesPerson)
-      || getDepartmentHeadRows(periodId).some(matchesPerson);
+      || getDepartmentHeadRows(periodId).some((person) => accountMatchesDepartmentHeadPerson(account, person));
   }
 
   function getAccountRoleForType(account, type = FIVE_S_PERIOD_TYPE) {
@@ -829,6 +829,8 @@
 
   function normalizeSafetyRecord(record) {
     const now = new Date().toISOString();
+    const rawResponsePreviousStatus = String(record.improvementResponsePreviousStatus || "").trim();
+    const responsePreviousStatus = rawResponsePreviousStatus ? normalizeIssueStatus(rawResponsePreviousStatus) : "";
     return {
       id: record.id || makeId("safety"),
       periodId: record.periodId || "",
@@ -844,11 +846,14 @@
       issueType: record.issueType || "",
       issueLevel: record.issueLevel || "",
       issueStatus: normalizeIssueStatus(record.issueStatus),
+      improvementResponsePreviousStatus: ["open", "in_progress"].includes(responsePreviousStatus) ? responsePreviousStatus : "",
       issueFoundBy: record.issueFoundBy || "",
       employeeCode: record.employeeCode || record.foundEmployeeCode || "",
       issueItemLabel: record.issueItemLabel || "",
       foundChannel: normalizeFoundChannel(record.foundChannel || record.issueFoundChannel || ""),
       improvementContent: record.improvementContent || "",
+      improvementResponseBy: record.improvementResponseBy || "",
+      improvementResponseAt: record.improvementResponseAt || "",
       afterPhotoDataUrl: record.afterPhotoDataUrl || "",
       afterPhotoName: record.afterPhotoName || "",
       afterPhotoAnnotations: normalizeSafetyPhotoAnnotations(record.afterPhotoAnnotations),
@@ -886,11 +891,14 @@
       "issueType",
       "issueLevel",
       "issueStatus",
+      "improvementResponsePreviousStatus",
       "issueFoundBy",
       "employeeCode",
       "issueItemLabel",
       "foundChannel",
       "improvementContent",
+      "improvementResponseBy",
+      "improvementResponseAt",
       "afterPhotoDataUrl",
       "afterPhotoName",
       "actionOwner",
@@ -1664,9 +1672,52 @@
     return commitPendingScoreDraft(draft);
   }
 
+  function applySafetyCountermeasureResponseStatus(record, previous, account = currentUser) {
+    if (!canManageSafetyCountermeasure(record, account)) return false;
+
+    const previousStatus = normalizeIssueStatus(previous?.issueStatus || record.issueStatus);
+    const currentStatus = normalizeIssueStatus(record.issueStatus);
+    const responseContent = String(record?.improvementContent || "").trim();
+    const previousResponseContent = String(previous?.improvementContent || "").trim();
+    const savedPreviousStatus = ["open", "in_progress"].includes(previous?.improvementResponsePreviousStatus)
+      ? previous.improvementResponsePreviousStatus
+      : ["open", "in_progress"].includes(record.improvementResponsePreviousStatus)
+        ? record.improvementResponsePreviousStatus
+        : "";
+    if (previousStatus === "overdue" || currentStatus === "overdue") {
+      record.issueStatus = "overdue";
+      record.improvementResponsePreviousStatus = "";
+      return false;
+    }
+    if (!responseContent) {
+      if (!savedPreviousStatus) return false;
+      record.issueStatus = savedPreviousStatus;
+      record.improvementResponsePreviousStatus = "";
+      return previousStatus !== savedPreviousStatus || currentStatus !== savedPreviousStatus;
+    }
+    if (responseContent === previousResponseContent && !savedPreviousStatus) return false;
+    if (savedPreviousStatus || ["open", "in_progress"].includes(previousStatus) || ["open", "in_progress"].includes(currentStatus)) {
+      record.improvementResponsePreviousStatus = savedPreviousStatus
+        || (["open", "in_progress"].includes(previousStatus) ? previousStatus : currentStatus);
+      record.issueStatus = "closed";
+      return ["open", "in_progress"].includes(previousStatus) || ["open", "in_progress"].includes(currentStatus);
+    }
+    return false;
+  }
+
   async function saveSafetyRecord(record) {
     const previous = state.safetyRecords.find((item) => item.id === record.id);
-    const dateError = window.SafetyTimeline.validate(record, previous, getPeriod(record.periodId)?.year);
+    const responseContent = String(record.improvementContent || "").trim();
+    const previousResponseContent = String(previous?.improvementContent || "").trim();
+    if (responseContent !== previousResponseContent) {
+      record.improvementResponseBy = responseContent ? String(currentUser?.id || "") : "";
+      record.improvementResponseAt = responseContent ? new Date().toISOString() : "";
+    } else {
+      record.improvementResponseBy = String(previous?.improvementResponseBy || record.improvementResponseBy || "");
+      record.improvementResponseAt = String(previous?.improvementResponseAt || record.improvementResponseAt || "");
+    }
+    const autoClosedStatusOnly = applySafetyCountermeasureResponseStatus(record, previous);
+    const dateError = window.SafetyTimeline.validate(record, previous, getPeriod(record.periodId)?.year, { allowMissingDates: autoClosedStatusOnly });
     if (dateError) throw new Error(dateError);
     const resetChangedPhotoAnnotations = (field, sourceField) => {
       const nextAnnotations = normalizeSafetyPhotoAnnotations(record[field] ?? previous?.[field]);
@@ -1678,7 +1729,36 @@
     };
     resetChangedPhotoAnnotations("photoAnnotations", "photoDataUrl");
     resetChangedPhotoAnnotations("afterPhotoAnnotations", "afterPhotoDataUrl");
-    await dbRef(`safetyRecords/${record.id}`).set(record);
+    const legacyScoreId = String(record.id || "").startsWith("safety-")
+      ? String(record.id).slice("safety-".length)
+      : "";
+    const isLegacyScoreRecord = Boolean(legacyScoreId && (state.scores || []).some((score) => score.id === legacyScoreId));
+    const countermeasureOnly = Boolean(previous)
+      && !isLegacyScoreRecord
+      && !canManageSafetyRecord(previous, currentUser)
+      && canManageSafetyCountermeasure(previous, currentUser);
+    if (countermeasureOnly) {
+      const countermeasureFields = [
+        "improvementContent",
+        "improvementResponseBy",
+        "improvementResponseAt",
+        "improvementResponsePreviousStatus",
+        "issueStatus",
+        "afterPhotoDataUrl",
+        "afterPhotoName",
+        "afterPhotoAnnotations",
+        "actionOwner",
+        "actionPlan",
+        "completionDate",
+        "countermeasureDate",
+        "completedDate",
+        "updatedAt",
+      ];
+      const patch = Object.fromEntries(countermeasureFields.map((field) => [field, record[field]]));
+      await dbRef(`safetyRecords/${record.id}`).update(patch);
+    } else {
+      await dbRef(`safetyRecords/${record.id}`).set(record);
+    }
   }
 
   async function saveSafetyPhotoAnnotations(recordId, field, annotations) {
@@ -1706,6 +1786,27 @@
       Object.assign(record, nextRecord);
       state.safetyRecords[index] = record;
     }
+    return true;
+  }
+
+  async function saveFiveSFindingPhotoAnnotations(sheetId, rowIndex, annotations, expectedPhotoUrl = "") {
+    const sheet = state.fiveSFindings.find((item) => item.id === sheetId);
+    const index = Number(rowIndex);
+    const row = Number.isInteger(index) ? sheet?.rows?.[index] : null;
+    if (!sheet || !row?.photoDataUrl) throw new Error("Ảnh vấn đề 5S không còn tồn tại.");
+    if (expectedPhotoUrl && row.photoDataUrl !== expectedPhotoUrl) throw new Error("Ảnh đã thay đổi. Vui lòng tải lại trước khi khoanh.");
+    assertFiveSFindingAccess(sheet);
+    if (!window.FiveSFindingsPage?.canEditSheet?.(createPageContext(), sheet)) {
+      throw new Error("Bạn không có quyền lưu nét khoanh trên ảnh vấn đề 5S này.");
+    }
+    const nextSheet = JSON.parse(JSON.stringify(sheet));
+    nextSheet.rows[index].photoAnnotations = normalizeSafetyPhotoAnnotations(annotations);
+    nextSheet.updatedAt = new Date().toISOString();
+    nextSheet.updatedBy = currentUser?.id || "";
+    validateFiveSFindingSave(nextSheet);
+    await dbRef(`fiveSFindings/${sheetId}`).set(nextSheet);
+    const stateIndex = state.fiveSFindings.findIndex((item) => item.id === sheetId);
+    if (stateIndex >= 0) state.fiveSFindings[stateIndex] = nextSheet;
     return true;
   }
 
@@ -3075,6 +3176,19 @@
     return sameName && !hasAmbiguousCatalogEmployeeCode(person.name);
   }
 
+  function accountMatchesDepartmentHeadPerson(account, person) {
+    if (!account || !person) return false;
+    const accountCode = employeeCodeKey(account.employeeCode);
+    const personCode = employeeCodeKey(person.employeeCode);
+    if (accountCode && personCode) return accountCode === personCode;
+    const names = [...new Set([
+      ...getAccountIdentityNames(account),
+      account.departmentHeadName,
+    ].map((value) => String(value || "").trim()).filter(Boolean))];
+    return names.some((name) => sameNormalizedText(name, person.name))
+      && !hasAmbiguousCatalogEmployeeCode(person.name);
+  }
+
   function catalogAccountBadgeHtml(person, type = activeCatalogScope) {
     const catalogType = normalizeCatalogType(type);
     const usernames = [...new Set((state?.accounts || [])
@@ -3099,7 +3213,7 @@
       const matchesPerson = (person) => accountMatchesCatalogPerson({ ...account, name, employeeCode }, person);
       const hasManager = getPeriodCatalogManagers(type, periodId).some(matchesPerson);
       const hasAssessor = getPeriodCatalogAssessors(type, periodId).some(matchesPerson);
-      const departmentHead = getDepartmentHeadRows(periodId).find(matchesPerson);
+      const departmentHead = getDepartmentHeadRows(periodId).find((person) => accountMatchesDepartmentHeadPerson({ ...account, name, employeeCode }, person));
       if (!hasManager && !hasAssessor && !departmentHead) return;
       accessTypes.add(type);
       if (departmentHead) matchedDepartmentHeadName = departmentHead.name;
@@ -3133,7 +3247,7 @@
         && hasAccountAccessType(account, type)
         && getAccountRoleForType(account, type) === ROLE_DEPARTMENT_HEAD;
       return assignedInScope || getDepartmentHeadRows(selectedPeriodId)
-        .some((row) => accountMatchesCatalogPerson(account, row));
+        .some((row) => accountMatchesDepartmentHeadPerson(account, row));
     });
   }
 
@@ -3150,7 +3264,7 @@
     if (getPeriodCatalogAssessors(catalogType, periodId).some(matchesPerson)) {
       roles.add(getAssessorRoleForScope(catalogType));
     }
-    if (getDepartmentHeadRows(periodId).some(matchesPerson) || hasDepartmentHeadRole(account, periodId)) {
+    if (getDepartmentHeadRows(periodId).some((person) => accountMatchesDepartmentHeadPerson(account, person)) || hasDepartmentHeadRole(account, periodId)) {
       roles.add(ROLE_DEPARTMENT_HEAD);
     }
     return [...roles];
@@ -3305,17 +3419,22 @@
     if (!record || !account || isPeriodArchived(record.periodId, SAFETY_PERIOD_TYPE)) {
       return false;
     }
-    if (isAdminAccount(account) || canManageSafetyRecord(record, account)) {
-      return true;
+    if (isAdminAccount(account)) return true;
+
+    // Reply rights are narrower than general safety access: assessor assignments
+    // can span every Zone, but only the manager/head assigned to this Zone may reply.
+    if (getDepartmentHeadManagedAreaIds(account, record.periodId).has(record.areaId)) return true;
+    if (!isZoneOwnerAccount(account, SAFETY_PERIOD_TYPE)) return false;
+
+    const area = getAreasForPeriod(record.periodId).find((item) => item.id === record.areaId);
+    if (!area) return false;
+    const managerIds = new Set(getAccountPersonIdsForRole(account, SAFETY_PERIOD_TYPE, ROLE_ZONE_OWNER, record.periodId));
+    if (getAccountRoleForType(account, SAFETY_PERIOD_TYPE) === ROLE_ZONE_OWNER) {
+      const primaryManagerId = getAccountPersonId(account, SAFETY_PERIOD_TYPE);
+      if (primaryManagerId) managerIds.add(primaryManagerId);
     }
-    if (hasDepartmentHeadRole(account, record.periodId)
-      && getDepartmentHeadManagedAreaIds(account, record.periodId).has(record.areaId)) {
-      return getDepartmentHeadManagedAreaIds(account, record.periodId).has(record.areaId);
-    }
-    if (isZoneOwnerAccount(account, SAFETY_PERIOD_TYPE)) {
-      return getAllowedAreaIds(account, record.periodId).has(record.areaId);
-    }
-    return false;
+    if (area.scorerId && managerIds.has(area.scorerId)) return true;
+    return managerIds.size === 0 && getAccountAreaIds(account, SAFETY_PERIOD_TYPE).includes(area.id);
   }
 
   function requireAdminAction(message = "Chỉ admin được thực hiện thao tác này.") {
@@ -3746,6 +3865,10 @@
     if (roles.includes(ROLE_ZONE_OWNER)) {
       const managerIds = new Set(getAccountPersonIdsForRole(account, catalogType, ROLE_ZONE_OWNER, periodId));
       periodAreas.filter((area) => managerIds.has(area.scorerId)).forEach((area) => allowedIds.add(area.id));
+      if (!managerIds.size) {
+        const assignedAreaIds = new Set(getAccountAreaIds(account, catalogType));
+        periodAreas.filter((area) => assignedAreaIds.has(area.id)).forEach((area) => allowedIds.add(area.id));
+      }
     }
     if (roles.includes(getAssessorRoleForScope(catalogType))) {
       const assessorIds = new Set(getAccountPersonIdsForRole(account, catalogType, getAssessorRoleForScope(catalogType), periodId));
@@ -5444,6 +5567,373 @@
       elements.accountMenuUsername.textContent = currentUser?.username || roleText;
     }
   }
+
+  const ISSUE_NOTIFICATION_SEEN_PREFIX = "legroup-issue-notifications:v2:";
+
+  function notificationStorageKey() {
+    const accountKey = String(currentUser?.id || currentUser?.username || "").trim();
+    return accountKey ? ISSUE_NOTIFICATION_SEEN_PREFIX + accountKey : "";
+  }
+
+  function readSeenIssueNotificationIds() {
+    const key = notificationStorageKey();
+    if (!key) return new Set();
+    try {
+      const saved = JSON.parse(localStorage.getItem(key) || "[]");
+      return new Set(Array.isArray(saved) ? saved.map(String) : []);
+    } catch (_) {
+      return new Set();
+    }
+  }
+
+  function saveSeenIssueNotificationIds(ids) {
+    const key = notificationStorageKey();
+    if (!key) return;
+    try {
+      localStorage.setItem(key, JSON.stringify([...ids].slice(-1200)));
+    } catch (_) {}
+  }
+
+  function initializeIssueNotificationBaseline(notifications) {
+    // Preserve each user's explicit read state. Do not silently mark active
+    // findings as seen when a manager first becomes eligible for notifications.
+    return readSeenIssueNotificationIds();
+  }
+
+  function notificationFingerprint(value) {
+    let hash = 2166136261;
+    const text = String(value || "");
+    for (let index = 0; index < text.length; index += 1) {
+      hash ^= text.charCodeAt(index);
+      hash = Math.imul(hash, 16777619);
+    }
+    return (hash >>> 0).toString(36);
+  }
+
+  function canReceiveAreaIssueNotifications(type, periodId) {
+    if (!currentUser || isViewerAccount(currentUser) || !periodId || isPeriodArchived(periodId, type)) return false;
+    if (isAdminAccount(currentUser)) return true;
+    const roles = getAccountRolesForType(currentUser, type, periodId);
+    if (!roles.includes(ROLE_ZONE_OWNER) && !roles.includes(ROLE_DEPARTMENT_HEAD)) return false;
+    return getAllowedAreaIds(currentUser, periodId).size > 0;
+  }
+
+  function canReceiveIssueResponseNotifications(type, periodId) {
+    if (!currentUser || isAdminAccount(currentUser) || isViewerAccount(currentUser) || !periodId || isPeriodArchived(periodId, type)) return false;
+    return getAccountRolesForType(currentUser, type, periodId).includes(getAssessorRoleForScope(type))
+      && getAllowedAreaIds(currentUser, periodId).size > 0;
+  }
+
+  function canReceiveIssueNotificationForArea(periodId, areaId) {
+    if (!areaId) return false;
+    return isAdminAccount(currentUser) || getAllowedAreaIds(currentUser, periodId).has(areaId);
+  }
+
+  function canReceiveIssueResponseNotificationForArea(type, periodId, areaId) {
+    return Boolean(areaId && canReceiveIssueResponseNotifications(type, periodId)
+      && getAllowedAreaIds(currentUser, periodId).has(areaId));
+  }
+
+  function isZoneManagerResponse(type, periodId, areaId, responderId) {
+    const responder = (state.accounts || []).find((account) => String(account.id || "") === String(responderId || ""));
+    if (!responder || isAdminAccount(responder) || isViewerAccount(responder)) return false;
+    return getAccountRolesForType(responder, type, periodId).includes(ROLE_ZONE_OWNER)
+      && getAllowedAreaIds(responder, periodId).has(areaId);
+  }
+
+  function canSeeIssueNotifications() {
+    if (!currentUser || isViewerAccount(currentUser)) return false;
+    if (isAdminAccount(currentUser)) return true;
+    return [FIVE_S_PERIOD_TYPE, SAFETY_PERIOD_TYPE].some((type) => getPeriodsByType(type).some((period) => (
+      canReceiveAreaIssueNotifications(type, period.id) || canReceiveIssueResponseNotifications(type, period.id)
+    )));
+  }
+
+  function getIssueNotifications() {
+    if (!canSeeIssueNotifications()) return [];
+    const notifications = [];
+    const fiveSPeriods = getPeriodsByType(FIVE_S_PERIOD_TYPE);
+    const fiveSPeriodById = new Map(fiveSPeriods.map((period) => [period.id, period]));
+    for (const sheet of state.fiveSFindings || []) {
+      const periodId = window.FiveSFindingsPage?.resolvePeriodId?.(sheet, fiveSPeriods) || sheet.periodId || "";
+      const period = fiveSPeriodById.get(periodId);
+      if (!period) continue;
+      const areas = getAreasForPeriod(periodId);
+      const areaId = window.FiveSFindingsPage?.resolveAreaId?.(sheet, areas) || sheet.areaId || "";
+      const canReceiveWarning = canReceiveAreaIssueNotifications(FIVE_S_PERIOD_TYPE, periodId)
+        && canReceiveIssueNotificationForArea(periodId, areaId);
+      const canReceiveResponse = canReceiveIssueResponseNotificationForArea(FIVE_S_PERIOD_TYPE, periodId, areaId);
+      const area = areas.find((item) => item.id === areaId);
+      for (const [rowIndex, row] of (sheet.rows || []).entries()) {
+        const problem = String(row?.problem || "").trim();
+        const progress = Math.max(0, Math.min(100, Number(row?.progress) || 0));
+        const hasOpenProblem = Boolean(problem && progress < 100);
+        if (canReceiveWarning && hasOpenProblem) {
+          const findingDate = sheet.inspectionDate;
+          const identity = [sheet.id, row.location, problem, row.fiveS, findingDate].join("|");
+          notifications.push({
+            id: `five-s:${sheet.id}:${rowIndex}:${notificationFingerprint(identity)}`,
+            type: "warning",
+            target: "five-s-findings",
+            sheetId: sheet.id,
+            rowIndex,
+            title: "Vấn đề 5S mới",
+            summary: `${area ? `Zone ${area.code}` : sheet.area || "Zone"} · ${problem}`,
+            detail: [window.FiveSFindingsPage?.findingCategoryLabel?.(row.fiveS) || row.fiveS, row.shift].filter(Boolean).join(" · "),
+            date: findingDate || sheet.updatedAt || "",
+            sortDate: Date.parse(findingDate || sheet.updatedAt || "") || 0,
+          });
+        }
+        const response = String(row?.countermeasure || "").trim();
+        const responderId = String(row?.countermeasureUpdatedBy || "");
+        if (canReceiveResponse && response && isZoneManagerResponse(FIVE_S_PERIOD_TYPE, periodId, areaId, responderId)) {
+          const responseAt = String(row.countermeasureUpdatedAt || sheet.updatedAt || sheet.inspectionDate || "");
+          notifications.push({
+            id: "five-s-response:" + sheet.id + ":" + rowIndex + ":" + responderId + ":" + notificationFingerprint(response + "|" + responseAt),
+            type: "success",
+            target: "five-s-findings",
+            sheetId: sheet.id,
+            rowIndex,
+            title: "Quản lý Zone đã trả lời đối sách 5S",
+            summary: (area ? "Zone " + area.code : sheet.area || "Zone") + " · " + (problem || "Vấn đề 5S"),
+            detail: "Đã có nội dung cải tiến, xử lý: " + response,
+            date: responseAt,
+            sortDate: Date.parse(responseAt) || 0,
+          });
+        }
+      }
+    }
+
+    for (const record of state.safetyRecords || []) {
+      const period = getPeriod(record.periodId);
+      if (!period) continue;
+      const canReceiveWarning = canReceiveAreaIssueNotifications(SAFETY_PERIOD_TYPE, record.periodId)
+        && canReceiveIssueNotificationForArea(record.periodId, record.areaId);
+      const canReceiveResponse = canReceiveIssueResponseNotificationForArea(SAFETY_PERIOD_TYPE, record.periodId, record.areaId);
+      const issueCount = Number(record.issueCount) >= 1 ? Number(record.issueCount) : 1;
+      const repeated = issueCount >= 3;
+      const area = getAreaForPeriod(record.periodId, record.areaId);
+      const issueDate = getSafetyRecordIssueDate(record, period);
+      const unresolved = normalizeIssueStatus(record.issueStatus) !== "closed";
+      if (canReceiveWarning && unresolved) {
+        notifications.push({
+          id: repeated
+            ? issueCount === 3 ? `safety:${record.id}:repeat` : `safety:${record.id}:repeat:${issueCount}`
+            : `safety:${record.id}:new`,
+          type: repeated ? "danger" : "warning",
+          target: "safety",
+          recordId: record.id,
+          title: repeated ? `Vấn đề an toàn · ${issueCount} lần` : "Vấn đề an toàn mới",
+          summary: `${area ? `Zone ${area.code}` : record.issueLocation || "Zone"} · ${String(record.note || record.issueItemLabel || "Mối nguy mới").trim()}`,
+          detail: repeated ? "Cảnh báo đỏ · Vấn đề đã được phát hiện từ 3 lần trở lên" : "",
+          date: issueDate || record.updatedAt || record.createdAt || "",
+          sortDate: Date.parse(record.updatedAt || record.createdAt || issueDate || "") || 0,
+        });
+      }
+      const response = String(record.improvementContent || "").trim();
+      const responderId = String(record.improvementResponseBy || "");
+      if (canReceiveResponse && response && isZoneManagerResponse(SAFETY_PERIOD_TYPE, record.periodId, record.areaId, responderId)) {
+        const responseAt = String(record.improvementResponseAt || record.updatedAt || record.createdAt || "");
+        notifications.push({
+          id: "safety-response:" + record.id + ":" + responderId + ":" + notificationFingerprint(response + "|" + responseAt),
+          type: "success",
+          target: "safety",
+          recordId: record.id,
+          title: "Quản lý Zone đã trả lời đối sách an toàn",
+          summary: (area ? "Zone " + area.code : record.issueLocation || "Zone") + " · " + String(record.note || record.issueItemLabel || "Vấn đề an toàn").trim(),
+          detail: "Đã có nội dung cải tiến, xử lý: " + response,
+          date: responseAt,
+          sortDate: Date.parse(responseAt) || 0,
+        });
+      }
+    }
+
+    const seen = initializeIssueNotificationBaseline(notifications);
+    return notifications
+      .filter((notification) => !seen.has(notification.id))
+      .map((notification) => ({ ...notification, unread: true }))
+      .sort((left, right) => Number(right.type === "danger") - Number(left.type === "danger")
+        || Number(right.type === "warning") - Number(left.type === "warning")
+        || right.sortDate - left.sortDate || left.title.localeCompare(right.title, "vi"));
+  }
+
+  function renderIssueNotificationPopover(popover, notifications) {
+    if (!popover) return;
+    const unreadCount = notifications.filter((notification) => notification.unread).length;
+    const entries = notifications.slice(0, 50).map((notification) => `
+      <button type="button" class="issue-notification-item ${notification.type === "danger" ? "is-danger" : notification.type === "success" ? "is-success" : "is-warning"} is-unread" data-issue-notification-id="${escapeHtml(notification.id)}" data-issue-notification-target="${escapeHtml(notification.target)}" data-issue-notification-record-id="${escapeHtml(notification.recordId || "")}" data-issue-notification-sheet-id="${escapeHtml(notification.sheetId || "")}" data-issue-notification-row-index="${Number.isInteger(notification.rowIndex) ? notification.rowIndex : ""}">
+        <span class="issue-notification-dot" aria-hidden="true"></span>
+        <span class="issue-notification-copy">
+          <strong>${escapeHtml(notification.title)}</strong>
+          <span>${escapeHtml(notification.summary)}</span>
+          ${notification.date ? `<small>${escapeHtml(formatDateDisplay(notification.date))}</small>` : ""}
+        </span>
+        <span class="issue-notification-state">Mới</span>
+      </button>`).join("");
+    popover.innerHTML = `
+      <div class="issue-notification-panel-head">
+        <strong>Thông báo vấn đề</strong>
+        ${unreadCount ? '<button type="button" class="issue-notification-read-all" data-issue-notification-read-all>Đánh dấu đã xem</button>' : ""}
+      </div>
+      ${entries ? `<div class="issue-notification-list">${entries}</div>${notifications.length > 50 ? `<div class="issue-notification-empty">Đang hiển thị 50 trên ${notifications.length} thông báo.</div>` : ""}` : '<div class="issue-notification-empty">Chưa có vấn đề mới trong các Zone được phân công.</div>'}`;
+  }
+
+  function renderIssueNotificationControls() {
+    const notifications = getIssueNotifications();
+    const unread = notifications.filter((notification) => notification.unread);
+    const unreadCount = unread.length;
+    const canSee = canSeeIssueNotifications();
+    document.querySelectorAll("[data-issue-notification-control]").forEach((control) => {
+      const button = control.querySelector("[data-issue-notification-toggle]");
+      const count = control.querySelector("[data-issue-notification-count]");
+      const popover = control.querySelector("[data-issue-notification-popover]");
+      control.hidden = !canSee;
+      control.classList.toggle("has-danger-unread", unread.some((notification) => notification.type === "danger"));
+      control.classList.toggle("has-success-unread", unread.some((notification) => notification.type === "success"));
+      if (count) {
+        count.textContent = unreadCount > 99 ? "99+" : String(unreadCount);
+        count.hidden = unreadCount === 0;
+      }
+      if (button) {
+        button.setAttribute("aria-label", unreadCount ? `${unreadCount} thông báo chưa xem` : "Mở thông báo");
+        button.title = unreadCount ? `${unreadCount} thông báo chưa xem` : "Thông báo";
+      }
+      renderIssueNotificationPopover(popover, notifications);
+    });
+  }
+
+  function closeIssueNotificationPopovers() {
+    document.querySelectorAll("[data-issue-notification-popover]").forEach((popover) => { popover.hidden = true; });
+    document.querySelectorAll("[data-issue-notification-toggle]").forEach((button) => button.setAttribute("aria-expanded", "false"));
+  }
+
+  function toggleIssueNotificationPopover(button) {
+    const control = button?.closest("[data-issue-notification-control]");
+    const popover = control?.querySelector("[data-issue-notification-popover]");
+    if (!control || !popover) return;
+    const open = popover.hidden;
+    closeIssueNotificationPopovers();
+    popover.hidden = !open;
+    button.setAttribute("aria-expanded", String(open));
+  }
+
+  function markIssueNotificationsRead(notificationIds) {
+    const seen = readSeenIssueNotificationIds();
+    notificationIds.forEach((id) => seen.add(String(id)));
+    saveSeenIssueNotificationIds(seen);
+    renderIssueNotificationControls();
+  }
+
+  function issueNotificationDetailField(label, value) {
+    const text = String(value ?? "").trim();
+    return `<div class="issue-notification-detail-field"><dt>${escapeHtml(label)}</dt><dd>${escapeHtml(text || "—")}</dd></div>`;
+  }
+
+  function issueNotificationDetailPhoto(label, url, imageAttrs = "") {
+    return `<figure class="issue-notification-detail-photo"><figcaption>${escapeHtml(label)}</figcaption>${url
+      ? `<img src="${escapeHtml(url)}" alt="${escapeHtml(label)}" ${imageAttrs}>`
+      : '<div class="issue-notification-detail-no-photo">Chưa có ảnh</div>'}</figure>`;
+  }
+
+  function openIssueNotificationDetailModal(title, content) {
+    modalPreviewDirty = false;
+    modalSubmitSucceeded = false;
+    modalCancelHandler = null;
+    setModalScrollLock(true);
+    elements.modalBackdrop.classList.remove("table-fullscreen-backdrop", "image-fullscreen-backdrop");
+    elements.modalTitle.textContent = title;
+    const modalCard = elements.modalBackdrop.querySelector(".modal-card");
+    if (modalCard) modalCard.className = "modal-card issue-notification-detail-modal";
+    elements.modalBody.innerHTML = `<div class="issue-notification-detail-content">${content}</div>`;
+    elements.modalActions.innerHTML = '<div class="modal-actions-right"><button class="primary-button" type="button" data-issue-notification-detail-close>Đóng</button></div>';
+    elements.modalActions.querySelector("[data-issue-notification-detail-close]")?.addEventListener("click", closeModal);
+    elements.modalBackdrop.hidden = false;
+    hydrateAuthenticatedPhotos(elements.modalBody);
+    elements.modalActions.querySelector("[data-issue-notification-detail-close]")?.focus();
+  }
+
+  function openIssueNotificationTarget(notification) {
+    closeIssueNotificationPopovers();
+    if (!notification) return;
+    if (typeof window.openMobileIssueEditor === "function") {
+      const recordId = notification.target === "five-s-findings" ? notification.sheetId : notification.recordId;
+      if (window.openMobileIssueEditor(notification.target, recordId, notification.rowIndex, createPageContext())) return;
+    }
+    if (notification.target === "five-s-findings") {
+      const sheet = (state.fiveSFindings || []).find((item) => item.id === notification.sheetId);
+      const row = sheet?.rows?.[Number(notification.rowIndex)];
+      if (sheet && row) {
+        const periodId = window.FiveSFindingsPage?.resolvePeriodId?.(sheet, getPeriodsByType(FIVE_S_PERIOD_TYPE)) || sheet.periodId;
+        const period = getPeriod(periodId);
+        const areas = getAreasForPeriod(periodId);
+        const areaId = window.FiveSFindingsPage?.resolveAreaId?.(sheet, areas) || sheet.areaId;
+        const area = areas.find((item) => item.id === areaId);
+        const areaLabel = area ? `Zone ${area.code}` : sheet.area || "Zone";
+        const fields = [
+          issueNotificationDetailField("Kỳ", periodLabel(period)),
+          issueNotificationDetailField("Khu vực", areaLabel),
+          issueNotificationDetailField("Ngày kiểm tra", formatDateDisplay(sheet.inspectionDate)),
+          issueNotificationDetailField("Người kiểm tra", sheet.inspector),
+          issueNotificationDetailField("Vị trí", row.location),
+          issueNotificationDetailField("Vấn đề / Problem", row.problem),
+          issueNotificationDetailField("Hạng mục", window.FiveSFindingsPage?.findingCategoryLabel?.(row.fiveS) || row.fiveS),
+          issueNotificationDetailField("Ca / Shift", row.shift),
+          issueNotificationDetailField("Biện pháp khắc phục / CM", row.countermeasure),
+          issueNotificationDetailField("Hạn hoàn thành", formatDateDisplay(row.dueDate)),
+          issueNotificationDetailField("Tiến độ", `${Math.max(0, Math.min(100, Number(row.progress) || 0))}%`),
+          issueNotificationDetailField("Người cập nhật đối sách", row.countermeasureUpdatedBy),
+          issueNotificationDetailField("Thời gian cập nhật đối sách", formatDateDisplay(row.countermeasureUpdatedAt)),
+        ].join("");
+        const findingPhotoAttrs = `class="findings-photo-thumb" data-finding-photo-sheet-id="${escapeHtml(sheet.id)}" data-finding-photo-row-index="${Number(notification.rowIndex)}" data-finding-photo-url="${escapeHtml(row.photoDataUrl || "")}" data-finding-photo-annotations="${escapeHtml(JSON.stringify(row.photoAnnotations || []))}" data-safety-annotations="${escapeHtml(JSON.stringify(row.photoAnnotations || []))}" data-finding-photo-editable="false"`;
+        openIssueNotificationDetailModal("Chi tiết vấn đề 5S", `<dl class="issue-notification-detail-grid">${fields}</dl>${issueNotificationDetailPhoto("Ảnh vấn đề", row.photoDataUrl, findingPhotoAttrs)}`);
+        return;
+      }
+      goToTab("five-s-findings");
+      return;
+    }
+    if (notification.target === "safety") {
+      const record = (state.safetyRecords || []).find((item) => item.id === notification.recordId);
+      if (record) {
+        const period = getPeriod(record.periodId);
+        const area = getAreaForPeriod(record.periodId, record.areaId);
+        const safetyRow = { score: record, area, item: getItem(record.itemId) };
+        const foundChannel = SAFETY_FOUND_OPTIONS.find((option) => option.value === normalizeFoundChannel(record.foundChannel))?.label || record.foundChannel;
+        const status = getIssueStatusLabel(record.issueStatus);
+        const fields = [
+          issueNotificationDetailField("Kỳ", periodLabel(period)),
+          issueNotificationDetailField("Vị trí", getIssueLocation(safetyRow)),
+          issueNotificationDetailField("Ngày phát hiện", formatDateDisplay(getSafetyRecordIssueDate(record, period))),
+          issueNotificationDetailField("Mối nguy hiểm phát hiện được", record.note || getIssueDescription(safetyRow)),
+          issueNotificationDetailField("Số lần phát hiện", getIssueCount(safetyRow)),
+          issueNotificationDetailField("Phân loại STOP 6", STOP6_OPTIONS.find((option) => option.value === record.issueType)?.label || record.issueType),
+          issueNotificationDetailField("Cấp bậc nguy cơ", ISSUE_LEVEL_OPTIONS.find((option) => option.value === record.issueLevel)?.label || record.issueLevel),
+          issueNotificationDetailField("Phát hiện bởi (kênh)", foundChannel),
+          issueNotificationDetailField("Tình trạng", status),
+          issueNotificationDetailField("Tên người phát hiện", getIssueFoundBy(safetyRow)),
+          issueNotificationDetailField("Mã nhân viên", getIssueEmployeeCode(safetyRow)),
+          issueNotificationDetailField("Hạng mục", getIssueItemLabel(safetyRow)),
+          issueNotificationDetailField("Nội dung cải tiến, xử lý", record.improvementContent),
+          issueNotificationDetailField("Đảm nhiệm", record.actionOwner),
+          issueNotificationDetailField("Kế hoạch", record.actionPlan),
+          issueNotificationDetailField("Ngày dự kiến hoàn thành", formatDateDisplay(record.completionDate)),
+          issueNotificationDetailField("Ngày triển khai đối sách", formatDateDisplay(record.countermeasureDate)),
+          issueNotificationDetailField("Ngày hoàn thành thực tế", getCompletionDateDisplay(record)),
+          issueNotificationDetailField("Xác nhận cấp bậc", getSafetyLevelConfirm(record)),
+          issueNotificationDetailField("Xác nhận STOP 6", getSafetyStop6Confirm(record)),
+          issueNotificationDetailField("Người trả lời đối sách", record.improvementResponseBy),
+          issueNotificationDetailField("Thời gian trả lời đối sách", formatDateDisplay(record.improvementResponseAt)),
+        ].join("");
+        const originalPhotoAttrs = `class="safety-thumb" data-safety-record-id="${escapeHtml(record.id)}" data-safety-photo-field="photoAnnotations" data-safety-annotations="${escapeHtml(JSON.stringify(record.photoAnnotations || []))}" data-safety-annotation-editable="${canManageSafetyRecord(record, currentUser) ? "true" : "false"}"`;
+        const afterPhotoAttrs = `class="safety-thumb" data-safety-record-id="${escapeHtml(record.id)}" data-safety-photo-field="afterPhotoAnnotations" data-safety-annotations="${escapeHtml(JSON.stringify(record.afterPhotoAnnotations || []))}" data-safety-annotation-editable="${canManageSafetyCountermeasure(record, currentUser) ? "true" : "false"}"`;
+        const photos = issueNotificationDetailPhoto("Hình ảnh minh họa hiện trường", record.photoDataUrl, originalPhotoAttrs)
+          + issueNotificationDetailPhoto("Ảnh sau cải tiến, xử lý", record.afterPhotoDataUrl, afterPhotoAttrs);
+        openIssueNotificationDetailModal("Chi tiết vấn đề an toàn", `<dl class="issue-notification-detail-grid">${fields}</dl><div class="issue-notification-detail-photos">${photos}</div>`);
+        return;
+      }
+      goToSafetyReport("assessment");
+    }
+  }
+
   function closeAccountMenu() {
     if (elements.accountMenu) {
       elements.accountMenu.hidden = true;
@@ -5670,6 +6160,7 @@
     });
     renderAppTitle();
     renderActiveTab();
+    renderIssueNotificationControls();
 
     const routePath = activeTab === "safety"
       ? getSafetyReportRoute(activeSafetyReport)
@@ -5734,6 +6225,44 @@
     const findingArea = getAreasForPeriod(sheet.periodId).find((area) => area.id === sheet.areaId);
     if (!findingArea) throw new Error("Zone không còn trong danh mục 5S của kỳ này. Vui lòng chọn lại Zone.");
     sheet.area = `Zone ${findingArea.code}`;
+  }
+
+  function fiveSFindingResponseIdentity(row) {
+    return [row?.location, row?.problem, row?.fiveS, row?.shift]
+      .map((value) => String(value || "").trim().toLocaleLowerCase("vi"))
+      .join("|");
+  }
+
+  function stampFiveSFindingCountermeasureMetadata(sheet) {
+    const previous = state.fiveSFindings.find((item) => item.id === sheet.id);
+    const previousRows = previous?.rows || [];
+    const rowsByIdentity = new Map();
+    previousRows.forEach((row, index) => {
+      const key = fiveSFindingResponseIdentity(row);
+      if (!rowsByIdentity.has(key)) rowsByIdentity.set(key, []);
+      rowsByIdentity.get(key).push({ row, index });
+    });
+    const claimed = new Set();
+    const timestamp = new Date().toISOString();
+    (sheet.rows || []).forEach((row, index) => {
+      const key = fiveSFindingResponseIdentity(row);
+      const match = rowsByIdentity.get(key)?.find((entry) => !claimed.has(entry.index))
+        || (previousRows[index] && !claimed.has(index) ? { row: previousRows[index], index } : null);
+      if (match) claimed.add(match.index);
+      const beforeText = String(match?.row?.countermeasure || "").trim();
+      const nextText = String(row?.countermeasure || "").trim();
+      if (beforeText !== nextText) {
+        row.countermeasureUpdatedBy = nextText ? String(currentUser?.id || "") : "";
+        row.countermeasureUpdatedAt = nextText ? timestamp : "";
+      } else {
+        row.countermeasureUpdatedBy = String(match?.row?.countermeasureUpdatedBy || row.countermeasureUpdatedBy || "");
+        row.countermeasureUpdatedAt = String(match?.row?.countermeasureUpdatedAt || row.countermeasureUpdatedAt || "");
+      }
+      if (!nextText) {
+        row.countermeasureUpdatedBy = "";
+        row.countermeasureUpdatedAt = "";
+      }
+    });
   }
 
   function createPageContext() {
@@ -5838,6 +6367,7 @@
       isPeriodOpen,
       isSafetyAssessor,
       isZoneOwnerAccount,
+      renderIssueNotificationControls,
       isSafetyFoundSelected,
       isSafetyLevelSelected,
       isSafetyStop6Selected,
@@ -5847,11 +6377,13 @@
       getScoreRecord,
       saveSafetyRecord,
       saveSafetyPhotoAnnotations,
+      saveFiveSFindingPhotoAnnotations,
       deleteSafetyRecord,
       deleteSafetyRecordDirect,
       deleteSafetyRecordFromDb,
       showToast,
       prepareScorePhoto,
+      deleteUnusedPhotoFiles,
       normalizeSafetyRecord,
       getAreaForPeriod,
       getArea,
@@ -5864,10 +6396,12 @@
       makeId,
       exportFiveSFindings,
       saveFiveSFinding: async (sheet) => {
+        stampFiveSFindingCountermeasureMetadata(sheet);
         validateFiveSFindingSave(sheet);
         await dbRef(`fiveSFindings/${sheet.id}`).set(sheet);
       },
       saveFiveSFindingsBatch: async (sheets) => {
+        sheets.forEach(stampFiveSFindingCountermeasureMetadata);
         sheets.forEach(validateFiveSFindingSave);
         await dbRef().update(Object.fromEntries(sheets.map((sheet) => [`fiveSFindings/${sheet.id}`, sheet])));
       },
@@ -7375,7 +7909,7 @@
 
   function getCatalogEmployeeRoleRows(profile, type, role, periodId = getActivePeriodId(type)) {
     if (role === ROLE_ZONE_OWNER) return getPeriodCatalogManagers(type, periodId).filter((person) => accountMatchesCatalogPerson(profile, person));
-    if (role === ROLE_DEPARTMENT_HEAD) return getDepartmentHeadRows(periodId).filter((person) => accountMatchesCatalogPerson(profile, person));
+    if (role === ROLE_DEPARTMENT_HEAD) return getDepartmentHeadRows(periodId).filter((person) => accountMatchesDepartmentHeadPerson(profile, person));
     return getPeriodCatalogAssessors(type, periodId).filter((person) => accountMatchesCatalogPerson(profile, person));
   }
 
@@ -9872,7 +10406,8 @@
       return;
     }
 
-    const isSafetyPhoto = Boolean(image.matches?.(".safety-thumb") || image.closest?.(".safety-record-entry-table, .safety-record-modal"));
+    const isFindingPhoto = Boolean(image.matches?.(".findings-photo-thumb, .findings-record-thumb"));
+    const isSafetyPhoto = Boolean(!isFindingPhoto && (image.matches?.(".safety-thumb") || image.closest?.(".safety-record-entry-table, .safety-record-modal")));
     modalPreviewDirty = false;
     modalSubmitSucceeded = true;
     modalCancelHandler = null;
@@ -9911,6 +10446,42 @@
             ? async (annotations) => {
                 await saveSafetyPhotoAnnotations(recordId, photoField, annotations);
                 image.dataset.safetyAnnotations = JSON.stringify(annotations);
+                window.refreshSafetyPhotoAnnotationThumbnail?.(image, annotations);
+                return true;
+              }
+            : undefined,
+          onError: (error) => showToast(error?.message || "Không lưu được nét khoanh.", true),
+        },
+      ) || null;
+    } else if (isFindingPhoto) {
+      const sheetId = image.dataset.findingPhotoSheetId || "";
+      const rowIndexText = image.dataset.findingPhotoRowIndex || "";
+      const rowIndex = rowIndexText === "" ? -1 : Number(rowIndexText);
+      const expectedPhotoUrl = image.dataset.findingPhotoUrl || "";
+      const initialCircles = (() => {
+        try { return JSON.parse(image.dataset.findingPhotoAnnotations || image.dataset.safetyAnnotations || "[]"); } catch (_) { return []; }
+      })();
+      const sheet = state?.fiveSFindings?.find((item) => item.id === sheetId);
+      const isPendingPhoto = image.dataset.findingPhotoSourcePending === "true";
+      const canEdit = isPendingPhoto
+        ? image.dataset.findingPhotoEditable === "true"
+        : Boolean(sheet && Number.isInteger(rowIndex) && rowIndex >= 0 && window.FiveSFindingsPage?.canEditSheet?.(createPageContext(), sheet));
+      imageAnnotatorCleanup = window.mountImageCircleAnnotator?.(
+        elements.modalBody.querySelector(".image-fullscreen-stage"),
+        elements.modalBody,
+        {
+          initialCircles,
+          editable: canEdit,
+          onSave: canEdit
+            ? async (annotations) => {
+                if (typeof image.__findingPhotoAnnotationSave === "function") {
+                  await image.__findingPhotoAnnotationSave(annotations);
+                } else if (!isPendingPhoto && sheetId && rowIndex >= 0) {
+                  await saveFiveSFindingPhotoAnnotations(sheetId, rowIndex, annotations, expectedPhotoUrl);
+                }
+                const serialized = JSON.stringify(annotations);
+                image.dataset.findingPhotoAnnotations = serialized;
+                image.dataset.safetyAnnotations = serialized;
                 window.refreshSafetyPhotoAnnotationThumbnail?.(image, annotations);
                 return true;
               }
@@ -10015,10 +10586,13 @@
     const isRecordPhoto = [...(state.scores || []), ...(state.safetyRecords || [])].some((record) => (
       record?.photoDataUrl === url || record?.afterPhotoDataUrl === url
     ));
+    const isFindingPhoto = (state.fiveSFindings || []).some((sheet) => (
+      (sheet?.rows || []).some((row) => row?.photoDataUrl === url)
+    ));
     const isGuidePhoto = Object.values(state.userGuides || {}).some((guide) => (
       (guide?.steps || []).some((step) => step?.imageUrl === url)
     ));
-    return isRecordPhoto || isGuidePhoto;
+    return isRecordPhoto || isFindingPhoto || isGuidePhoto;
   }
 
   async function deleteUnusedPhotoFile(photoUrl = "") {
@@ -13866,6 +14440,7 @@
     const allowedIds = getAllowedAreaIds(currentUser, periodId);
     return getAreasForPeriod(periodId)
       .filter((area) => isReportableSafetyArea(area) && allowedIds.has(area.id))
+      .sort(compareZoneCodesByOrder)
       .map((area) => "<option value=\"" + escapeHtml(area.id) + "\" " + (area.id === selectedAreaId ? "selected" : "") + ">Zone " + escapeHtml(area.code) + " · " + escapeHtml(getSafetyDepartmentForArea(area, periodId)) + "</option>")
       .join("");
   }
@@ -14012,6 +14587,10 @@
         title: "Cập nhật cải tiến / xử lý",
         submitText: "Lưu xử lý",
         modalClass: "safety-record-modal",
+        onError(error) {
+          console.error("Không lưu được phần cải tiến/xử lý an toàn:", error);
+          showToast(error?.message || "Không lưu được phần cải tiến/xử lý. Vui lòng thử lại.", true);
+        },
         html: "<div class=\"modal-context\">" +
             "<span><strong>Kỳ:</strong> " + escapeHtml(periodLabel(period)) + "</span>" +
             "<span><strong>Zone:</strong> " + escapeHtml(selectedArea.code || "") + "</span>" +
@@ -14021,7 +14600,7 @@
           "<label><span>Ảnh sau cải tiến, xử lý</span><input name=\"afterPhoto\" type=\"file\" accept=\"image/*\">" + afterPhotoPreview + "</label>" +
           "<label><span>Đảm nhiệm</span><input name=\"actionOwner\" type=\"text\" value=\"" + escapeHtml(record?.actionOwner || "") + "\"></label>" +
           "<label><span>Kế hoạch</span><input name=\"actionPlan\" type=\"text\" value=\"" + escapeHtml(record?.actionPlan || "") + "\"></label>" +
-          "<label><span>Ngày dự kiến / ngày ghi nhận cũ</span><input name=\"completionDate\" type=\"date\" value=\"" + escapeHtml(defaultCompletionDate) + "\"></label>" + actualDateFields,
+          "<label><span>Ngày dự kiến hoàn thành</span><input name=\"completionDate\" type=\"date\" value=\"" + escapeHtml(defaultCompletionDate) + "\"></label>" + actualDateFields,
         async onSubmit(formData, form) {
           if (blockIfArchivedPeriod(periodId, SAFETY_PERIOD_TYPE)) {
             return false;
@@ -14049,6 +14628,7 @@
             completedDate: String(formData.get("completedDate") || record?.completedDate || ""),
             updatedAt: new Date().toISOString(),
           });
+          applySafetyCountermeasureResponseStatus(payload, record);
           if (!hasSafetyRecordChanged(record, payload)) {
             showToast("Không có thay đổi mới.");
             return true;
@@ -14087,7 +14667,7 @@
         "</div>" +
         "<div class=\"safety-record-entry-wrap\"><table class=\"safety-record-entry-table\">" +
           "<thead><tr>" +
-            "<th>Zone</th><th>Ngày phát hiện (dd/mm/yyyy)</th><th>Mối nguy hiểm phát hiện được</th><th>Ảnh minh họa</th><th>Số lần</th><th>STOP 6</th><th>Cấp bậc</th><th>Phát hiện</th><th>Tình trạng</th><th>Phát hiện bởi</th><th>Mã nhân viên</th><th>Hạng mục</th><th>Nội dung cải tiến, xử lý</th><th>Ảnh sau cải tiến</th><th>Đảm nhiệm</th><th>Kế hoạch</th><th>Ngày dự kiến / ngày ghi nhận cũ</th>" +
+            "<th>Zone</th><th>Ngày phát hiện (dd/mm/yyyy)</th><th>Mối nguy hiểm phát hiện được</th><th>Ảnh minh họa</th><th>Số lần</th><th>STOP 6</th><th>Cấp bậc</th><th>Phát hiện</th><th>Tình trạng</th><th>Phát hiện bởi</th><th>Mã nhân viên</th><th>Hạng mục</th><th>Nội dung cải tiến, xử lý</th><th>Ảnh sau cải tiến</th><th>Đảm nhiệm</th><th>Kế hoạch</th><th>Ngày dự kiến hoàn thành</th>" +
           "</tr></thead>" +
           "<tbody><tr>" +
             "<td><select name=\"areaId\" required>" + getSafetyAreaOptions(periodId, selectedArea.id) + "</select></td>" +
@@ -14186,6 +14766,7 @@
           createdAt: record?.createdAt || record?.updatedAt || now,
           updatedAt: now,
         });
+        applySafetyCountermeasureResponseStatus(payload, record);
         if (!hasSafetyRecordChanged(record, payload)) {
           showToast("Không có thay đổi mới.");
           return true;
@@ -14250,64 +14831,98 @@
       });
     }
   }
-  function exportFiveSFindings(ids, periodId) {
+  async function exportFiveSFindings(ids, periodId) {
     if (!requireExportAction()) return;
     const selectedIds = new Set(ids);
     const records = (state.fiveSFindings || []).filter((sheet) => selectedIds.has(sheet.id));
     if (!records.length) throw new Error("Không có phiếu đã lưu để xuất Excel.");
-    const usedNames = new Set();
-    const fields = ["location", "problem", "fiveS", "shift", "countermeasure", "dueDate", "progress"];
-    const headers = ["STT", "Vị trí", "Vấn đề / Problem", "Hạng mục", "Ca / Shift", "Biện pháp khắc phục / CM", "Hạn / Due date", "Tiến độ / Progress"];
-    const widths = [6, 18, 42, 28, 11, 42, 16, 14];
-    const worksheets = records.map((sheet, index) => {
-      const period = getPeriod(sheet.periodId || periodId);
-      const area = period ? getAreasForPeriod(period.id).find((item) => item.id === sheet.areaId) : null;
-      const areaLabel = area ? `Zone ${area.code}` : String(sheet.area || "").split("·")[0].trim();
-      const model = {
-        rows: new Map(), rowHeights: new Map(), merges: [], maxColumn: 8, maxRow: 6,
-        lastTableColumn: 8, tabColor: "FF059669",
-        columnsXml: widths.map((width, col) => `<col min="${col + 1}" max="${col + 1}" width="${width}" customWidth="1"/>`).join(""),
-      };
-      const merged = (row, start, end, value, style = 24) => {
-        addModelCell(model, row, start, value, style);
-        if (end > start) model.merges.push(`${cellRef(row, start)}:${cellRef(row, end)}`);
-      };
-      merged(1, 1, 8, "VẤN ĐỀ 5S", 12);
-      merged(2, 1, 8, `5S Issues · ${periodLabel(period)}`, 24);
-      merged(3, 1, 4, `Khu vực: ${areaLabel}`, 31);
-      merged(3, 5, 8, `Người kiểm tra: ${sheet.inspector || ""}`, 31);
-      merged(4, 1, 4, `Kỳ đánh giá: ${periodLabel(period)}`, 31);
-      merged(4, 5, 8, `Ngày kiểm tra: ${formatDateDisplay(sheet.inspectionDate)}`, 31);
-      model.rowHeights.set(1, 32);
-      for (const row of [2, 3, 4]) model.rowHeights.set(row, 25);
-      model.rowHeights.set(6, 34);
-      headers.forEach((header, col) => addModelCell(model, 6, col + 1, header, 10));
-      const findingRows = [...(sheet.rows || [])];
-      while (findingRows.length > 10 && !fields.some((key) => key === "progress" ? Number(findingRows.at(-1)[key]) > 0 : Boolean(findingRows.at(-1)[key]))) findingRows.pop();
-      Array.from({ length: Math.max(10, findingRows.length) }, (_, rowIndex) => findingRows[rowIndex] || {}).forEach((row, rowIndex) => {
-        const excelRow = rowIndex + 7;
-        addModelCell(model, excelRow, 1, rowIndex + 1, 24);
-        fields.forEach((key, col) => {
-          let value = "";
-          if (key === "dueDate") value = formatDateDisplay(row[key]);
-          else if (key === "progress") value = Math.max(0, Math.min(100, Number(row[key]) || 0)) / 100;
-          else if (key === "fiveS") value = window.FiveSFindingsPage?.findingCategoryLabel ? window.FiveSFindingsPage.findingCategoryLabel(row[key]) : String(row[key] || "");
-          else value = String(row[key] || "");
-          addModelCell(model, excelRow, col + 2, value, key === "progress" ? 28 : 31);
-        });
-        const lines = fields.reduce((max, key, col) => Math.max(max, String(row[key] || "").split("\n").reduce((sum, line) => sum + Math.max(1, Math.ceil(line.length / Math.max(5, widths[col + 1] - 3))), 0)), 1);
-        model.rowHeights.set(excelRow, Math.min(409, Math.max(56, lines * 15 + 12)));
-      });
-      fillRangeBorders(model, 1, 1, 4, 8);
-      let xml = buildWorksheetXml(model);
-      xml = xml.replace('</sheetPr>', '<pageSetUpPr fitToPage="1"/></sheetPr>');
-      xml = xml.replace('<sheetView workbookViewId="0"/>', '<sheetView workbookViewId="0"><pane ySplit="6" topLeftCell="A7" activePane="bottomLeft" state="frozen"/></sheetView>');
-      xml = xml.replace('</worksheet>', '<pageSetup paperSize="9" orientation="landscape" fitToWidth="1" fitToHeight="0"/></worksheet>');
-      const name = uniqueWorksheetName(`${areaLabel || "Phiếu"} ${formatDateDisplay(sheet.inspectionDate) || index + 1}`, usedNames);
-      return { name, xml };
-    });
     const period = getPeriod(periodId);
-    const bytes = buildWorkbookFromSheets(worksheets);
+    const areas = period ? getAreasForPeriod(period.id) : [];
+    const areaForSheet = (sheet) => {
+      const areaId = window.FiveSFindingsPage?.resolveAreaId?.(sheet, areas) || sheet.areaId;
+      return areas.find((item) => item.id === areaId);
+    };
+    const areaLabelForSheet = (sheet) => {
+      const area = areaForSheet(sheet);
+      return area ? `Zone ${area.code}` : String(sheet.area || "Chưa chọn Zone").split("·")[0].trim();
+    };
+    records.sort((a, b) => areaLabelForSheet(a).localeCompare(areaLabelForSheet(b), "vi", { numeric: true })
+      || String(b.inspectionDate || "").localeCompare(String(a.inspectionDate || ""))
+      || String(b.updatedAt || "").localeCompare(String(a.updatedAt || "")));
+    const fields = ["location", "problem", "fiveS", "shift", "countermeasure", "dueDate", "progress"];
+    const headers = ["STT", "Zone", "Ngày kiểm tra", "Vị trí", "Vấn đề / Problem", "Ảnh vấn đề", "Hạng mục", "Ca / Shift", "Biện pháp khắc phục / CM", "Hạn / Due date", "Tiến độ / Progress"];
+    const widths = [6, 12, 16, 18, 42, 22, 28, 11, 42, 16, 14];
+    const excelColumnByField = { location: 4, problem: 5, fiveS: 7, shift: 8, countermeasure: 9, dueDate: 10, progress: 11 };
+    const findingRows = records.flatMap((sheet) => (sheet.rows || [])
+      .filter((row) => Boolean(row?.photoDataUrl) || fields.some((key) => key === "progress" ? Number(row?.[key]) > 0 : Boolean(row?.[key])))
+      .map((row) => ({ sheet, row })));
+    const images = [];
+    const logo = await loadWorkbookLogoImage("images/Logo.jpg", "legroup-logo.png", 1, 1);
+    if (logo) images.push(logo);
+    const model = {
+      rows: new Map(), rowHeights: new Map(), merges: ["A1:C2"], maxColumn: 11, maxRow: 6,
+      lastTableColumn: 11, tabColor: "FF059669",
+      columnsXml: widths.map((width, col) => `<col min="${col + 1}" max="${col + 1}" width="${width}" customWidth="1"/>`).join(""),
+    };
+    const merged = (row, start, end, value, style = 24) => {
+      addModelCell(model, row, start, value, style);
+      if (end > start) model.merges.push(`${cellRef(row, start)}:${cellRef(row, end)}`);
+    };
+    addModelCell(model, 1, 1, "", 31);
+    merged(1, 4, 8, "CÁC VẤN ĐỀ VỀ 5S PHÁT HIỆN", 12);
+    merged(2, 4, 8, `5S find out · ${periodLabel(period)}`, 24);
+    addModelCell(model, 1, 9, "Người kiểm tra", 31);
+    merged(1, 10, 11, "", 31);
+    addModelCell(model, 2, 9, "Ngày kiểm tra", 31);
+    merged(2, 10, 11, "", 31);
+    merged(3, 1, 11, "Khu vực (Zone): Tất cả Zone", 31);
+    merged(4, 1, 6, `Kỳ đánh giá: ${periodLabel(period)}`, 31);
+    merged(4, 7, 11, `Tổng số vấn đề: ${findingRows.length}`, 31);
+    model.rowHeights.set(1, 34);
+    model.rowHeights.set(2, 26);
+    model.rowHeights.set(3, 25);
+    model.rowHeights.set(4, 25);
+    model.rowHeights.set(5, 14);
+    model.rowHeights.set(6, 38);
+    headers.forEach((header, col) => addModelCell(model, 6, col + 1, header, 10));
+    let imageIndex = 0;
+    for (const [rowIndex, entry] of findingRows.entries()) {
+      const { sheet, row } = entry;
+      const excelRow = rowIndex + 7;
+      addModelCell(model, excelRow, 1, rowIndex + 1, 24);
+      addModelCell(model, excelRow, 2, areaLabelForSheet(sheet), 31);
+      addModelCell(model, excelRow, 3, formatDateDisplay(sheet.inspectionDate), 31);
+      fields.forEach((key) => {
+        let value = "";
+        if (key === "dueDate") value = formatDateDisplay(row[key]);
+        else if (key === "progress") value = Math.max(0, Math.min(100, Number(row[key]) || 0)) / 100;
+        else if (key === "fiveS") value = window.FiveSFindingsPage?.findingCategoryLabel ? window.FiveSFindingsPage.findingCategoryLabel(row[key]) : String(row[key] || "");
+        else value = String(row[key] || "");
+        const excelColumn = excelColumnByField[key];
+        addModelCell(model, excelRow, excelColumn, value, key === "progress" ? 28 : 31);
+      });
+      if (row.photoDataUrl) {
+        const photo = await photoSourceToImage(row.photoDataUrl, ++imageIndex, excelRow, 6, row.photoAnnotations || []);
+        if (!photo) throw new Error("Không tải được ảnh vấn đề 5S để xuất Excel.");
+        photo.toColumnNumber = 6;
+        photo.toRowNumber = excelRow;
+        images.push(photo);
+      }
+      const lines = fields.reduce((max, key) => {
+        const excelColumn = excelColumnByField[key];
+        return Math.max(max, String(row[key] || "").split("\n").reduce((sum, line) => sum + Math.max(1, Math.ceil(line.length / Math.max(5, widths[excelColumn - 1] - 3))), 0));
+      }, 1);
+      model.rowHeights.set(excelRow, Math.min(409, Math.max(row.photoDataUrl ? 72 : 56, lines * 15 + 12)));
+    }
+    const tableEndRow = 6 + findingRows.length;
+    fillRangeBorders(model, 1, 1, 4, 11);
+    fillRangeBorders(model, 6, 1, tableEndRow, 11);
+    model.drawingRelId = images.length ? "rId1" : "";
+    const xml = buildWorksheetXml(model)
+      .replace('</sheetPr>', '<pageSetUpPr fitToPage="1"/></sheetPr>')
+      .replace('<sheetView workbookViewId="0"/>', '<sheetView workbookViewId="0"><pane ySplit="6" topLeftCell="A7" activePane="bottomLeft" state="frozen"/></sheetView>')
+      .replace('</pageMargins>', '</pageMargins><pageSetup paperSize="9" orientation="landscape" fitToWidth="1" fitToHeight="0"/>');
+    const bytes = buildWorkbookFromSheets([{ name: "Vấn đề 5S", xml, images }]);
     downloadFile(`van-de-5s-${period ? `${period.month}-${period.year}` : "chua-gan-ky"}.xlsx`, bytes, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
   }
 
@@ -16902,10 +17517,11 @@
     }));
     const chartEntries = [];
     let drawingNumber = 0;
+    const firstImageSheetIndex = normalizedSheets.findIndex((sheet) => sheet.images.length > 0);
     const files = {
       "[Content_Types].xml": buildMultiSheetContentTypesXml(normalizedSheets),
       "_rels/.rels": buildRootRelationshipsXml(),
-      "xl/workbook.xml": buildWorkbookXml(normalizedSheets.map((sheet) => sheet.name)),
+      "xl/workbook.xml": buildWorkbookXml(normalizedSheets.map((sheet) => sheet.name), firstImageSheetIndex >= 0 ? firstImageSheetIndex : 0),
       "xl/_rels/workbook.xml.rels": buildWorkbookRelationshipsXml(normalizedSheets.length),
       "xl/styles.xml": buildXlsxStylesXml(),
     };
@@ -16988,15 +17604,16 @@
 </Relationships>`;
   }
 
-  function buildWorkbookXml(sheetName = "5S") {
+  function buildWorkbookXml(sheetName = "5S", activeTab = 0) {
     if (Array.isArray(sheetName)) {
       const sheetsXml = sheetName
         .map((name, index) => `<sheet name="${escapeXml(name)}" sheetId="${index + 1}" r:id="rId${index + 1}"/>`)
         .join("");
+      const safeActiveTab = Number.isInteger(activeTab) && activeTab >= 0 && activeTab < sheetName.length ? activeTab : 0;
       return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
   <workbookPr/>
-  <bookViews><workbookView xWindow="0" yWindow="0" windowWidth="28800" windowHeight="17600"/></bookViews>
+  <bookViews><workbookView xWindow="0" yWindow="0" windowWidth="28800" windowHeight="17600" activeTab="${safeActiveTab}"/></bookViews>
   <sheets>${sheetsXml}</sheets>
 </workbook>`;
     }
@@ -18893,6 +19510,7 @@
       if (!image || image.closest(".brand-line,.cyber-brand,.safety-logo-cell")) {
         return;
       }
+      if (image.closest(".findings-mobile") && typeof window.openMobileImageModal === "function") return;
       const src = image.currentSrc || image.src || image.dataset.photoSrc || "";
       if (!src) {
         return;
@@ -19219,6 +19837,32 @@
     });
 
     document.addEventListener("click", (event) => {
+      const notificationToggle = event.target.closest("[data-issue-notification-toggle]");
+      if (notificationToggle) {
+        event.preventDefault();
+        toggleIssueNotificationPopover(notificationToggle);
+        return;
+      }
+      const markNotificationsRead = event.target.closest("[data-issue-notification-read-all]");
+      if (markNotificationsRead) {
+        markIssueNotificationsRead(getIssueNotifications().filter((item) => item.unread).map((item) => item.id));
+        return;
+      }
+      const notificationItem = event.target.closest("[data-issue-notification-id]");
+      if (notificationItem) {
+        const notification = getIssueNotifications().find((item) => item.id === notificationItem.dataset.issueNotificationId) || {
+          target: notificationItem.dataset.issueNotificationTarget || "safety",
+          recordId: notificationItem.dataset.issueNotificationRecordId || "",
+          sheetId: notificationItem.dataset.issueNotificationSheetId || "",
+          rowIndex: Number(notificationItem.dataset.issueNotificationRowIndex),
+        };
+        closeIssueNotificationPopovers();
+        markIssueNotificationsRead([notificationItem.dataset.issueNotificationId || ""]);
+        openIssueNotificationTarget(notification);
+        return;
+      }
+      if (!event.target.closest("[data-issue-notification-control]")) closeIssueNotificationPopovers();
+
       const clickedUserBox = event.target.closest("#user-box");
       const clickedCyberUserBox = event.target.closest("#cyberUserBox");
       if (!clickedUserBox && elements.accountMenu) {

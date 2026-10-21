@@ -607,10 +607,13 @@
     }
   }
 
-  function publicApiErrorMessage(status) {
+  function publicApiErrorMessage(status, payload = null) {
     if (status === 400) return "Dữ liệu gửi lên không hợp lệ. Vui lòng kiểm tra lại.";
     if (status === 401) return "Phiên đăng nhập không hợp lệ hoặc đã hết hạn. Vui lòng đăng nhập lại.";
-    if (status === 403) return "Bạn không có quyền thực hiện thao tác này.";
+    if (status === 403) {
+      const detail = String(payload?.error || "").trim();
+      return detail ? detail.slice(0, 240) : "Bạn không có quyền thực hiện thao tác này.";
+    }
     if (status === 404) return "Không tìm thấy nội dung yêu cầu.";
     if (status === 405) return "Thao tác này không được hỗ trợ.";
     if (status === 409) return "Dữ liệu đã thay đổi hoặc bị xung đột. Vui lòng tải lại rồi thử lại.";
@@ -635,7 +638,7 @@
 
     const payload = await readJsonResponse(response);
     if (!response.ok) {
-      const error = new Error(publicApiErrorMessage(response.status));
+      const error = new Error(publicApiErrorMessage(response.status, payload));
       error.status = response.status;
       error.payload = payload;
       error.referenceId = /^[a-zA-Z0-9-]{1,64}$/.test(String(payload?.referenceId || ""))

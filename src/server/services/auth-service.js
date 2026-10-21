@@ -256,9 +256,7 @@ function isAreaManagedByDepartmentHead(area, account) {
   const accountCode = employeeCodeKey(account?.employeeCode);
   const areaCode = employeeCodeKey(area?.departmentHeadEmployeeCode);
   if (accountCode && areaCode) return accountCode === areaCode;
-  const headName = isDepartmentHeadAccount(account)
-    ? getDepartmentHeadAccountName(account)
-    : String(account?.name || "").trim();
+  const headName = getDepartmentHeadAccountName(account);
   return Boolean(headName && sameNormalizedText(area?.departmentHead, headName));
 }
 
@@ -284,6 +282,9 @@ function getAccountRoleAssignments(root, account, periodId, type = FIVE_S_PERIOD
     ? collectionValues(snapshot.areas)
     : collectionValues(catalogType === SAFETY_PERIOD_TYPE ? root?.safetyAreas : root?.areas);
   const names = accountIdentityNames(account);
+  const departmentHeadNames = [...new Set([...names, account?.departmentHeadName]
+    .map((value) => String(value || "").trim())
+    .filter(Boolean))];
   const accountCode = employeeCodeKey(account?.employeeCode);
   const codesByName = new Map();
   [...managers, ...assessors, ...areas.map((area) => ({ name: area?.departmentHead, employeeCode: area?.departmentHeadEmployeeCode }))]
@@ -302,7 +303,7 @@ function getAccountRoleAssignments(root, account, periodId, type = FIVE_S_PERIOD
   const matchesDepartmentHeadArea = (area) => {
     const areaCode = employeeCodeKey(area?.departmentHeadEmployeeCode);
     if (accountCode && areaCode) return accountCode === areaCode;
-    return !isNameAmbiguous(area?.departmentHead) && names.some((name) => sameNormalizedText(name, area?.departmentHead));
+    return !isNameAmbiguous(area?.departmentHead) && departmentHeadNames.some((name) => sameNormalizedText(name, area?.departmentHead));
   };
   const roles = new Set();
   const primaryRole = getAccountRoleForType(account, catalogType);
@@ -700,7 +701,8 @@ class AuthService {
       if (primaryPersonId) managerIds.add(primaryPersonId);
       areas.filter((area) => managerIds.has(area.scorerId)).forEach((area) => allowedIds.add(area.id));
       if (!managerIds.size) {
-        getAccountAreaIds(account, type).forEach((areaId) => allowedIds.add(areaId));
+        const assignedAreaIds = new Set(getAccountAreaIds(account, type));
+        areas.filter((area) => assignedAreaIds.has(area.id)).forEach((area) => allowedIds.add(area.id));
       }
     }
     const assessorRole = type === SAFETY_PERIOD_TYPE ? ROLE_ASSESSOR_SAFETY : ROLE_ASSESSOR_5S;
@@ -791,8 +793,12 @@ class AuthService {
     if (!isPlainObject(existingRecord) || !isPlainObject(nextRecord)) {
       return false;
     }
-    const allowedChangedFields = new Set([
+    const countermeasureFields = new Set([
       "improvementContent",
+      "improvementResponseBy",
+      "improvementResponseAt",
+      "improvementResponsePreviousStatus",
+      "issueStatus",
       "afterPhotoDataUrl",
       "afterPhotoName",
       "afterPhotoAnnotations",
@@ -801,41 +807,146 @@ class AuthService {
       "completionDate",
       "countermeasureDate",
       "completedDate",
+      "createdAt",
       "updatedAt",
+    ]);
+    const immutableFields = new Set([
+      "id", "periodId", "areaId", "issueLocation", "issueDay", "issueMonth", "note",
+      "photoDataUrl", "photoName", "photoAnnotations", "issueCount", "issueType", "issueLevel",
+      "issueFoundBy", "employeeCode", "issueItemLabel", "foundChannel", "scorerName", "accountUsername",
+    ]);
+    const isEmptyDefault = (value) => value === null || value === undefined || value === ""
+      || (Array.isArray(value) && value.length === 0);
+    const canonicalValue = (record, field) => {
+      if (field === "note") return String(record.note || record.issueDescription || "").trim();
+      if (field === "employeeCode") return String(record.employeeCode || record.foundEmployeeCode || "").trim();
+      if (field === "foundChannel") {
+        const value = String(record.foundChannel || record.issueFoundChannel || "")
+          .trim().toLocaleLowerCase("vi").replace(/[\s_]+/g, "-");
+        if (["worker", "member", "cong-nhan", "công-nhân"].includes(value)) return "worker";
+        if (["department-head", "internal-audit", "audit", "truong-bo-phan", "trưởng-bộ-phận", "to-truong", "tổ-trưởng"].includes(value)) return "department-head";
+        if (["assessor", "lean", "(lean)"].includes(value)) return "assessor";
+        return "";
+      }
+      if (field === "issueCount") {
+        if (isEmptyDefault(record.issueCount)) return "";
+        const count = Number(record.issueCount);
+        return Number.isInteger(count) && count >= 1 ? count : String(record.issueCount);
+      }
+      if (field === "photoAnnotations") return Array.isArray(record.photoAnnotations) ? record.photoAnnotations : [];
+      return record[field] === undefined ? null : record[field];
+    };
+
+    for (const field of immutableFields) {
+      const beforeValue = canonicalValue(existingRecord, field);
+      const afterValue = canonicalValue(nextRecord, field);
+      if (isEmptyDefault(beforeValue) && isEmptyDefault(afterValue)) continue;
+      if (JSON.stringify(beforeValue) !== JSON.stringify(afterValue)) return false;
+    }
+
+    const aliases = new Map([
+      ["issueDescription", "note"],
+      ["foundEmployeeCode", "employeeCode"],
+      ["issueFoundChannel", "foundChannel"],
     ]);
     const keys = new Set([...Object.keys(existingRecord), ...Object.keys(nextRecord)]);
     for (const key of keys) {
+      if (countermeasureFields.has(key) || immutableFields.has(key)) continue;
+      if (aliases.has(key) && nextRecord[key] === undefined) {
+        const canonicalField = aliases.get(key);
+        if (JSON.stringify(canonicalValue(existingRecord, canonicalField)) === JSON.stringify(canonicalValue(nextRecord, canonicalField))) continue;
+      }
       const beforeValue = existingRecord[key] === undefined ? null : existingRecord[key];
       const afterValue = nextRecord[key] === undefined ? null : nextRecord[key];
-      const emptyNewAnnotationField = ["photoAnnotations", "afterPhotoAnnotations"].includes(key)
-        && (beforeValue === null || beforeValue === undefined)
-        && Array.isArray(afterValue)
-        && afterValue.length === 0;
-      if (emptyNewAnnotationField) continue;
-      if (JSON.stringify(beforeValue) !== JSON.stringify(afterValue) && !allowedChangedFields.has(key)) {
-        return false;
-      }
+      if (isEmptyDefault(beforeValue) && isEmptyDefault(afterValue)) continue;
+      if (JSON.stringify(beforeValue) !== JSON.stringify(afterValue)) return false;
     }
+
+    const previousCreatedAt = String(existingRecord.createdAt || existingRecord.updatedAt || "");
+    const nextCreatedAt = String(nextRecord.createdAt || nextRecord.updatedAt || "");
+    if (previousCreatedAt && previousCreatedAt !== nextCreatedAt) return false;
     return true;
   }
 
-  isSafetyCountermeasureWriteAllowed(root, account, existingRecord, nextRecord) {
-    if (!this.isCountermeasureOnlySafetyUpdate(existingRecord, nextRecord)) {
-      return false;
+  assertSafetyResponseAuthor(existingRecord, nextRecord, account) {
+    const previousContent = String(existingRecord?.improvementContent || "").trim();
+    const nextContent = String(nextRecord?.improvementContent || "").trim();
+    const previousAuthor = String(existingRecord?.improvementResponseBy || "");
+    const nextAuthor = String(nextRecord?.improvementResponseBy || "");
+    const previousAt = String(existingRecord?.improvementResponseAt || "");
+    const nextAt = String(nextRecord?.improvementResponseAt || "");
+    if (previousContent !== nextContent) {
+      if (nextContent && (nextAuthor !== String(account?.id || "") || !nextAt)) {
+        throw createHttpError("Thông tin người trả lời đối sách không hợp lệ.", 403);
+      }
+      if (!nextContent && (nextAuthor || nextAt)) {
+        throw createHttpError("Không thể giữ thông tin người trả lời khi đã xóa nội dung đối sách.", 403);
+      }
+      return;
     }
-    const periodId = String(existingRecord?.periodId || nextRecord?.periodId || "");
-    const areaId = String(existingRecord?.areaId || nextRecord?.areaId || "");
-    if (!periodId || !areaId) {
-      return false;
+    if (previousAuthor !== nextAuthor || previousAt !== nextAt) {
+      throw createHttpError("Không thể thay đổi người trả lời nếu nội dung đối sách không đổi.", 403);
     }
-    if (isAdminAccount(account) || this.isRecordOwnedByAccount(root, existingRecord, account, SAFETY_PERIOD_TYPE)) {
-      return true;
-    }
+  }
+
+  isSafetyCountermeasureRoleAssigned(root, account, record) {
+    if (isAdminAccount(account)) return true;
+    const periodId = String(record?.periodId || "");
+    const areaId = String(record?.areaId || "");
+    if (!periodId || !areaId) return false;
+
     const assignments = getAccountRoleAssignments(root, account, periodId, SAFETY_PERIOD_TYPE);
-    if (assignments.hasDepartmentHead || assignments.roles.includes(ROLE_ZONE_OWNER)) {
-      return this.getAllowedAreaIds(root, account, periodId, SAFETY_PERIOD_TYPE).has(areaId);
+    const area = assignments.areas.find((item) => item?.id === areaId);
+    if (!area) return false;
+
+    // A person's assessor assignment may cover many Zones. Countermeasure replies
+    // are limited to Zones they manage, even when their assessor role covers more.
+    if (assignments.roles.includes(ROLE_ZONE_OWNER)) {
+      const managerIds = new Set(assignments.managerIds);
+      if (getAccountRoleForType(account, SAFETY_PERIOD_TYPE) === ROLE_ZONE_OWNER) {
+        const primaryManagerId = getAccountPersonId(account, SAFETY_PERIOD_TYPE);
+        if (primaryManagerId) managerIds.add(primaryManagerId);
+      }
+      if (area.scorerId && managerIds.has(area.scorerId)) return true;
+      if (!managerIds.size && getAccountAreaIds(account, SAFETY_PERIOD_TYPE).includes(areaId)) return true;
     }
-    return false;
+
+    return isAreaManagedByDepartmentHead(area, account);
+  }
+
+  hasSafetyCountermeasureChanges(existingRecord, nextRecord) {
+    const fields = [
+      "improvementContent",
+      "improvementResponseBy",
+      "improvementResponseAt",
+      "improvementResponsePreviousStatus",
+      "issueStatus",
+      "afterPhotoDataUrl",
+      "afterPhotoName",
+      "afterPhotoAnnotations",
+      "actionOwner",
+      "actionPlan",
+      "completionDate",
+      "countermeasureDate",
+      "completedDate",
+    ];
+    const canonicalValue = (record, field) => {
+      if (field === "afterPhotoAnnotations") return Array.isArray(record?.[field]) ? record[field] : [];
+      if (field === "issueStatus") {
+        const status = String(record?.[field] || "").trim();
+        return status || (record?.note || record?.issueItemLabel || record?.photoDataUrl ? "open" : "");
+      }
+      return record?.[field] ?? "";
+    };
+    return fields.some((field) => JSON.stringify(canonicalValue(existingRecord, field))
+      !== JSON.stringify(canonicalValue(nextRecord, field)));
+  }
+
+  isSafetyCountermeasureWriteAllowed(root, account, existingRecord, nextRecord, comparisonRecord = existingRecord) {
+    if (!this.isCountermeasureOnlySafetyUpdate(comparisonRecord, nextRecord)) {
+      return false;
+    }
+    return this.isSafetyCountermeasureRoleAssigned(root, account, existingRecord || nextRecord);
   }
 
   assertScoreWriteAllowed(root, account, command) {
@@ -897,8 +1008,57 @@ class AuthService {
       || (command.operation === "update" && Object.keys(command.value || {}).some((key) => key.includes("/")))) {
       throw createHttpError("Vui lòng cập nhật từng báo cáo an toàn đầy đủ.", 403);
     }
-    const existingRecord = valueAtPath(root, command.path);
     const operation = String(command.operation || "");
+    const storedRecord = valueAtPath(root, command.path);
+    const [, recordIdFromPath] = pathParts(command.path);
+    const legacyScoreId = operation !== "remove" && !storedRecord && String(recordIdFromPath || "").startsWith("safety-")
+      ? String(recordIdFromPath).slice("safety-".length)
+      : "";
+    const legacyScore = legacyScoreId ? this.findCollectionRecordById(root?.scores, legacyScoreId) : null;
+    const legacyRecord = legacyScore ? {
+      ...legacyScore,
+      id: String(recordIdFromPath),
+      issueStatus: legacyScore.issueStatus || (legacyScore.note || legacyScore.photoDataUrl ? "open" : ""),
+    } : null;
+    const legacyCountermeasureRecord = legacyScore ? {
+      id: String(recordIdFromPath),
+      periodId: legacyScore.periodId || "",
+      areaId: legacyScore.areaId || "",
+      issueLocation: legacyScore.issueLocation || command.value?.issueLocation || "",
+      issueDay: legacyScore.issueDay || "",
+      issueMonth: legacyScore.issueMonth || "",
+      note: legacyScore.note || legacyScore.issueDescription || legacyScore.issueItemLabel || command.value?.note || "",
+      photoDataUrl: legacyScore.photoDataUrl || "",
+      photoName: legacyScore.photoName || "",
+      photoAnnotations: legacyScore.photoAnnotations || [],
+      issueCount: Number.isInteger(Number(legacyScore.issueCount)) && Number(legacyScore.issueCount) >= 1 ? Number(legacyScore.issueCount) : "",
+      issueType: legacyScore.issueType || "",
+      issueLevel: legacyScore.issueLevel || "",
+      issueStatus: legacyRecord.issueStatus || "open",
+      improvementResponsePreviousStatus: "",
+      issueFoundBy: legacyScore.issueFoundBy || "",
+      employeeCode: legacyScore.employeeCode || legacyScore.foundEmployeeCode || "",
+      issueItemLabel: legacyScore.issueItemLabel || command.value?.issueItemLabel || "",
+      foundChannel: legacyScore.foundChannel || legacyScore.issueFoundChannel || "",
+      improvementContent: legacyScore.improvementContent || "",
+      improvementResponseBy: legacyScore.improvementResponseBy || "",
+      improvementResponseAt: legacyScore.improvementResponseAt || "",
+      afterPhotoDataUrl: legacyScore.afterPhotoDataUrl || "",
+      afterPhotoName: legacyScore.afterPhotoName || "",
+      afterPhotoAnnotations: legacyScore.afterPhotoAnnotations || [],
+      actionOwner: legacyScore.actionOwner || "",
+      actionPlan: legacyScore.actionPlan || "",
+      completionDate: legacyScore.completionDate || "",
+      countermeasureDate: legacyScore.countermeasureDate || "",
+      completedDate: legacyScore.completedDate || "",
+      completionLevelConfirm: legacyScore.completionLevelConfirm || "",
+      completionStop6Confirm: legacyScore.completionStop6Confirm || "",
+      scorerName: legacyScore.scorerName || command.value?.scorerName || "",
+      accountUsername: legacyScore.accountUsername || command.value?.accountUsername || "",
+      createdAt: legacyScore.createdAt || legacyScore.updatedAt || command.value?.createdAt || "",
+      updatedAt: legacyScore.updatedAt || command.value?.updatedAt || "",
+    } : null;
+    const existingRecord = storedRecord || legacyRecord;
     const record = operation === "remove"
       ? existingRecord
       : operation === "update"
@@ -910,21 +1070,42 @@ class AuthService {
     if (!isPlainObject(record)) {
       throw createHttpError("Dữ liệu đánh giá an toàn không hợp lệ.", 400);
     }
+    if (operation !== "remove") {
+      this.assertSafetyResponseAuthor(existingRecord || {}, record, account);
+      if (existingRecord
+        && this.hasSafetyCountermeasureChanges(existingRecord, record)
+        && !this.isSafetyCountermeasureRoleAssigned(root, account, existingRecord)) {
+        throw createHttpError("Chỉ quản lý Zone hoặc trưởng phòng phụ trách Zone này được cập nhật đối sách.", 403);
+      }
+    }
     if (existingRecord) this.assertSafetyPeriodWritable(root, existingRecord);
     this.assertSafetyPeriodWritable(root, record);
+
+    const countermeasureComparisonRecord = legacyCountermeasureRecord || existingRecord;
+    const countermeasureNextRecord = legacyCountermeasureRecord
+      ? Object.fromEntries(Object.keys(legacyCountermeasureRecord).map((field) => [
+        field,
+        Object.prototype.hasOwnProperty.call(record, field) ? record[field] : legacyCountermeasureRecord[field],
+      ]))
+      : record;
+    if (
+      operation !== "remove" &&
+      isPlainObject(existingRecord) &&
+      this.isSafetyCountermeasureWriteAllowed(
+        root,
+        account,
+        existingRecord,
+        countermeasureNextRecord,
+        countermeasureComparisonRecord,
+      )
+    ) {
+      return;
+    }
 
     const isDepartmentHead = getAccountRoleAssignments(root, account, record.periodId, SAFETY_PERIOD_TYPE).hasDepartmentHead;
     if (isDepartmentHead) {
       if (existingRecord) this.assertDepartmentHeadSafetyScope(root, account, existingRecord);
       this.assertDepartmentHeadSafetyScope(root, account, record);
-    }
-
-    if (
-      operation !== "remove" &&
-      isPlainObject(existingRecord) &&
-      this.isSafetyCountermeasureWriteAllowed(root, account, existingRecord, record)
-    ) {
-      return;
     }
 
     if (isPlainObject(existingRecord) && !this.isRecordOwnedByAccount(root, existingRecord, account, SAFETY_PERIOD_TYPE)) {
@@ -1044,6 +1225,48 @@ class AuthService {
     }
   }
 
+  fiveSFindingResponseIdentity(row) {
+    return [row?.location, row?.problem, row?.fiveS, row?.shift]
+      .map((value) => String(value || "").trim().toLocaleLowerCase("vi"))
+      .join("|");
+  }
+
+  assertFiveSFindingCountermeasureAuthors(existingSheet, nextSheet, account) {
+    const previousRows = Array.isArray(existingSheet?.rows) ? existingSheet.rows : [];
+    const nextRows = Array.isArray(nextSheet?.rows) ? nextSheet.rows : [];
+    const rowsByIdentity = new Map();
+    previousRows.forEach((row, index) => {
+      const key = this.fiveSFindingResponseIdentity(row);
+      if (!rowsByIdentity.has(key)) rowsByIdentity.set(key, []);
+      rowsByIdentity.get(key).push({ row, index });
+    });
+    const claimed = new Set();
+    nextRows.forEach((row, index) => {
+      const key = this.fiveSFindingResponseIdentity(row);
+      const match = rowsByIdentity.get(key)?.find((entry) => !claimed.has(entry.index))
+        || (previousRows[index] && !claimed.has(index) ? { row: previousRows[index], index } : null);
+      if (match) claimed.add(match.index);
+      const previousContent = String(match?.row?.countermeasure || "").trim();
+      const nextContent = String(row?.countermeasure || "").trim();
+      const previousAuthor = String(match?.row?.countermeasureUpdatedBy || "");
+      const nextAuthor = String(row?.countermeasureUpdatedBy || "");
+      const previousAt = String(match?.row?.countermeasureUpdatedAt || "");
+      const nextAt = String(row?.countermeasureUpdatedAt || "");
+      if (previousContent !== nextContent) {
+        if (nextContent && (nextAuthor !== String(account?.id || "") || !nextAt)) {
+          throw createHttpError("Thông tin người trả lời đối sách 5S không hợp lệ.", 403);
+        }
+        if (!nextContent && (nextAuthor || nextAt)) {
+          throw createHttpError("Không thể giữ thông tin người trả lời khi đã xóa đối sách 5S.", 403);
+        }
+        return;
+      }
+      if (previousAuthor !== nextAuthor || previousAt !== nextAt) {
+        throw createHttpError("Không thể thay đổi người trả lời nếu nội dung đối sách 5S không đổi.", 403);
+      }
+    });
+  }
+
   assertFiveSFindingWriteAllowed(root, account, command) {
     const activePeriodId = String(root?.activeFiveSPeriodId || root?.activePeriodId || "");
     const assignments = getAccountRoleAssignments(root, account, activePeriodId, FIVE_S_PERIOD_TYPE);
@@ -1080,7 +1303,9 @@ class AuthService {
     if (!isPlainObject(command.value) || Object.keys(command.value).some((key) => key.includes("/") || ["__proto__", "constructor", "prototype"].includes(key))) {
       throw createHttpError("Dữ liệu phiếu 5S không hợp lệ.", 403);
     }
-    assertScope(command.operation === "update" ? { ...existing, ...command.value } : command.value);
+    const next = command.operation === "update" ? { ...existing, ...command.value } : command.value;
+    assertScope(next);
+    this.assertFiveSFindingCountermeasureAuthors(existing, next, account);
   }
 
   assertDataWriteAllowed(command, authContext, root) {

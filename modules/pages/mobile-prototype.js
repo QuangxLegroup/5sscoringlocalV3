@@ -258,6 +258,11 @@
     };
   }
 
+  function parsePositiveIntegerInput(value) {
+    const number = Number(String(value ?? "").trim());
+    return Number.isInteger(number) && number >= 1 ? number : null;
+  }
+
   function openSafetyDetailModal(item, overlay, context) {
     if (!item) return;
     const existing = document.getElementById("mobileSafetyDetailModal");
@@ -327,7 +332,7 @@
                 <option value="open" ${statusVal === 'open' ? 'selected' : ''}>Chưa xử lý</option>
                 <option value="in_progress" ${statusVal === 'in_progress' ? 'selected' : ''}>Đang xử lý</option>
                 <option value="overdue" ${statusVal === 'overdue' ? 'selected' : ''}>Quá hạn</option>
-                <option value="closed" ${statusVal === 'closed' ? 'selected' : ''}>Đã khắc phục</option>
+                <option value="closed" ${statusVal === 'closed' ? 'selected' : ''}>Đã xử lý</option>
               </select>
             </div>
           </div>
@@ -411,6 +416,11 @@
             </div>
           </div>
 
+          <div class="modal-form-group">
+            <label class="modal-form-label">Số lần phát hiện</label>
+            <input type="number" id="modalDetailIssueCount" class="modal-form-input" min="1" step="1" value="${escapeHtml(item.issueCount || 1)}" ${lockedAttr}>
+          </div>
+
           <!-- Info Grid (Finder & Channel) -->
           <div class="modal-form-grid-2">
             <div class="modal-form-group">
@@ -433,19 +443,8 @@
               <input type="text" id="modalDetailEmployeeCode" class="modal-form-input" value="${escapeHtml(item.employeeCode || '')}" placeholder="Mã NV..." ${lockedAttr}>
             </div>
             <div class="modal-form-group">
-              <label class="modal-form-label">Ngày dự kiến / ghi nhận</label>
+              <label class="modal-form-label">Ngày dự kiến hoàn thành</label>
               <input type="date" id="modalDetailCompletionDate" class="modal-form-input" value="${escapeHtml(item.completionDate ? item.completionDate.split('T')[0] : '')}">
-            </div>
-          </div>
-
-          <div class="modal-form-grid-2">
-            <div class="modal-form-group">
-              <label class="modal-form-label">Ngày triển khai đối sách</label>
-              <input type="date" id="modalDetailCountermeasureDate" class="modal-form-input" value="${escapeHtml(item.countermeasureDate ? item.countermeasureDate.split('T')[0] : '')}">
-            </div>
-            <div class="modal-form-group">
-              <label class="modal-form-label">Ngày hoàn thành thực tế</label>
-              <input type="date" id="modalDetailCompletedDate" class="modal-form-input" value="${escapeHtml(item.completedDate ? item.completedDate.split('T')[0] : '')}">
             </div>
           </div>
 
@@ -708,6 +707,9 @@
       const issueStatus = modal.querySelector("#modalDetailStatus")?.value || "open";
       const issueLevel = modal.querySelector("#modalDetailLevel")?.value || "";
       const issueType = modal.querySelector("#modalDetailStop6")?.value || "";
+      const issueCount = countermeasureOnly
+        ? (parsePositiveIntegerInput(item.issueCount) || 1)
+        : parsePositiveIntegerInput(modal.querySelector("#modalDetailIssueCount")?.value);
       const foundChannel = modal.querySelector("#modalDetailFoundChannel")?.value || "worker";
       const issueFoundBy = modal.querySelector("#modalDetailFoundBy")?.value?.trim() || "";
       const employeeCode = modal.querySelector("#modalDetailEmployeeCode")?.value?.trim() || "";
@@ -722,8 +724,8 @@
       };
 
       const completionDate = cleanDateStr(modal.querySelector("#modalDetailCompletionDate")?.value);
-      let countermeasureDate = cleanDateStr(modal.querySelector("#modalDetailCountermeasureDate")?.value) || cleanDateStr(item.countermeasureDate) || "";
-      let completedDate = cleanDateStr(modal.querySelector("#modalDetailCompletedDate")?.value) || cleanDateStr(item.completedDate) || "";
+      const countermeasureDate = cleanDateStr(item.countermeasureDate) || "";
+      const completedDate = cleanDateStr(item.completedDate) || "";
       const issueDateValue = modal.querySelector("#modalDetailIssueDate")?.value || "";
 
       let { day: issueDay, month: issueMonth } = parseSafetyIssueDateInput(issueDateValue, safetyPeriod);
@@ -742,50 +744,17 @@
         return;
       }
 
+      if (!countermeasureOnly && issueCount === null) {
+        showMobileToast("Số lần phát hiện phải là số nguyên từ 1 trở lên.", true);
+        if (btnSave) {
+          btnSave.disabled = false;
+          btnSave.innerHTML = `<i class="fa-solid fa-floppy-disk"></i><span>Lưu Thay Đổi</span>`;
+        }
+        modal.querySelector("#modalDetailIssueCount")?.focus();
+        return;
+      }
+
       const now = new Date();
-      const safetyPeriodYear = Number(safetyPeriod?.year) || now.getFullYear();
-      const sDay = String(issueDay || now.getDate()).padStart(2, "0");
-      const sMonth = String(issueMonth || (now.getMonth() + 1)).padStart(2, "0");
-      const detectedIso = `${safetyPeriodYear}-${sMonth}-${sDay}`;
-      const todayIso = typeof context?.todayIsoDate === "function" ? context.todayIsoDate() : now.toISOString().slice(0, 10);
-
-      if (["in_progress", "closed"].includes(issueStatus) && !countermeasureDate) {
-        if (completionDate && completionDate >= detectedIso) {
-          countermeasureDate = completionDate;
-        } else if (todayIso >= detectedIso) {
-          countermeasureDate = todayIso;
-        } else {
-          countermeasureDate = detectedIso;
-        }
-      }
-
-      if (issueStatus === "closed" && !completedDate) {
-        if (completionDate && completionDate >= countermeasureDate) {
-          completedDate = completionDate;
-        } else if (todayIso >= countermeasureDate) {
-          completedDate = todayIso;
-        } else {
-          completedDate = countermeasureDate;
-        }
-      }
-
-      if (countermeasureDate && detectedIso && countermeasureDate < detectedIso) {
-        showMobileToast(`Ngày triển khai đối sách (${formatIsoToVnDate(countermeasureDate)}) không được trước ngày phát hiện (${formatIsoToVnDate(detectedIso)}).`, true);
-        if (btnSave) {
-          btnSave.disabled = false;
-          btnSave.innerHTML = `<i class="fa-solid fa-floppy-disk"></i><span>Lưu Thay Đổi</span>`;
-        }
-        return;
-      }
-
-      if (completedDate && countermeasureDate && completedDate < countermeasureDate) {
-        showMobileToast(`Ngày hoàn thành thực tế (${formatIsoToVnDate(completedDate)}) phải từ ngày triển khai đối sách (${formatIsoToVnDate(countermeasureDate)}) trở đi.`, true);
-        if (btnSave) {
-          btnSave.disabled = false;
-          btnSave.innerHTML = `<i class="fa-solid fa-floppy-disk"></i><span>Lưu Thay Đổi</span>`;
-        }
-        return;
-      }
 
       let finalPhotoDataUrl = modalPhotoUrl;
       let finalPhotoName = item.photoName || "anh-moi-nguy.jpg";
@@ -828,6 +797,7 @@
             issueDay: issueDay || item.issueDay || "",
             issueMonth: issueMonth || item.issueMonth || "",
             note,
+            issueCount,
             issueStatus,
             issueLevel,
             issueType,
@@ -1052,6 +1022,7 @@
 
     // Initialize zones & handlers
     initMobilePrototype(overlay, context);
+    context?.renderIssueNotificationControls?.();
 
     // Update browser URL route
     const targetRoute = activeTab === "findings" ? "/mobile/5s-findings" : activeTab === "5s" ? "/mobile/5s" : "/mobile/safety";
@@ -1065,6 +1036,23 @@
       existing.remove();
     }
     document.body.classList.remove("mobile-proto-open");
+  }
+
+  function openMobileIssueEditor(target, recordId, rowIndex, passedContext = null) {
+    const context = passedContext || getAppContext();
+    if (!context?.currentUser) return false;
+    const targetTab = target === "five-s-findings" ? "findings" : "safety";
+    openMobilePrototype(targetTab, context);
+    const overlay = document.getElementById("mobileProtoOverlay");
+    if (!overlay) return false;
+    if (targetTab === "safety") {
+      const record = (context.state?.safetyRecords || []).find((item) => item.id === recordId);
+      if (!record) return false;
+      openSafetyDetailModal(record, overlay, context);
+      return true;
+    }
+    const screen = overlay.querySelector("#mobileScreenFindings");
+    return Boolean(window.FiveSFindingsPage?.openIssueById?.(screen, recordId, rowIndex));
   }
 
   // Build Skeleton HTML
@@ -1118,6 +1106,13 @@
             </div>
             <div class="nav-header-period-pill">
               <span class="period-pill-text">${escapeHtml(periodBadgeText)}</span>
+              <div class="issue-notification-control mobile-issue-notification-control" data-issue-notification-control>
+                <button type="button" class="issue-notification-button" data-issue-notification-toggle aria-label="Mở thông báo" aria-expanded="false" title="Thông báo">
+                  <i class="fa-regular fa-bell" aria-hidden="true"></i>
+                  <span class="issue-notification-count" data-issue-notification-count hidden></span>
+                </button>
+                <section class="issue-notification-popover mobile-issue-notification-popover" data-issue-notification-popover hidden aria-label="Thông báo vấn đề"></section>
+              </div>
               <button type="button" id="mobileThemeToggleBtn" class="mobile-theme-toggle-btn" title="${currentTheme === 'light' ? 'Chuyển sang giao diện Tối' : 'Chuyển sang giao diện Sáng'}">
                 <i class="fa-solid ${currentTheme === 'light' ? 'fa-moon text-amber-500' : 'fa-sun text-amber-400'}"></i>
               </button>
@@ -1447,6 +1442,11 @@
             </div>
           </div>
 
+          <div class="form-group">
+            <label class="form-label">Số lần phát hiện</label>
+            <input type="number" id="mobileSafetyIssueCount" class="form-control" min="1" step="1" value="${escapeHtml(editingRecord?.issueCount || 1)}">
+          </div>
+
           <!-- Row 4: STOP 6 & Severity Grid (Cấp bậc có Chưa phân loại) -->
           <div class="form-grid-2">
             <div class="form-group">
@@ -1499,7 +1499,7 @@
                   <option value="open" ${editingRecord?.issueStatus === 'open' || (!editingRecord && true) ? 'selected' : ''}>Chưa xử lý</option>
                   <option value="in_progress" ${editingRecord?.issueStatus === 'in_progress' ? 'selected' : ''}>Đang xử lý</option>
                   <option value="overdue" ${editingRecord?.issueStatus === 'overdue' ? 'selected' : ''}>Quá hạn</option>
-                  <option value="closed" ${editingRecord?.issueStatus === 'closed' ? 'selected' : ''}>Đã khắc phục</option>
+                  <option value="closed" ${editingRecord?.issueStatus === 'closed' ? 'selected' : ''}>Đã xử lý</option>
                 </select>
                 <i class="fa-solid fa-chevron-down select-chevron"></i>
               </div>
@@ -1577,36 +1577,12 @@
             </div>
           </div>
 
-          <!-- Row 11: Ngày xử lý & Hoàn thành -->
-          <div class="form-grid-2">
-            <div class="form-group">
-              <label class="form-label">Ngày dự kiến / ghi nhận</label>
-              <div class="date-input-container">
-                <input type="text" id="mobileSafetyCompletionDateDisplay" class="form-control date-custom-input" placeholder="dd/mm/yyyy" value="${formatIsoToVnDate(editingRecord?.completionDate ? editingRecord.completionDate.split('T')[0] : '')}" readonly>
-                <input type="date" id="mobileSafetyCompletionDate" class="native-hidden-date-input" value="${escapeHtml(editingRecord?.completionDate ? editingRecord.completionDate.split('T')[0] : '')}">
-                <button type="button" class="btn-calendar-trigger" tabindex="-1">
-                  <i class="fa-solid fa-calendar-days text-white"></i>
-                </button>
-              </div>
-            </div>
-
-            <div class="form-group">
-              <label class="form-label">Ngày triển khai đối sách</label>
-              <div class="date-input-container">
-                <input type="text" id="mobileSafetyCountermeasureDateDisplay" class="form-control date-custom-input" placeholder="dd/mm/yyyy" value="${formatIsoToVnDate(editingRecord?.countermeasureDate ? editingRecord.countermeasureDate.split('T')[0] : '')}" readonly>
-                <input type="date" id="mobileSafetyCountermeasureDate" class="native-hidden-date-input" value="${escapeHtml(editingRecord?.countermeasureDate ? editingRecord.countermeasureDate.split('T')[0] : '')}">
-                <button type="button" class="btn-calendar-trigger" tabindex="-1">
-                  <i class="fa-solid fa-calendar-days text-white"></i>
-                </button>
-              </div>
-            </div>
-          </div>
-
+          <!-- Ngày dự kiến hoàn thành -->
           <div class="form-group">
-            <label class="form-label">Ngày hoàn thành thực tế</label>
+            <label class="form-label">Ngày dự kiến hoàn thành</label>
             <div class="date-input-container">
-              <input type="text" id="mobileSafetyCompletedDateDisplay" class="form-control date-custom-input" placeholder="dd/mm/yyyy" value="${formatIsoToVnDate(editingRecord?.completedDate ? editingRecord.completedDate.split('T')[0] : '')}" readonly>
-              <input type="date" id="mobileSafetyCompletedDate" class="native-hidden-date-input" value="${escapeHtml(editingRecord?.completedDate ? editingRecord.completedDate.split('T')[0] : '')}">
+              <input type="text" id="mobileSafetyCompletionDateDisplay" class="form-control date-custom-input" placeholder="dd/mm/yyyy" value="${formatIsoToVnDate(editingRecord?.completionDate ? editingRecord.completionDate.split('T')[0] : '')}" readonly>
+              <input type="date" id="mobileSafetyCompletionDate" class="native-hidden-date-input" value="${escapeHtml(editingRecord?.completionDate ? editingRecord.completionDate.split('T')[0] : '')}">
               <button type="button" class="btn-calendar-trigger" tabindex="-1">
                 <i class="fa-solid fa-calendar-days text-white"></i>
               </button>
@@ -1681,7 +1657,7 @@
     list.innerHTML = recentRecords.map((item) => {
       const itemArea = reportableAreas.find((area) => area.id === item.areaId) || periodAreas.find((area) => area.id === item.areaId);
       const zoneLabel = itemArea ? `Zone ${itemArea.code}` : (item.issueLocation || "Zone");
-      const statusText = item.issueStatus === "closed" ? "Đã khắc phục" : item.issueStatus === "in_progress" ? "Đang xử lý" : item.issueStatus === "overdue" ? "Quá hạn" : "Chưa xử lý";
+      const statusText = item.issueStatus === "closed" ? "Đã xử lý" : item.issueStatus === "in_progress" ? "Đang xử lý" : item.issueStatus === "overdue" ? "Quá hạn" : "Chưa xử lý";
       const statusClass = item.issueStatus === "closed" ? "status-closed" : item.issueStatus === "in_progress" ? "status-progress" : item.issueStatus === "overdue" ? "status-overdue" : "status-open";
       const photoThumb = item.photoDataUrl || "images/Logo.jpg";
       const rawLevel = item.issueLevel || item.level || item.riskLevel || "";
@@ -1971,6 +1947,7 @@
         const level = screen.querySelector("#mobileSafetyLevel")?.value || "";
         const foundChannel = screen.querySelector("#mobileSafetyFoundChannel")?.value || "worker";
         const issueStatus = screen.querySelector("#mobileSafetyIssueStatus")?.value || "open";
+        const issueCount = parsePositiveIntegerInput(screen.querySelector("#mobileSafetyIssueCount")?.value);
         const issueFoundBy = screen.querySelector("#mobileSafetyIssueFoundBy")?.value?.trim() || "";
         const employeeCode = screen.querySelector("#mobileSafetyEmployeeCode")?.value?.trim() || "";
         const issueItemLabel = screen.querySelector("#mobileSafetyIssueItemLabel")?.value?.trim() || "Nhận diện nguy cơ mất an toàn";
@@ -1986,8 +1963,8 @@
         };
 
         const completionDate = cleanDateStr(screen.querySelector("#mobileSafetyCompletionDate")?.value);
-        let countermeasureDate = cleanDateStr(screen.querySelector("#mobileSafetyCountermeasureDate")?.value) || cleanDateStr(existingRecord?.countermeasureDate) || "";
-        let completedDate = cleanDateStr(screen.querySelector("#mobileSafetyCompletedDate")?.value) || cleanDateStr(existingRecord?.completedDate) || "";
+        const countermeasureDate = cleanDateStr(existingRecord?.countermeasureDate) || "";
+        const completedDate = cleanDateStr(existingRecord?.completedDate) || "";
 
         if (!areaId) {
           showMobileToast("Vui lòng chọn Khu vực (Zone)!", true);
@@ -2008,57 +1985,19 @@
           return;
         }
 
+        if (issueCount === null) {
+          showMobileToast("Số lần phát hiện phải là số nguyên từ 1 trở lên.", true);
+          const issueCountInput = screen.querySelector("#mobileSafetyIssueCount");
+          issueCountInput?.scrollIntoView({ behavior: "smooth", block: "center" });
+          issueCountInput?.focus();
+          return;
+        }
+
         const now = new Date();
         const user = context?.currentUser;
         const area = context?.getAreasForPeriod?.(safetyPeriodId)?.find((a) => a.id === areaId);
 
         const { day: issueDay, month: issueMonth } = parseSafetyIssueDateInput(issueDate, safetyPeriod);
-        const safetyPeriodYear = Number(safetyPeriod?.year) || now.getFullYear();
-        const sDay = String(issueDay || now.getDate()).padStart(2, "0");
-        const sMonth = String(issueMonth || (now.getMonth() + 1)).padStart(2, "0");
-        const detectedIso = `${safetyPeriodYear}-${sMonth}-${sDay}`;
-        const todayIso = typeof context?.todayIsoDate === "function" ? context.todayIsoDate() : now.toISOString().slice(0, 10);
-
-        if (["in_progress", "closed"].includes(issueStatus) && !countermeasureDate) {
-          if (completionDate && completionDate >= detectedIso) {
-            countermeasureDate = completionDate;
-          } else if (todayIso >= detectedIso) {
-            countermeasureDate = todayIso;
-          } else {
-            countermeasureDate = detectedIso;
-          }
-        }
-
-        if (issueStatus === "closed" && !completedDate) {
-          if (completionDate && completionDate >= countermeasureDate) {
-            completedDate = completionDate;
-          } else if (todayIso >= countermeasureDate) {
-            completedDate = todayIso;
-          } else {
-            completedDate = countermeasureDate;
-          }
-        }
-
-        if (countermeasureDate && detectedIso && countermeasureDate < detectedIso) {
-          showMobileToast(`Ngày triển khai đối sách (${formatIsoToVnDate(countermeasureDate)}) không được trước ngày phát hiện (${formatIsoToVnDate(detectedIso)}).`, true);
-          const cmInput = screen.querySelector("#mobileSafetyCountermeasureDate");
-          if (cmInput) {
-            cmInput.scrollIntoView({ behavior: "smooth", block: "center" });
-            cmInput.focus();
-          }
-          return;
-        }
-
-        if (completedDate && countermeasureDate && completedDate < countermeasureDate) {
-          showMobileToast(`Ngày hoàn thành thực tế (${formatIsoToVnDate(completedDate)}) phải từ ngày triển khai đối sách (${formatIsoToVnDate(countermeasureDate)}) trở đi.`, true);
-          const compInput = screen.querySelector("#mobileSafetyCompletedDate");
-          if (compInput) {
-            compInput.scrollIntoView({ behavior: "smooth", block: "center" });
-            compInput.focus();
-          }
-          return;
-        }
-
         isSubmittingSafety = true;
         const submitBtn = screen.querySelector("#mobileSubmitSafetyBtn");
         if (submitBtn) {
@@ -2104,7 +2043,7 @@
           photoDataUrl: finalPhotoDataUrl,
           photoName: finalPhotoName,
           photoAnnotations: pendingSafetyPhotoAnnotations,
-          issueCount: existingRecord?.issueCount || 1,
+          issueCount,
           issueType: stop6,
           issueLevel: level,
           issueStatus,
@@ -3050,6 +2989,8 @@
 
   // Expose methods globally
   window.openMobilePrototype = openMobilePrototype;
+  window.openMobileIssueEditor = openMobileIssueEditor;
   window.closeMobilePrototype = closeMobilePrototype;
+  window.openMobileImageModal = openMobileImageModal;
   window.showMobileToast = showMobileToast;
 })();

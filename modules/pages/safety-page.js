@@ -956,7 +956,7 @@
       const closedH = closedTotals[index] ? Math.max(3, (closedTotals[index] / max) * plotHeight) : 0;
       return '<g>' +
         '<rect x="' + (x - barWidth - 1) + '" y="' + (top + plotHeight - actualH) + '" width="' + barWidth + '" height="' + actualH + '" class="progress-actual" rx="1"><title>T' + month + ' Phát hiện: ' + monthTotals[index] + '</title></rect>' +
-        '<rect x="' + (x + 1) + '" y="' + (top + plotHeight - closedH) + '" width="' + barWidth + '" height="' + closedH + '" class="progress-closed" rx="1"><title>T' + month + ' Đã khắc phục: ' + closedTotals[index] + '</title></rect>' +
+        '<rect x="' + (x + 1) + '" y="' + (top + plotHeight - closedH) + '" width="' + barWidth + '" height="' + closedH + '" class="progress-closed" rx="1"><title>T' + month + ' Đã xử lý: ' + closedTotals[index] + '</title></rect>' +
         '<text x="' + x + '" y="' + (height - 18) + '" class="excel-month-label">T' + month + '</text>' +
       '</g>';
     }).join("");
