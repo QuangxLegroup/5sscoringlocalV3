@@ -508,6 +508,20 @@
     return [502, 503, 504].includes(Number(error.status));
   }
 
+  async function requestWithNetworkRetry(path, options = {}, maxAttempts = 5) {
+    for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+      try {
+        return await request(path, options);
+      } catch (error) {
+        if (!isNetworkLikeError(error) || attempt + 1 >= maxAttempts) {
+          throw error;
+        }
+        await new Promise((resolve) => window.setTimeout(resolve, 500 * (attempt + 1)));
+      }
+    }
+    throw new Error("Không thể kết nối máy chủ.");
+  }
+
   async function dispatchOfflineStatus(overrides = {}) {
     const pending = Number.isFinite(overrides.pending) ? overrides.pending : await getOfflineQueueCount();
     const scoreDrafts = Number.isFinite(overrides.scoreDrafts)
@@ -844,7 +858,7 @@
     }
 
     try {
-      return applyAuthPayload(await request("/api/auth/login", {
+      return applyAuthPayload(await requestWithNetworkRetry("/api/auth/login", {
         method: "POST",
         body: JSON.stringify({ username, password }),
       }));
@@ -876,7 +890,7 @@
     }
 
     try {
-      return applyAuthPayload(await request("/api/auth/session"));
+      return applyAuthPayload(await requestWithNetworkRetry("/api/auth/session"));
     } catch (error) {
       if (!isAuthError(error) && isNetworkLikeError(error)) {
         await notifyConnectionLost(error);
@@ -901,7 +915,7 @@
     }
 
     try {
-      return applyAuthPayload(await request("/api/auth/session/touch", { method: "POST" }));
+      return applyAuthPayload(await requestWithNetworkRetry("/api/auth/session/touch", { method: "POST" }));
     } catch (error) {
       if (!isAuthError(error) && isNetworkLikeError(error)) {
         await notifyConnectionLost(error);

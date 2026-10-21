@@ -1121,6 +1121,9 @@
               <button type="button" id="mobileThemeToggleBtn" class="mobile-theme-toggle-btn" title="${currentTheme === 'light' ? 'Chuyển sang giao diện Tối' : 'Chuyển sang giao diện Sáng'}">
                 <i class="fa-solid ${currentTheme === 'light' ? 'fa-moon text-amber-500' : 'fa-sun text-amber-400'}"></i>
               </button>
+              <button type="button" id="mobileHelpBtn" class="mobile-help-btn" title="Mở hướng dẫn sử dụng" aria-label="Mở hướng dẫn sử dụng" aria-haspopup="dialog" aria-controls="mobileHelpDialog">
+                <i class="fa-solid fa-circle-question" aria-hidden="true"></i>
+              </button>
               <button type="button" id="mobileNavCloseBtn" class="mobile-nav-close-btn" title="Đóng">
                 <i class="fa-solid fa-xmark"></i>
               </button>
@@ -1159,6 +1162,14 @@
         <i class="fa-solid fa-circle-check text-emerald-400"></i>
         <span id="mobileToastText">Thao tác thành công</span>
       </div>
+
+      <dialog class="mobile-help-dialog" id="mobileHelpDialog" aria-labelledby="mobileHelpDialogTitle">
+        <div class="mobile-help-dialog-header">
+          <h2 id="mobileHelpDialogTitle">Hướng dẫn sử dụng</h2>
+          <button type="button" id="mobileHelpCloseBtn" class="mobile-help-close-btn" aria-label="Đóng hướng dẫn">×</button>
+        </div>
+        <div class="mobile-help-content" id="mobileHelpContent"></div>
+      </dialog>
     `;
   }
 
@@ -1188,6 +1199,35 @@
         applyMobileTheme(overlay, nextTheme);
       });
     }
+
+    const helpBtn = overlay.querySelector("#mobileHelpBtn");
+    const helpDialog = overlay.querySelector("#mobileHelpDialog");
+    const helpCloseBtn = overlay.querySelector("#mobileHelpCloseBtn");
+    const helpTitle = overlay.querySelector("#mobileHelpDialogTitle");
+    const helpContent = overlay.querySelector("#mobileHelpContent");
+    const helpGuideByTab = {
+      safety: "safety",
+      "5s": "5s",
+      findings: "findings",
+    };
+    helpBtn?.addEventListener("click", () => {
+      const guideSection = helpGuideByTab[activeTab] || helpGuideByTab.safety;
+      const currentContext = window.__GET_APP_CONTEXT__?.() || context;
+      const guideApi = window.UserGuideContent;
+      if (helpTitle) {
+        const guide = guideApi?.getGuide(guideSection, currentContext?.state?.userGuides);
+        helpTitle.textContent = guide?.title ? `Hướng dẫn · ${guide.title}` : "Hướng dẫn phần đang mở";
+      }
+      if (helpContent && guideApi) {
+        helpContent.innerHTML = guideApi.renderGuide(guideSection, currentContext?.state?.userGuides);
+        currentContext?.hydrateAuthenticatedPhotos?.(helpContent);
+      }
+      if (!helpDialog?.open) helpDialog?.showModal();
+    });
+    helpCloseBtn?.addEventListener("click", () => helpDialog?.close());
+    helpDialog?.addEventListener("click", (event) => {
+      if (event.target === helpDialog) helpDialog.close();
+    });
 
     // Full width toggle
     const toggleWidthBtn = overlay.querySelector("#mobileToggleWidthBtn");
@@ -2159,8 +2199,11 @@
       : null;
 
     const assignedAreas = sortMobileAreasByCode(filterMobileAreasByPermission(allAreas, allowedAreaIds));
-    currentFiveSZoneId = resolveMobileAreaId(currentFiveSZoneId, assignedAreas);
-    const selectedArea = assignedAreas.find((area) => area.id === currentFiveSZoneId) || null;
+    const areaOptions = assignedAreas;
+    if (!areaOptions.some((area) => area.id === currentFiveSZoneId)) {
+      currentFiveSZoneId = assignedAreas[0]?.id || areaOptions[0]?.id || "";
+    }
+    const selectedArea = areaOptions.find((area) => area.id === currentFiveSZoneId) || null;
     const isAreaAllowed = !allowedAreaIds || (selectedArea && allowedAreaIds.has(selectedArea.id));
     const scoreSourceAreaKey = `${fiveSPeriodId}:${selectedArea?.id || ""}`;
     const defaultScoreSource = getDefaultMobileFiveSScoreSource(context, user, fiveSPeriodId, selectedArea?.id || "");
@@ -2213,7 +2256,7 @@
       noticeBannerHtml = `
         <div class="fives-notice-banner info">
           <i class="fa-solid fa-eye"></i>
-          <span>Bạn đang xem Zone ${escapeHtml(selectedArea.code)} ở chế độ chỉ xem. Chọn Zone có nhãn (✓ Được chấm) để chấm điểm.</span>
+          <span>Bạn đang xem Zone ${escapeHtml(selectedArea.code)} ở chế độ chỉ xem. Các Zone có quyền chấm được ghi rõ vai trò trong danh sách.</span>
         </div>
       `;
     }
@@ -2246,15 +2289,16 @@
             <div class="fives-zone-picker">
               <span class="fives-zone-label">Khu vực kiểm tra</span>
               <div class="select-wrapper-inline">
-                <select id="mobileAuditZoneSelect" class="fives-zone-select" ${assignedAreas.length ? "" : "disabled"}>
-                  ${assignedAreas.length ? assignedAreas.map((area) => {
+                <select id="mobileAuditZoneSelect" class="fives-zone-select" ${areaOptions.length ? "" : "disabled"}>
+                  ${areaOptions.length ? areaOptions.map((area) => {
                     const resp = context?.getAreaResponsibleNameForPeriod?.(fiveSPeriodId, area) || "";
+                    const scoringRole = context?.getFiveSAreaScoringRoleLabel?.(user, area.id, fiveSPeriodId) || "";
                     return `
                       <option value="${escapeHtml(area.id)}" ${area.id === currentFiveSZoneId ? 'selected' : ''}>
-                        Zone ${escapeHtml(area.code)} · ${escapeHtml(resp)}
+                        Zone ${escapeHtml(area.code)} · ${escapeHtml(resp)}${scoringRole ? ` · ${escapeHtml(scoringRole)}` : ""}
                       </option>
                     `;
-                  }).join("") : '<option value="" selected>Chưa được phân quyền Zone</option>'}
+                  }).join("") : '<option value="" selected>Chưa có Zone trong kỳ này</option>'}
                 </select>
                 <i class="fa-solid fa-chevron-down select-chevron-inline"></i>
               </div>

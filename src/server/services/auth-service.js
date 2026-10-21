@@ -12,7 +12,9 @@ const FIVE_S_PERIOD_TYPE = "5s";
 const SAFETY_PERIOD_TYPE = "safety";
 const LEGACY_PERIOD_TYPE = "both";
 const TOKEN_COOKIE_NAME = "legroup_session";
-const SESSION_TTL_MS = 24 * 60 * 60 * 1000;
+// Sliding session window: keep users signed in between workdays while the active-session ID
+// still lets a new device or explicit logout revoke the previous session immediately.
+const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 const PASSWORD_HASH_VERSION = "pbkdf2-sha256";
 const PASSWORD_ITERATIONS = 210000;
 const PASSWORD_KEY_BYTES = 32;

@@ -164,61 +164,52 @@
         "5s": "zoneOwner",
         "safety": "zoneOwner"
       },
-      "areaIds": [
-        "area-20",
-        "area-16",
-        "area-17",
-        "area-18",
-        "area-23",
-        "area-26",
-        "area-19"
-      ],
+      "areaIds": [],
       "fiveSScorerId": "scorer-17",
       "scorerId": "scorer-17",
-      "fiveSAreaIds": [
-        "area-20",
-        "area-16",
-        "area-17",
-        "area-18",
-        "area-23",
-        "area-26",
-        "area-19"
-      ],
-      "departmentHeadName": "Mrs Nga",
+      "fiveSAreaIds": [],
+      "departmentHeadName": "",
       "safetyScorerId": "scorer-17",
-      "safetyAreaIds": [
-        "area-20",
-        "area-1",
-        "area-2",
-        "area-3",
-        "area-4",
-        "area-5",
-        "area-6",
-        "area-7",
-        "area-8",
-        "area-9",
-        "area-10",
-        "area-11",
-        "area-12",
-        "area-13",
-        "area-14",
-        "area-15",
-        "area-16",
-        "area-17",
+      "safetyAreaIds": [],
+      "passwordHash": "pbkdf2-sha256$210000$MGSdVwbS7C6TtlPMFDKlTA$k5ymKvkFYr8MIfqTeugjbD6JHDRLFFncNVf69vFnM54"
+    },
+    "account-mvg6ig6c-pw9kv3": {
+      "id": "account-mvg6ig6c-pw9kv3",
+      "createdAt": "2026-10-20T04:24:19.812Z",
+      "role": "zoneOwner",
+      "name": "Mr Huy",
+      "displayName": "Mr Huy",
+      "employeeCode": "",
+      "username": "huynv",
+      "accessTypes": [
+        "5s",
+        "safety"
+      ],
+      "rolesByType": {
+        "5s": "zoneOwner",
+        "safety": "zoneOwner"
+      },
+      "areaIds": [
         "area-18",
-        "area-19",
-        "area-21",
-        "area-22",
-        "area-23",
+        "area-1",
         "area-24",
         "area-25",
-        "area-26",
-        "area-27",
-        "area-28",
-        "area-safety-xiolum",
-        "area-safety-tjmjl8"
+        "area-27"
       ],
-      "passwordHash": "pbkdf2-sha256$210000$MGSdVwbS7C6TtlPMFDKlTA$k5ymKvkFYr8MIfqTeugjbD6JHDRLFFncNVf69vFnM54"
+      "fiveSScorerId": "scorer-15",
+      "scorerId": "scorer-15",
+      "fiveSAreaIds": [
+        "area-18",
+        "area-1",
+        "area-24",
+        "area-25",
+        "area-27"
+      ],
+      "safetyScorerId": "scorer-15",
+      "safetyAreaIds": [
+        "area-18"
+      ],
+      "passwordHash": "pbkdf2-sha256$210000$u_7tnBbDBsoKYC_3YBUgTQ$a1cIQAG5Y3gC8s7kFmuWXShtK5PbIcsH4AAM78Ri37I"
     }
   }
 }

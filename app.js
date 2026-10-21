@@ -583,6 +583,7 @@
       safetyReport: { ...DEFAULT_SAFETY_REPORT },
       safetyMonthlyTargets: {},
       safetyIdentificationOverrides: {},
+      userGuides: window.UserGuideContent?.defaults?.() || {},
       scores: [],
       safetyRecords: [],
       deletedSafetyRecords: [],
@@ -936,6 +937,7 @@
       safetyReport: { ...DEFAULT_SAFETY_REPORT, ...(raw.safetyReport || {}) },
       safetyMonthlyTargets: raw.safetyMonthlyTargets || {},
       safetyIdentificationOverrides: normalizeTextOverrideMap(raw.safetyIdentificationOverrides),
+      userGuides: window.UserGuideContent?.normalize?.(raw.userGuides) || {},
       scores: snapshotToArray(raw.scores),
       safetyRecords: snapshotToArray(raw.safetyRecords),
       fiveSFindings: snapshotToArray(raw.fiveSFindings),
@@ -1355,6 +1357,7 @@
       safetyReport: s.safetyReport || DEFAULT_SAFETY_REPORT,
       safetyMonthlyTargets: s.safetyMonthlyTargets || {},
       safetyIdentificationOverrides: s.safetyIdentificationOverrides || {},
+      userGuides: window.UserGuideContent?.normalize?.(s.userGuides) || {},
       scores: toObj((s.scores || []).map(compactForStorage)),
       safetyRecords: toObj((s.safetyRecords || []).map(compactForStorage)),
       fiveSFindings: toObj(s.fiveSFindings || []),
@@ -3396,6 +3399,25 @@
     return hasRole && (!areaId || getFiveSScoreSourceAreaIds(account, periodId, scoreSource).has(areaId));
   }
 
+  function getFiveSAreaScoringRoleLabel(account = currentUser, areaId = "", periodId = getActivePeriodId(FIVE_S_PERIOD_TYPE)) {
+    if (!account || isAdminAccount(account)) return "";
+    const labels = [];
+    if (canEditFiveSScoreSource(account, SCORE_SOURCE_ASSESSOR, areaId, periodId)) {
+      labels.push("Vai trò assessor");
+    }
+    if (canEditFiveSScoreSource(account, SCORE_SOURCE_SELF, areaId, periodId)) {
+      labels.push("Vai trò quản lý zone");
+    }
+    return labels.join(" / ") || "Không có quyền chấm";
+  }
+
+  function getFiveSAreaOptionLabel(area, periodId = getActivePeriodId(FIVE_S_PERIOD_TYPE), account = currentUser) {
+    const responsibleName = getAreaResponsibleNameForPeriod(periodId, area);
+    const scoringRole = getFiveSAreaScoringRoleLabel(account, area?.id || "", periodId);
+    const baseLabel = `Zone ${area?.code || ""} · ${responsibleName}`;
+    return scoringRole ? `${baseLabel} · ${scoringRole}` : baseLabel;
+  }
+
   function getRoleLabel(role) {
     const normalizedRole = normalizeAccountRole(role);
     if (normalizedRole === ROLE_ADMIN) return "Admin hệ thống";
@@ -5275,7 +5297,19 @@
       startSessionHeartbeat();
       return true;
     } catch (error) {
-      clearSession();
+      if (isAuthRequestError(error)) {
+        clearSession();
+      } else {
+        // Keep the saved session metadata after a transient network failure so a refresh
+        // can restore the user without forcing another password login.
+        stopSessionHeartbeat();
+        stopDataWatch();
+        dataStore?.clearAuthSession?.();
+        clearAuthenticatedPhotoUrlCache();
+        currentSessionId = "";
+        currentSessionStartedAt = "";
+        currentSessionHistoryId = "";
+      }
       return false;
     }
   }
@@ -5333,6 +5367,11 @@
       activeSafetyReport = activeTab === "safety" ? (normalizeSafetyReportId(routeTarget.safetyReport) || "assessment") : "";
     } else {
       activeTab = getFallbackTab();
+      activeSafetyReport = "";
+    }
+
+    if (activeTab === "home" && shouldDefaultToMobile()) {
+      activeTab = getDefaultMobileTab();
       activeSafetyReport = "";
     }
 
@@ -5573,6 +5612,14 @@
     return "home";
   }
 
+  function shouldDefaultToMobile(account = currentUser) {
+    return Boolean(account) && !isAdminAccount(account) && !isViewerAccount(account);
+  }
+
+  function getDefaultMobileTab(account = currentUser) {
+    return isFiveSAssessor(account) && isTabAllowed("mobile-5s") ? "mobile-5s" : "mobile-safety";
+  }
+
   function setActiveTab(tab, options = {}) {
     const previousTab = activeTab;
     activeTab = isTabAllowed(tab) ? tab : getFallbackTab();
@@ -5730,6 +5777,7 @@
       openFormModal,
       closeModal,
       escapeHtml,
+      hydrateAuthenticatedPhotos,
       formatDateDisplay,
       parseDisplayDateToIso,
       formatNumber,
@@ -5775,6 +5823,7 @@
       getAvailableFiveSScoreSources,
       getDefaultFiveSScoreSource,
       getFiveSScoreSourceAreaIds,
+      getFiveSAreaScoringRoleLabel,
       goToSafetyReport,
       updateSafetyZoneTarget,
       isAdminAccount,
@@ -5925,17 +5974,16 @@
   }
   function populateAreaSelects() {
     const fiveSPeriodId = getActivePeriodId(FIVE_S_PERIOD_TYPE);
-    const fiveSAreas = getAreasForPeriod(fiveSPeriodId);
     const allowedAreaIds = getAllowedAreaIds(currentUser, fiveSPeriodId);
-    const assignedAreas = fiveSAreas
+    const areaOptions = getAreasForPeriod(fiveSPeriodId)
       .filter((area) => allowedAreaIds.has(area.id))
       .sort(compareZoneCodesByOrder);
     if (elements.assessorAreaSelect) {
       const current = elements.assessorAreaSelect.value;
-      elements.assessorAreaSelect.innerHTML = assignedAreas
-        .map((area) => "<option value=\"" + escapeHtml(area.id) + "\">Zone " + escapeHtml(area.code) + " · " + escapeHtml(getAreaResponsibleNameForPeriod(fiveSPeriodId, area)) + "</option>")
+      elements.assessorAreaSelect.innerHTML = areaOptions
+        .map((area) => `<option value="${escapeHtml(area.id)}">${escapeHtml(getFiveSAreaOptionLabel(area, fiveSPeriodId))}</option>`)
         .join("");
-      elements.assessorAreaSelect.value = assignedAreas.some((area) => area.id === current) ? current : assignedAreas[0]?.id || "";
+      elements.assessorAreaSelect.value = areaOptions.some((area) => area.id === current) ? current : areaOptions[0]?.id || "";
     }
 
     if (elements.safetyAreaFilter) {
@@ -6404,8 +6452,17 @@
     }
 
     const allowedAreaIds = getAllowedAreaIds(currentUser, periodId);
-    const assignedAreas = getAreasForPeriod(periodId).filter((area) => allowedAreaIds.has(area.id));
-    const selectedArea = assignedAreas.find((area) => area.id === elements.assessorAreaSelect?.value) || assignedAreas[0] || null;
+    const areaOptions = getAreasForPeriod(periodId)
+      .filter((area) => allowedAreaIds.has(area.id))
+      .sort(compareZoneCodesByOrder);
+    const currentAreaId = elements.assessorAreaSelect?.value || "";
+    if (elements.assessorAreaSelect) {
+      elements.assessorAreaSelect.innerHTML = areaOptions
+        .map((area) => `<option value="${escapeHtml(area.id)}">${escapeHtml(getFiveSAreaOptionLabel(area, periodId))}</option>`)
+        .join("");
+    }
+    const selectedArea = areaOptions.find((area) => area.id === currentAreaId) || areaOptions[0] || null;
+    if (elements.assessorAreaSelect) elements.assessorAreaSelect.value = selectedArea?.id || "";
 
     const areaKey = `${periodId}:${selectedArea?.id || ""}`;
     const sourceSelect = elements.assessorScoreSourceSelect;
@@ -6435,8 +6492,11 @@
     elements.assessorAreaSelect.value = selectedArea.id;
     const completed = getCompletedCellCount(periodId, selectedArea, scoreSource);
     const required = getRequiredCellsForArea(selectedArea);
+    const scoringRole = getFiveSAreaScoringRoleLabel(currentUser, selectedArea.id, periodId);
     elements.assessorTitle.textContent = `Phiếu chấm 5S - Zone ${selectedArea.code} - ${periodLabel(period)}`;
-    elements.assessorProgress.textContent = `Đã chấm ${completed}/${required} ô. Điểm TB zone: ${formatNumber(areaAverage(periodId, selectedArea, scoreSource), 2)}`;
+    elements.assessorProgress.textContent = scoringRole === "Không có quyền chấm"
+      ? `Không có quyền chấm Zone ${selectedArea.code}. Phiếu đang ở chế độ chỉ xem.`
+      : `Đã chấm ${completed}/${required} ô. Điểm TB zone: ${formatNumber(areaAverage(periodId, selectedArea, scoreSource), 2)}`;
     elements.assessorSheet.innerHTML = '<div class="assessor-4m-wrap" data-drag-scroll><table class="matrix-table standard-reference-table assessor-4m-table"></table></div>';
     renderAssessorFourMTable(elements.assessorSheet.querySelector(".assessor-4m-table"), {
       periodId,
@@ -8187,6 +8247,9 @@
       const requestedTab = pendingRouteTab || (routeTarget.type === "tab" ? routeTarget.tab : "");
       const requestedSafetyReport = pendingRouteTab ? pendingSafetyReport : (routeTarget.type === "tab" ? routeTarget.safetyReport || "" : "");
       activeTab = requestedTab && isTabAllowed(requestedTab) ? requestedTab : getFallbackTab();
+      if (activeTab === "home" && shouldDefaultToMobile(account)) {
+        activeTab = getDefaultMobileTab(account);
+      }
       activeSafetyReport = activeTab === "safety" ? normalizeSafetyReportId(requestedSafetyReport) : "";
       pendingRouteTab = null;
       pendingSafetyReport = "";
@@ -9949,9 +10012,13 @@
     if (!url) {
       return false;
     }
-    return [...(state.scores || []), ...(state.safetyRecords || [])].some((record) => (
+    const isRecordPhoto = [...(state.scores || []), ...(state.safetyRecords || [])].some((record) => (
       record?.photoDataUrl === url || record?.afterPhotoDataUrl === url
     ));
+    const isGuidePhoto = Object.values(state.userGuides || {}).some((guide) => (
+      (guide?.steps || []).some((step) => step?.imageUrl === url)
+    ));
+    return isRecordPhoto || isGuidePhoto;
   }
 
   async function deleteUnusedPhotoFile(photoUrl = "") {
@@ -18455,6 +18522,173 @@
     });
   }
 
+  function openUserGuideSetupModal() {
+    if (!requireAdminAction()) {
+      return;
+    }
+    closeAccountMenu();
+
+    const guideApi = window.UserGuideContent;
+    if (!guideApi?.renderEditor || !dataStore?.savePhoto) {
+      showToast("Không mở được thiết lập hướng dẫn. Vui lòng tải lại ứng dụng.", true);
+      return;
+    }
+
+    openFormModal({
+      title: "Thiết lập hướng dẫn",
+      submitText: "Lưu hướng dẫn",
+      modalClass: "user-guide-setup-modal",
+      html: guideApi.renderEditor(state.userGuides),
+      onError: () => showToast("Không lưu được hướng dẫn. Vui lòng thử lại.", true),
+      async onSubmit(_formData, form) {
+        if (!requireAdminAction()) {
+          return false;
+        }
+
+        const previousPhotoUrls = Object.values(state.userGuides || {})
+          .flatMap((guide) => guide?.steps || [])
+          .map((step) => step?.imageUrl || "")
+          .filter(Boolean);
+        const newlyUploadedPhotoUrls = [];
+        const currentPeriod = getPeriod(getActivePeriodId(FIVE_S_PERIOD_TYPE))
+          || getPeriod(getActivePeriodId(SAFETY_PERIOD_TYPE));
+        const now = new Date();
+        const nextGuides = {};
+
+        try {
+          for (const section of guideApi.sections) {
+            const panel = form.querySelector(`[data-guide-panel="${section.id}"]`);
+            if (!panel) continue;
+            const readField = (name) => panel.querySelector(`[data-guide-field="${name}"]`)?.value?.trim() || "";
+            const steps = [];
+
+            for (const card of panel.querySelectorAll("[data-guide-step-card]")) {
+              const title = card.querySelector('[data-guide-step-field="title"]')?.value?.trim() || "";
+              const body = card.querySelector('[data-guide-step-field="body"]')?.value?.trim() || "";
+              const file = card.querySelector("[data-guide-image-input]")?.files?.[0] || null;
+              let imageUrl = card.dataset.imageUrl || "";
+
+              if (card.dataset.imageRemoved === "true") {
+                imageUrl = "";
+              }
+              if (file) {
+                const dataUrl = await resizeImageFile(file, PHOTO_MAX_SIZE, PHOTO_JPEG_QUALITY);
+                const savedPhoto = await dataStore.savePhoto({
+                  dataUrl,
+                  fileName: file.name || "anh-huong-dan.jpg",
+                  month: currentPeriod?.month || now.getMonth() + 1,
+                  year: currentPeriod?.year || now.getFullYear(),
+                });
+                imageUrl = savedPhoto?.url || "";
+                if (!imageUrl) {
+                  throw new Error("Không lưu được ảnh minh họa.");
+                }
+                newlyUploadedPhotoUrls.push(imageUrl);
+              }
+
+              steps.push({ id: card.dataset.stepId || makeId("guide-step"), title, body, imageUrl });
+            }
+
+            nextGuides[section.id] = {
+              title: readField("title"),
+              intro: readField("intro"),
+              hint: readField("hint"),
+              adminNote: readField("adminNote"),
+              steps,
+            };
+          }
+
+          const normalizedGuides = guideApi.normalize(nextGuides);
+          await dbRef("userGuides").set(normalizedGuides);
+          state.userGuides = normalizedGuides;
+          await deleteUnusedPhotoFiles(previousPhotoUrls);
+          showToast("Đã lưu hướng dẫn.");
+          return true;
+        } catch (error) {
+          await deleteUnusedPhotoFiles(newlyUploadedPhotoUrls);
+          throw error;
+        }
+      },
+    });
+
+    const modalBody = elements.modalBody;
+    const form = modalBody.querySelector("#modal-form");
+    form?.addEventListener("click", (event) => {
+      const tabButton = event.target.closest("[data-guide-tab]");
+      if (tabButton) {
+        const selectedSection = tabButton.dataset.guideTab;
+        form.querySelectorAll("[data-guide-tab]").forEach((button) => {
+          const isSelected = button === tabButton;
+          button.classList.toggle("is-active", isSelected);
+          button.setAttribute("aria-selected", String(isSelected));
+        });
+        form.querySelectorAll("[data-guide-panel]").forEach((panel) => {
+          panel.hidden = panel.dataset.guidePanel !== selectedSection;
+        });
+        return;
+      }
+
+      const addButton = event.target.closest("[data-guide-add-step]");
+      if (addButton) {
+        const sectionId = addButton.dataset.guideAddStep;
+        const panel = form.querySelector(`[data-guide-panel="${sectionId}"]`);
+        const steps = panel?.querySelector("[data-guide-steps]");
+        if (panel && steps) {
+          const stepIndex = steps.querySelectorAll("[data-guide-step-card]").length;
+          steps.insertAdjacentHTML("beforeend", guideApi.renderStepEditor(sectionId, { id: makeId("guide-step") }, stepIndex));
+          updateUserGuideStepNumbers(panel);
+          steps.lastElementChild?.querySelector('[data-guide-step-field="title"]')?.focus();
+        }
+        return;
+      }
+
+      const deleteButton = event.target.closest("[data-guide-delete-step]");
+      if (deleteButton) {
+        const panel = deleteButton.closest("[data-guide-panel]");
+        deleteButton.closest("[data-guide-step-card]")?.remove();
+        if (panel) updateUserGuideStepNumbers(panel);
+        return;
+      }
+
+      const removeImageButton = event.target.closest("[data-guide-remove-image]");
+      if (removeImageButton) {
+        const card = removeImageButton.closest("[data-guide-step-card]");
+        const preview = card?.querySelector("[data-guide-image-preview]");
+        const input = card?.querySelector("[data-guide-image-input]");
+        if (card) card.dataset.imageRemoved = "true";
+        if (input) input.value = "";
+        if (preview) preview.hidden = true;
+        removeImageButton.hidden = true;
+      }
+    });
+    form?.addEventListener("change", (event) => {
+      const input = event.target.closest("[data-guide-image-input]");
+      const file = input?.files?.[0];
+      if (!file) return;
+      const card = input.closest("[data-guide-step-card]");
+      const preview = card?.querySelector("[data-guide-image-preview]");
+      const removeButton = card?.querySelector("[data-guide-remove-image]");
+      const reader = new FileReader();
+      reader.onload = () => {
+        if (!preview) return;
+        preview.src = String(reader.result || "");
+        preview.dataset.photoSrc = "";
+        preview.hidden = false;
+        if (removeButton) removeButton.hidden = false;
+        if (card) card.dataset.imageRemoved = "false";
+      };
+      reader.readAsDataURL(file);
+    });
+    hydrateAuthenticatedPhotos(modalBody);
+  }
+
+  function updateUserGuideStepNumbers(panel) {
+    panel?.querySelectorAll("[data-guide-step-card]").forEach((card, index) => {
+      const number = card.querySelector(".guide-editor-step-heading strong");
+      if (number) number.textContent = `Bước ${index + 1}`;
+    });
+  }
+
   function handleAction(action, id, sourceElement = null) {
     const periodId = sourceElement?.dataset.periodId || "";
     const periodType = sourceElement?.dataset.periodType || "";
@@ -18482,6 +18716,7 @@
       "edit-area-responsible",
       "edit-area-assessor",
       "show-problem-zone-emails",
+      "setup-user-guide",
       "edit-five-s-chart-target",
       "send-safety-report-mail",
       "copy-safety-report-summary",
@@ -18551,6 +18786,7 @@
       "edit-area-responsible": () => editAreaResponsible(id, periodId),
       "edit-area-assessor": () => editAreaAssessor(id, periodId),
       "show-problem-zone-emails": () => showProblemZoneEmails(),
+      "setup-user-guide": () => openUserGuideSetupModal(),
       "edit-five-s-chart-target": () => editFiveSChartTarget(id),
       "copy-report-target": () => copyReportTarget(sourceElement?.dataset.copyTarget || id).catch((error) => {
         showToast("Lỗi khi copy bảng/biểu đồ.", true);

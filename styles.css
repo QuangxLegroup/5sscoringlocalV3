@@ -10858,6 +10858,7 @@ body.mobile-proto-open {
 }
 
 .mobile-theme-toggle-btn,
+.mobile-help-btn,
 .mobile-nav-close-btn {
   width: 28px !important;
   height: 28px !important;
@@ -10882,6 +10883,7 @@ body.mobile-proto-open {
 }
 
 .mobile-theme-toggle-btn:hover,
+.mobile-help-btn:hover,
 .mobile-nav-close-btn:hover {
   background: #334155;
   color: #ffffff;
@@ -10928,6 +10930,7 @@ body.mobile-proto-open {
     max-width: calc(100% - 64px);
   }
   .mobile-theme-toggle-btn,
+  .mobile-help-btn,
   .mobile-nav-close-btn {
     width: 26px !important;
     height: 26px !important;
@@ -10943,6 +10946,316 @@ body.mobile-proto-open {
 
 .mobile-theme-toggle-btn:active i {
   transform: rotate(45deg) scale(0.9);
+}
+
+.mobile-help-dialog {
+  width: min(980px, calc(100vw - 24px));
+  height: min(900px, calc(100dvh - 24px));
+  max-width: none;
+  max-height: none;
+  padding: 0;
+  border: 1px solid #334155;
+  border-radius: 16px;
+  background: #fff;
+  color: #0f172a;
+  overflow: hidden;
+  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.4);
+}
+
+.mobile-help-dialog[open] {
+  display: flex;
+  flex-direction: column;
+}
+
+.mobile-help-dialog::backdrop {
+  background: rgba(2, 6, 23, 0.72);
+  backdrop-filter: blur(3px);
+}
+
+.mobile-help-dialog-header {
+  min-height: 52px;
+  padding: 8px 12px 8px 18px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  background: #0f172a;
+  color: #f8fafc;
+}
+
+.mobile-help-dialog-header h2 {
+  margin: 0;
+  font-size: 0.98rem;
+}
+
+.mobile-help-close-btn {
+  width: 34px;
+  height: 34px;
+  border: 1px solid #475569;
+  border-radius: 50%;
+  background: #1e293b;
+  color: #f8fafc;
+  font-size: 1.4rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.mobile-help-close-btn:hover {
+  background: #334155;
+}
+
+.mobile-help-content {
+  display: block;
+  width: 100%;
+  min-height: 0;
+  flex: 1 1 auto;
+  overflow: auto;
+  padding: 16px;
+  background: #f8fafc;
+  color: #0f172a;
+}
+
+.mobile-user-guide {
+  width: min(780px, 100%);
+  margin: 0 auto;
+  line-height: 1.55;
+}
+
+.mobile-user-guide-eyebrow {
+  margin: 0 0 5px;
+  color: #0f766e;
+  font-size: 0.76rem;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.mobile-user-guide > h3 {
+  margin: 0 0 8px;
+  font-size: 1.35rem;
+  line-height: 1.25;
+}
+
+.mobile-user-guide-intro {
+  margin: 0 0 16px;
+  color: #475569;
+}
+
+.mobile-user-guide-steps {
+  display: grid;
+  gap: 12px;
+  margin: 0;
+  padding-left: 24px;
+}
+
+.mobile-user-guide-step {
+  padding-left: 4px;
+}
+
+.mobile-user-guide-step h3 {
+  margin: 0 0 4px;
+  font-size: 1rem;
+}
+
+.mobile-user-guide-step p,
+.mobile-user-guide-note p,
+.mobile-user-guide-admin p {
+  margin: 0;
+  white-space: pre-line;
+}
+
+.mobile-user-guide-image {
+  display: block;
+  width: min(100%, 640px);
+  max-height: 360px;
+  margin: 10px 0 2px;
+  border: 1px solid #cbd5e1;
+  border-radius: 10px;
+  background: #fff;
+  object-fit: contain;
+}
+
+.mobile-user-guide-note,
+.mobile-user-guide-admin {
+  margin-top: 16px;
+  padding: 12px 14px;
+  border: 1px solid #cbd5e1;
+  border-radius: 10px;
+  background: #fff;
+}
+
+.mobile-user-guide-note strong,
+.mobile-user-guide-admin strong {
+  display: block;
+  margin-bottom: 4px;
+}
+
+.mobile-user-guide-admin {
+  border-color: #bfdbfe;
+  background: #eff6ff;
+}
+
+.mobile-user-guide-empty {
+  padding: 16px;
+  border: 1px dashed #94a3b8;
+  border-radius: 10px;
+  color: #475569;
+}
+
+.user-guide-setup-modal {
+  width: min(1040px, 100%);
+  max-height: min(900px, calc(100dvh - 24px));
+}
+
+.user-guide-setup-modal .modal-body {
+  padding: 14px;
+}
+
+.user-guide-setup-modal .modal-form {
+  gap: 14px;
+}
+
+.guide-editor-intro {
+  padding: 10px 12px;
+  border: 1px solid #bfdbfe;
+  border-radius: 8px;
+  background: #eff6ff;
+  color: #1e3a8a;
+  font-size: 0.9rem;
+}
+
+.guide-editor-tabs {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  padding: 2px 0 8px;
+  border-bottom: 1px solid var(--line);
+}
+
+.guide-editor-tab {
+  flex: 0 0 auto;
+  min-height: 38px;
+  padding: 7px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-soft);
+  color: var(--text);
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.guide-editor-tab.is-active {
+  border-color: #0f766e;
+  background: #0f766e;
+  color: #fff;
+}
+
+.guide-editor-panel {
+  display: grid;
+  gap: 12px;
+}
+
+.guide-editor-panel[hidden] {
+  display: none;
+}
+
+.guide-editor-field {
+  display: grid;
+  gap: 5px;
+  color: var(--text);
+  font-size: 0.9rem;
+  font-weight: 700;
+}
+
+.guide-editor-field input,
+.guide-editor-field textarea {
+  width: 100%;
+  min-height: 40px;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--surface, #fff);
+  color: var(--text);
+  font: inherit;
+  font-weight: 400;
+}
+
+.guide-editor-field textarea {
+  min-height: 72px;
+  resize: vertical;
+}
+
+.guide-editor-steps {
+  display: grid;
+  gap: 12px;
+}
+
+.guide-editor-step {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface-soft);
+}
+
+.guide-editor-step-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.guide-editor-remove-step {
+  min-height: 34px;
+  padding: 5px 10px;
+}
+
+.guide-editor-image-field {
+  display: grid;
+  justify-items: start;
+  gap: 8px;
+}
+
+.guide-editor-image-preview {
+  width: min(100%, 440px);
+  max-height: 220px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+  object-fit: contain;
+}
+
+.guide-editor-image-preview[hidden] {
+  display: none;
+}
+
+.guide-editor-add-step {
+  justify-self: start;
+}
+
+@media (max-width: 520px) {
+  .mobile-help-content {
+    padding: 12px;
+  }
+
+  .user-guide-setup-modal {
+    max-height: calc(100dvh - 12px);
+    border-radius: 12px;
+  }
+
+  .user-guide-setup-modal .modal-body {
+    padding: 10px;
+  }
+}
+
+@media (max-width: 520px) {
+  .mobile-help-dialog {
+    width: calc(100vw - 12px);
+    height: calc(100dvh - 12px);
+    border-radius: 12px;
+  }
 }
 
 
@@ -14071,6 +14384,7 @@ input[type="date"]::-webkit-calendar-picker-indicator {
 }
 
 .mobile-responsive-overlay.is-light-theme .mobile-theme-toggle-btn,
+.mobile-responsive-overlay.is-light-theme .mobile-help-btn,
 .mobile-responsive-overlay.is-light-theme .mobile-nav-close-btn {
   background: #f1f5f9 !important;
   border-color: #cbd5e1 !important;
@@ -14078,6 +14392,7 @@ input[type="date"]::-webkit-calendar-picker-indicator {
 }
 
 .mobile-responsive-overlay.is-light-theme .mobile-theme-toggle-btn:hover,
+.mobile-responsive-overlay.is-light-theme .mobile-help-btn:hover,
 .mobile-responsive-overlay.is-light-theme .mobile-nav-close-btn:hover {
   background: #e2e8f0 !important;
   color: #0f172a !important;
