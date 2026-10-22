@@ -11,6 +11,7 @@ const ROLE_DEPARTMENT_HEAD = "departmentHead";
 const FIVE_S_PERIOD_TYPE = "5s";
 const SAFETY_PERIOD_TYPE = "safety";
 const LEGACY_PERIOD_TYPE = "both";
+const HIDDEN_SAFETY_ZONE_CODES = new Set(["27"]);
 const TOKEN_COOKIE_NAME = "legroup_session";
 // Sliding session window: keep users signed in between workdays while the active-session ID
 // still lets a new device or explicit logout revoke the previous session immediately.
@@ -343,10 +344,6 @@ function safetyRecordTextMatchesName(value, name) {
     .some((part) => sameNormalizedText(part, cleanName));
 }
 
-function accountHasAnyAccess(account) {
-  return isAdminAccount(account) || hasAccountAccessType(account, FIVE_S_PERIOD_TYPE) || hasAccountAccessType(account, SAFETY_PERIOD_TYPE);
-}
-
 class AuthService {
   constructor({ repository, secret = "" }) {
     this.repository = repository;
@@ -672,6 +669,25 @@ class AuthService {
     return type === SAFETY_PERIOD_TYPE ? SAFETY_PERIOD_TYPE : FIVE_S_PERIOD_TYPE;
   }
 
+  getFiveSPeriodForSafetyPeriod(root, safetyPeriodId) {
+    const periods = collectionValues(root?.periods);
+    const safetyPeriod = periods.find((period) => period?.id === safetyPeriodId);
+    const candidates = safetyPeriod?.month && safetyPeriod?.year
+      ? periods.filter((period) => normalizePeriodType(period?.type) !== SAFETY_PERIOD_TYPE
+        && Number(period?.month) === Number(safetyPeriod.month)
+        && Number(period?.year) === Number(safetyPeriod.year))
+      : [];
+    const activeFiveSPeriodId = String(root?.activeFiveSPeriodId || "");
+    const sameMonthPeriod = candidates.find((period) => period?.id === activeFiveSPeriodId) || candidates[0];
+    if (sameMonthPeriod) return sameMonthPeriod.id;
+    if (activeFiveSPeriodId && periods.some((period) => period?.id === activeFiveSPeriodId)) return activeFiveSPeriodId;
+
+    const legacyActivePeriod = periods.find((period) => period?.id === root?.activePeriodId);
+    return legacyActivePeriod && normalizePeriodType(legacyActivePeriod.type) !== SAFETY_PERIOD_TYPE
+      ? legacyActivePeriod.id
+      : "";
+  }
+
   getAreasForPeriod(root, periodId, type = FIVE_S_PERIOD_TYPE) {
     const period = collectionValues(root?.periods).find((item) => item.id === periodId);
     const snapshotAreas = collectionValues(period?.settingsSnapshot?.areas);
@@ -896,7 +912,8 @@ class AuthService {
     if (!periodId || !areaId) return false;
 
     const assignments = getAccountRoleAssignments(root, account, periodId, SAFETY_PERIOD_TYPE);
-    const area = assignments.areas.find((item) => item?.id === areaId);
+    const area = assignments.areas.find((item) => item?.id === areaId)
+      || this.getAreasForPeriod(root, periodId, SAFETY_PERIOD_TYPE).find((item) => item?.id === areaId);
     if (!area) return false;
 
     // A person's assessor assignment may cover many Zones. Countermeasure replies
@@ -909,6 +926,31 @@ class AuthService {
       }
       if (area.scorerId && managerIds.has(area.scorerId)) return true;
       if (!managerIds.size && getAccountAreaIds(account, SAFETY_PERIOD_TYPE).includes(areaId)) return true;
+    }
+
+    // In the factory, 5S and Safety ownership belong to the same zone leaders.
+    // Match by zone code so separate catalog IDs and stale Safety role links do not
+    // prevent the assigned 5S manager/head from replying to this Safety Zone.
+    const safetyZoneCode = String(area.templateCode || area.code || "").trim().toLocaleLowerCase("vi");
+    const fiveSPeriodId = this.getFiveSPeriodForSafetyPeriod(root, periodId);
+    if (safetyZoneCode && fiveSPeriodId) {
+      const fiveSAssignments = getAccountRoleAssignments(root, account, fiveSPeriodId, FIVE_S_PERIOD_TYPE);
+      const fiveSArea = fiveSAssignments.areas.find((item) => (
+        item?.id === area.id
+        || String(item?.templateCode || item?.code || "").trim().toLocaleLowerCase("vi") === safetyZoneCode
+      ));
+      if (fiveSArea) {
+        if (isAreaManagedByDepartmentHead(fiveSArea, account)) return true;
+        if (fiveSAssignments.roles.includes(ROLE_ZONE_OWNER)) {
+          const managerIds = new Set(fiveSAssignments.managerIds);
+          if (getAccountRoleForType(account, FIVE_S_PERIOD_TYPE) === ROLE_ZONE_OWNER) {
+            const primaryManagerId = getAccountPersonId(account, FIVE_S_PERIOD_TYPE);
+            if (primaryManagerId) managerIds.add(primaryManagerId);
+          }
+          if (fiveSArea.scorerId && managerIds.has(fiveSArea.scorerId)) return true;
+          if (getAccountAreaIds(account, FIVE_S_PERIOD_TYPE).includes(fiveSArea.id)) return true;
+        }
+      }
     }
 
     return isAreaManagedByDepartmentHead(area, account);
@@ -1075,11 +1117,30 @@ class AuthService {
       if (existingRecord
         && this.hasSafetyCountermeasureChanges(existingRecord, record)
         && !this.isSafetyCountermeasureRoleAssigned(root, account, existingRecord)) {
-        throw createHttpError("Chỉ quản lý Zone hoặc trưởng phòng phụ trách Zone này được cập nhật đối sách.", 403);
+        throw createHttpError("Bạn chỉ có quyền thêm các đối sách liên quan đến Zone của mình.", 403);
       }
     }
     if (existingRecord) this.assertSafetyPeriodWritable(root, existingRecord);
     this.assertSafetyPeriodWritable(root, record);
+
+    if (operation === "set" && !existingRecord) {
+      const recordId = String(recordIdFromPath || "");
+      if (String(record.id || "") !== recordId) {
+        throw createHttpError("Dữ liệu đánh giá an toàn không hợp lệ.", 400);
+      }
+      const reportableArea = this.getAreasForPeriod(root, record.periodId, SAFETY_PERIOD_TYPE).find((area) => (
+        area?.id === record.areaId
+        && !HIDDEN_SAFETY_ZONE_CODES.has(String(area.templateCode || area.code || "").trim())
+      ));
+      if (!reportableArea) {
+        throw createHttpError("Vui lòng chọn Zone hợp lệ.", 400);
+      }
+      const ownerUsername = String(record.accountUsername || "").trim();
+      if (!ownerUsername || !sameNormalizedText(ownerUsername, account.username)) {
+        throw createHttpError("Bạn không có quyền ghi đánh giá an toàn cho tài khoản khác.", 403);
+      }
+      return;
+    }
 
     const countermeasureComparisonRecord = legacyCountermeasureRecord || existingRecord;
     const countermeasureNextRecord = legacyCountermeasureRecord
@@ -1362,7 +1423,7 @@ class AuthService {
 
   assertPhotoAllowed(authContext) {
     const account = authContext?.rawAccount || authContext?.account;
-    if (!account || isViewerAccount(account) || !accountHasAnyAccess(account)) {
+    if (!account || isViewerAccount(account)) {
       throw createHttpError("Bạn không có quyền tải ảnh.", 403);
     }
   }

@@ -68,7 +68,7 @@ class DataController {
       this.authService.authenticateRequest(request)
         .catch((error) => {
           const status = Number(error?.statusCode || error?.status || 0);
-          if (status !== 401 && status !== 403) {
+          if (status !== 401) {
             return;
           }
           try {

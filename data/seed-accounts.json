@@ -210,6 +210,31 @@
         "area-18"
       ],
       "passwordHash": "pbkdf2-sha256$210000$u_7tnBbDBsoKYC_3YBUgTQ$a1cIQAG5Y3gC8s7kFmuWXShtK5PbIcsH4AAM78Ri37I"
+    },
+    "account-mvixwg4g-4a9xsc": {
+      "id": "account-mvixwg4g-4a9xsc",
+      "createdAt": "2026-10-22T02:46:34.912Z",
+      "role": "zoneOwner",
+      "name": "Mrs Út",
+      "displayName": "Mrs Út",
+      "employeeCode": "1502",
+      "username": "utnt",
+      "accessTypes": [
+        "5s"
+      ],
+      "rolesByType": {
+        "5s": "zoneOwner"
+      },
+      "areaIds": [
+        "area-13"
+      ],
+      "fiveSScorerId": "scorer-mvixthhu-cbyn7x",
+      "scorerId": "scorer-mvixthhu-cbyn7x",
+      "fiveSAreaIds": [
+        "area-13"
+      ],
+      "safetyAreaIds": [],
+      "passwordHash": "pbkdf2-sha256$210000$vUfA5KAa0MOjL0YjHMQykQ$hcGI5pwAIZ-7k5-6asboohRVz1W85hwGQovV-_IQ2aQ"
     }
   }
 }

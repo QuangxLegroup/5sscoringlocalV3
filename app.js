@@ -3315,6 +3315,10 @@
     return !isViewerAccount(account) && (isAdminAccount(account) || hasDepartmentHeadRole(account) || hasAccountAccessType(account, SAFETY_PERIOD_TYPE));
   }
 
+  function canAddSafetyEvaluation(account) {
+    return Boolean(account) && !isViewerAccount(account);
+  }
+
   function sameNormalizedText(left, right) {
     return String(left || "").trim().toLowerCase() === String(right || "").trim().toLowerCase();
   }
@@ -3415,6 +3419,43 @@
     );
   }
 
+  function getFiveSPeriodForSafetyPeriod(safetyPeriodId) {
+    const safetyPeriod = getPeriod(safetyPeriodId);
+    const activeFiveSPeriod = getPeriod(getActivePeriodId(FIVE_S_PERIOD_TYPE));
+    const isSameMonth = (period) => Boolean(
+      period?.month && period?.year && safetyPeriod?.month && safetyPeriod?.year
+      && Number(period.month) === Number(safetyPeriod.month)
+      && Number(period.year) === Number(safetyPeriod.year),
+    );
+    const matchingFiveSPeriod = getPeriodsByType(FIVE_S_PERIOD_TYPE).find(isSameMonth);
+    return isSameMonth(activeFiveSPeriod) ? activeFiveSPeriod : matchingFiveSPeriod || activeFiveSPeriod;
+  }
+
+  function canManageSafetyCountermeasureFromFiveSAssignments(account, safetyArea, safetyPeriodId) {
+    const safetyZoneCode = getSafetyAreaCode(safetyArea).toLocaleLowerCase("vi");
+    if (!account || !safetyZoneCode) return false;
+
+    const fiveSPeriod = getFiveSPeriodForSafetyPeriod(safetyPeriodId);
+    if (!fiveSPeriod) return false;
+    const fiveSPeriodId = fiveSPeriod.id;
+    const fiveSArea = getAreasForPeriod(fiveSPeriodId).find((area) => (
+      area.id === safetyArea.id
+      || getSafetyAreaCode(area).toLocaleLowerCase("vi") === safetyZoneCode
+    ));
+    if (!fiveSArea) return false;
+
+    if (isAreaManagedByDepartmentHead(fiveSArea, account)) return true;
+    if (!getAccountRolesForType(account, FIVE_S_PERIOD_TYPE, fiveSPeriodId).includes(ROLE_ZONE_OWNER)) return false;
+
+    const managerIds = new Set(getAccountPersonIdsForRole(account, FIVE_S_PERIOD_TYPE, ROLE_ZONE_OWNER, fiveSPeriodId));
+    if (getAccountRoleForType(account, FIVE_S_PERIOD_TYPE) === ROLE_ZONE_OWNER) {
+      const primaryManagerId = getAccountPersonId(account, FIVE_S_PERIOD_TYPE);
+      if (primaryManagerId) managerIds.add(primaryManagerId);
+    }
+    if (fiveSArea.scorerId && managerIds.has(fiveSArea.scorerId)) return true;
+    return getAccountAreaIds(account, FIVE_S_PERIOD_TYPE).includes(fiveSArea.id);
+  }
+
   function canManageSafetyCountermeasure(record, account = currentUser) {
     if (!record || !account || isPeriodArchived(record.periodId, SAFETY_PERIOD_TYPE)) {
       return false;
@@ -3424,10 +3465,12 @@
     // Reply rights are narrower than general safety access: assessor assignments
     // can span every Zone, but only the manager/head assigned to this Zone may reply.
     if (getDepartmentHeadManagedAreaIds(account, record.periodId).has(record.areaId)) return true;
-    if (!isZoneOwnerAccount(account, SAFETY_PERIOD_TYPE)) return false;
-
     const area = getAreasForPeriod(record.periodId).find((item) => item.id === record.areaId);
     if (!area) return false;
+
+    if (canManageSafetyCountermeasureFromFiveSAssignments(account, area, record.periodId)) return true;
+    if (!isZoneOwnerAccount(account, SAFETY_PERIOD_TYPE)) return false;
+
     const managerIds = new Set(getAccountPersonIdsForRole(account, SAFETY_PERIOD_TYPE, ROLE_ZONE_OWNER, record.periodId));
     if (getAccountRoleForType(account, SAFETY_PERIOD_TYPE) === ROLE_ZONE_OWNER) {
       const primaryManagerId = getAccountPersonId(account, SAFETY_PERIOD_TYPE);
@@ -5280,7 +5323,7 @@
   }
 
   function isAuthRequestError(error) {
-    return error?.status === 401 || error?.status === 403;
+    return error?.status === 401;
   }
 
   function applyAuthenticatedPayload(payload = {}, options = {}) {
@@ -5667,7 +5710,10 @@
       for (const [rowIndex, row] of (sheet.rows || []).entries()) {
         const problem = String(row?.problem || "").trim();
         const progress = Math.max(0, Math.min(100, Number(row?.progress) || 0));
-        const hasOpenProblem = Boolean(problem && progress < 100);
+        const isResolved = typeof window.FiveSFindingsPage?.isFindingResolved === "function"
+          ? window.FiveSFindingsPage.isFindingResolved(row)
+          : Boolean(String(row?.countermeasure || "").trim()) || progress >= 100;
+        const hasOpenProblem = Boolean(problem && !isResolved);
         if (canReceiveWarning && hasOpenProblem) {
           const findingDate = sheet.inspectionDate;
           const identity = [sheet.id, row.location, problem, row.fiveS, findingDate].join("|");
@@ -5988,7 +6034,7 @@
     const isViewer = isViewerAccount(currentUser);
     const hasFiveSAccess = !isAdmin && (Boolean(hasAccountAccessType(currentUser, FIVE_S_PERIOD_TYPE))
       || hasDepartmentHeadRole(currentUser, getActivePeriodId(FIVE_S_PERIOD_TYPE)));
-    const hasSafetyAccess = !isAdmin && canUseSafety(currentUser);
+    const hasSafetyAccess = !isAdmin && canAddSafetyEvaluation(currentUser);
     const isDepartmentHead = isDepartmentHeadAccount(currentUser);
     const isReadOnlyPageAccess = (element) => element.matches(".tab-button, .tab-panel, .nav-group, .account-menu-divider") ||
       Boolean(element.closest(".sidebar-nav, .header-quick-nav"));
@@ -6293,6 +6339,7 @@
       areaAverage,
       buildMatrixTable,
       canUseSafety,
+      canAddSafetyEvaluation,
       isFiveSAssessor,
       isTabAllowed,
       pushRoute,
@@ -14436,10 +14483,9 @@
     });
   }
 
-  function getSafetyAreaOptions(periodId, selectedAreaId = "") {
-    const allowedIds = getAllowedAreaIds(currentUser, periodId);
+  function getSafetyAreaOptions(periodId, selectedAreaId = "", allowedIds = getAllowedAreaIds(currentUser, periodId)) {
     return getAreasForPeriod(periodId)
-      .filter((area) => isReportableSafetyArea(area) && allowedIds.has(area.id))
+      .filter((area) => isReportableSafetyArea(area) && (!allowedIds || allowedIds.has(area.id)))
       .sort(compareZoneCodesByOrder)
       .map((area) => "<option value=\"" + escapeHtml(area.id) + "\" " + (area.id === selectedAreaId ? "selected" : "") + ">Zone " + escapeHtml(area.code) + " · " + escapeHtml(getSafetyDepartmentForArea(area, periodId)) + "</option>")
       .join("");
@@ -14457,7 +14503,7 @@
   }
 
   function addSafetyRecord() {
-    if (!canUseSafety(currentUser)) {
+    if (!canAddSafetyEvaluation(currentUser)) {
       showToast("Bạn không có quyền thêm đánh giá an toàn.", true);
       return;
     }
@@ -14471,17 +14517,12 @@
   }
 
   function editSafetyRecord(recordId) {
-    if (!canUseSafety(currentUser)) {
-      showToast("Bạn không có quyền sửa đánh giá an toàn.", true);
-      return;
-    }
-
     const record = state.safetyRecords.find((item) => item.id === recordId);
     if (!record) {
       return;
     }
-    if (!canManageSafetyCountermeasure(record)) {
-      showToast("Bạn chỉ được cập nhật báo cáo thuộc zone được phân quyền.", true);
+    if (!canManageSafetyCountermeasure(record) && !canManageSafetyRecord(record)) {
+      showToast("Bạn chỉ có quyền thêm các đối sách liên quan đến Zone của mình.", true);
       return;
     }
     openSafetyRecordForm(record);
@@ -14555,7 +14596,7 @@
     if (blockIfArchivedPeriod(periodId, SAFETY_PERIOD_TYPE)) {
       return;
     }
-    if (!canUseSafety(currentUser)) {
+    if (isNew ? !canAddSafetyEvaluation(currentUser) : (!canUseSafety(currentUser) && !canManageSafetyCountermeasure(record))) {
       showToast("Bạn không có quyền cập nhật đánh giá an toàn.", true);
       return;
     }
@@ -14566,8 +14607,10 @@
     }
 
     const allowedIds = getAllowedAreaIds(currentUser, periodId);
-    const selectedArea = record ? getAreaForPeriod(periodId, record.areaId) : getAreasForPeriod(periodId).find((area) => isReportableSafetyArea(area) && allowedIds.has(area.id));
-    if (!selectedArea || !allowedIds.has(selectedArea.id)) {
+    const selectedArea = record
+      ? getAreaForPeriod(periodId, record.areaId)
+      : getAreasForPeriod(periodId).find(isReportableSafetyArea);
+    if (!selectedArea || (!isNew && !countermeasureOnly && !allowedIds.has(selectedArea.id))) {
       showToast("Tài khoản này chưa được phân quyền zone an toàn.", true);
       return;
     }
@@ -14606,7 +14649,7 @@
             return false;
           }
           if (!canManageSafetyCountermeasure(record)) {
-            showToast("Bạn không có quyền cập nhật phần xử lý cho zone này.", true);
+            showToast("Bạn chỉ có quyền thêm các đối sách liên quan đến Zone của mình.", true);
             return false;
           }
           const afterPhotoInput = form.elements.afterPhoto;
@@ -14670,7 +14713,7 @@
             "<th>Zone</th><th>Ngày phát hiện (dd/mm/yyyy)</th><th>Mối nguy hiểm phát hiện được</th><th>Ảnh minh họa</th><th>Số lần</th><th>STOP 6</th><th>Cấp bậc</th><th>Phát hiện</th><th>Tình trạng</th><th>Phát hiện bởi</th><th>Mã nhân viên</th><th>Hạng mục</th><th>Nội dung cải tiến, xử lý</th><th>Ảnh sau cải tiến</th><th>Đảm nhiệm</th><th>Kế hoạch</th><th>Ngày dự kiến hoàn thành</th>" +
           "</tr></thead>" +
           "<tbody><tr>" +
-            "<td><select name=\"areaId\" required>" + getSafetyAreaOptions(periodId, selectedArea.id) + "</select></td>" +
+            "<td><select name=\"areaId\" required>" + getSafetyAreaOptions(periodId, selectedArea.id, isNew ? null : allowedIds) + "</select></td>" +
             "<td><span class=\"safety-date-editor\"><input name=\"issueDate\" type=\"text\" data-safety-date placeholder=\"dd/mm/yyyy\" inputmode=\"numeric\" maxlength=\"10\" value=\"" + escapeHtml(displayIssueDate) + "\" required autocomplete=\"off\"><input type=\"date\" class=\"safety-date-calendar\" aria-label=\"Mở lịch chọn ngày\" value=\"" + escapeHtml(issueDate) + "\"></span></td>" +
             "<td><textarea name=\"note\" required>" + escapeHtml(record?.note || "") + "</textarea></td>" +
             "<td><input name=\"photo\" type=\"file\" accept=\"image/*\">" + photoPreview + "</td>" +
@@ -14694,8 +14737,8 @@
           return false;
         }
         const selected = getAreaForPeriod(periodId, String(formData.get("areaId") || ""));
-        if (!selected || !allowedIds.has(selected.id)) {
-          showToast("Bạn không có quyền cập nhật zone này.", true);
+        if (!selected || !isReportableSafetyArea(selected) || (!isNew && !allowedIds.has(selected.id))) {
+          showToast(isNew ? "Vui lòng chọn Zone hợp lệ." : "Bạn không có quyền cập nhật Zone này.", true);
           return false;
         }
         const parsedIssueDate = parseSafetyIssueDateInput(formData.get("issueDate"), period);
@@ -19350,9 +19393,19 @@
     if (adminActions.has(action) && !requireAdminAction()) {
       return;
     }
-    if (safetyActions.has(action) && !canUseSafety(currentUser)) {
-      showToast("Bạn không có quyền thao tác đánh giá an toàn.", true);
-      return;
+    if (safetyActions.has(action)) {
+      const safetyRecord = state.safetyRecords.find((item) => item.id === id);
+      const hasSafetyActionAccess = action === "add-safety-record"
+        ? canAddSafetyEvaluation(currentUser)
+        : action === "edit-safety-record"
+          ? Boolean(safetyRecord && (canManageSafetyRecord(safetyRecord) || canManageSafetyCountermeasure(safetyRecord)))
+          : Boolean(safetyRecord && canManageSafetyRecord(safetyRecord));
+      if (!hasSafetyActionAccess) {
+        showToast(action === "edit-safety-record"
+          ? "Bạn chỉ có quyền thêm các đối sách liên quan đến Zone của mình."
+          : "Bạn không có quyền thao tác đánh giá an toàn.", true);
+        return;
+      }
     }
 
     const handlers = {

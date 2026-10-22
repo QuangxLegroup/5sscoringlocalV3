@@ -649,7 +649,9 @@
         if (typeof window.openMobilePrototype === "function") {
           const user = context?.currentUser;
           const can5S = typeof context?.isFiveSAssessor === "function" ? context.isFiveSAssessor(user) : true;
-          const canSafety = typeof context?.canUseSafety === "function" ? context.canUseSafety(user) : true;
+          const canSafety = typeof context?.canAddSafetyEvaluation === "function"
+            ? context.canAddSafetyEvaluation(user)
+            : typeof context?.canUseSafety === "function" ? context.canUseSafety(user) : true;
           const initialTab = can5S ? "5s" : canSafety ? "safety" : "5s";
           window.openMobilePrototype(initialTab, context);
         }

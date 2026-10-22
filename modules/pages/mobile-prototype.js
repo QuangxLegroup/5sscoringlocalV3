@@ -13,6 +13,20 @@
     { text: "Xe nâng chạy nhanh / Điểm mù góc khuất", label: "+ Xe nâng / Va chạm" },
   ];
 
+  function mobileControlIcon(name) {
+    const paths = {
+      bell: '<path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9"/><path d="M10 21h4"/>',
+      sun: '<circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2M4.93 4.93l1.42 1.42m11.3 11.3 1.42 1.42M2 12h2m16 0h2M4.93 19.07l1.42-1.42m11.3-11.3 1.42-1.42"/>',
+      moon: '<path d="M20.9 13A9 9 0 0 1 11 3.1 9 9 0 1 0 20.9 13Z"/>',
+      help: '<circle cx="12" cy="12" r="9"/><path d="M9.6 9a2.5 2.5 0 1 1 4.3 1.7c-1.1 1.1-1.9 1.4-1.9 3"/><path d="M12 17h.01"/>',
+      close: '<path d="m18 6-12 12M6 6l12 12"/>',
+      expand: '<path d="M8 3H3v5m13-5h5v5M3 16v5h5m13-5v5h-5"/>',
+      back: '<path d="m15 18-6-6 6-6M9 12h12"/>',
+    };
+    const shape = paths[name] || "";
+    return `<svg class="mobile-control-icon mobile-control-icon-${name}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">${shape}</svg>`;
+  }
+
   // Section categories for 5S navigation filter
   const SECTION_FILTERS = [
     { id: "all", label: "Tất cả" },
@@ -906,6 +920,9 @@
   function checkSafetyPermission(context) {
     const user = context?.currentUser;
     if (!user) return false;
+    if (typeof context?.canAddSafetyEvaluation === "function") {
+      return context.canAddSafetyEvaluation(user);
+    }
     if (typeof context?.canUseSafety === "function") {
       return context.canUseSafety(user);
     }
@@ -969,7 +986,7 @@
     const themeBtn = overlay.querySelector("#mobileThemeToggleBtn");
     if (themeBtn) {
       themeBtn.title = isLight ? "Chuyển sang giao diện Tối" : "Chuyển sang giao diện Sáng";
-      themeBtn.innerHTML = `<i class="fa-solid ${isLight ? 'fa-moon text-amber-500' : 'fa-sun text-amber-400'}"></i>`;
+      themeBtn.innerHTML = mobileControlIcon(isLight ? "moon" : "sun");
     }
     requestAnimationFrame(() => {
       overlay.classList.remove("theme-toggling");
@@ -1078,11 +1095,11 @@
         </div>
         <div class="topbar-right">
           <button type="button" id="mobileToggleWidthBtn" class="topbar-btn" title="Chuyển chế độ mở rộng / thu gọn">
-            <i class="fa-solid fa-expand"></i>
+            ${mobileControlIcon("expand")}
             <span id="mobileToggleWidthText">Mở rộng</span>
           </button>
           <button type="button" id="mobileReturnDashboardBtn" class="topbar-btn topbar-btn-return" title="Quay lại Trang chủ">
-            <i class="fa-solid fa-arrow-left"></i>
+            ${mobileControlIcon("back")}
             <span>Về trang chủ</span>
           </button>
         </div>
@@ -1108,19 +1125,19 @@
               <span class="period-pill-text">${escapeHtml(periodBadgeText)}</span>
               <div class="issue-notification-control mobile-issue-notification-control" data-issue-notification-control>
                 <button type="button" class="issue-notification-button" data-issue-notification-toggle aria-label="Mở thông báo" aria-expanded="false" title="Thông báo">
-                  <i class="fa-regular fa-bell" aria-hidden="true"></i>
+                  ${mobileControlIcon("bell")}
                   <span class="issue-notification-count" data-issue-notification-count hidden></span>
                 </button>
                 <section class="issue-notification-popover mobile-issue-notification-popover" data-issue-notification-popover hidden aria-label="Thông báo vấn đề"></section>
               </div>
               <button type="button" id="mobileThemeToggleBtn" class="mobile-theme-toggle-btn" title="${currentTheme === 'light' ? 'Chuyển sang giao diện Tối' : 'Chuyển sang giao diện Sáng'}">
-                <i class="fa-solid ${currentTheme === 'light' ? 'fa-moon text-amber-500' : 'fa-sun text-amber-400'}"></i>
+                ${mobileControlIcon(currentTheme === "light" ? "moon" : "sun")}
               </button>
               <button type="button" id="mobileHelpBtn" class="mobile-help-btn" title="Mở hướng dẫn sử dụng" aria-label="Mở hướng dẫn sử dụng" aria-haspopup="dialog" aria-controls="mobileHelpDialog">
-                <i class="fa-solid fa-circle-question" aria-hidden="true"></i>
+                ${mobileControlIcon("help")}
               </button>
               <button type="button" id="mobileNavCloseBtn" class="mobile-nav-close-btn" title="Đóng">
-                <i class="fa-solid fa-xmark"></i>
+                ${mobileControlIcon("close")}
               </button>
             </div>
           </div>
@@ -1291,14 +1308,14 @@
     const allowedAreaIds = (!isAdmin && typeof context?.getAllowedAreaIds === "function")
       ? context.getAllowedAreaIds(user, safetyPeriodId)
       : null;
+    const allRecords = context?.state?.safetyRecords || [];
+    const editingRecord = editingSafetyRecordId ? allRecords.find((r) => r.id === editingSafetyRecordId) || null : null;
     const reportableAreas = allSafetyAreas.filter((a) => {
       const code = String(a.templateCode || a.code || "").trim();
       return code !== "27";
     });
-    const availableSafetyAreas = sortMobileAreasByCode(filterMobileAreasByPermission(reportableAreas, allowedAreaIds));
-
-    const allRecords = context?.state?.safetyRecords || [];
-    const editingRecord = editingSafetyRecordId ? allRecords.find((r) => r.id === editingSafetyRecordId) || null : null;
+    const areaScope = editingRecord ? allowedAreaIds : null;
+    const availableSafetyAreas = sortMobileAreasByCode(filterMobileAreasByPermission(reportableAreas, areaScope));
     const nextAnnotationDraftId = editingRecord?.id || "";
     if (safetyAnnotationDraftId !== nextAnnotationDraftId) {
       safetyAnnotationDraftId = nextAnnotationDraftId;
@@ -1411,7 +1428,7 @@
           <div class="form-group">
             <label class="form-label">Hình ảnh minh họa hiện trường</label>
             
-            <div id="mobilePhotoUploadBox" class="photo-upload-box">
+            <div id="mobilePhotoUploadBox" class="photo-upload-box ${uploadedSafetyPhotoData ? 'has-photo' : ''}">
               <input type="file" id="mobileSafetyFileInput" accept="image/*" class="photo-file-input">
               
               <div id="photoPlaceholder" class="photo-placeholder ${uploadedSafetyPhotoData ? 'is-hidden' : ''}">
@@ -1428,6 +1445,9 @@
               <div id="photoPreviewWrap" class="photo-preview-wrap ${uploadedSafetyPhotoData ? '' : 'is-hidden'}">
                 <img id="mobileSafetyPreviewImg" src="${uploadedSafetyPhotoData || ''}" alt="Ảnh hiện trường" class="photo-preview-img cursor-pointer" data-preview-img="${uploadedSafetyPhotoData || ''}" data-safety-annotations="${escapeHtml(JSON.stringify(pendingSafetyPhotoAnnotations))}" data-safety-record-id="${escapeHtml(editingRecord?.id || "")}" data-safety-photo-field="photoAnnotations" data-safety-draft-field="photoAnnotations" data-safety-source-pending="false" title="Chạm để phóng to ảnh">
                 <div class="photo-preview-actions">
+                  <button type="button" id="mobileOpenPhotoBtn" class="photo-btn open-btn" title="Mở ảnh" aria-label="Mở ảnh hiện trường">
+                    <i class="fa-solid fa-expand"></i>
+                  </button>
                   <button type="button" id="mobileRetakePhotoBtn" class="photo-btn retake-btn" title="Đổi/Chụp lại ảnh">
                     <i class="fa-solid fa-arrows-rotate"></i>
                   </button>
@@ -1535,7 +1555,7 @@
           <!-- Row 9: Ảnh sau cải tiến -->
           <div class="form-group">
             <label class="form-label">Ảnh sau cải tiến (nếu có)</label>
-            <div id="mobilePhotoAfterUploadBox" class="photo-upload-box">
+            <div id="mobilePhotoAfterUploadBox" class="photo-upload-box ${uploadedSafetyAfterPhotoData ? 'has-photo' : ''}">
               <input type="file" id="mobileSafetyAfterFileInput" accept="image/*" class="photo-file-input">
               
               <div id="photoAfterPlaceholder" class="photo-placeholder ${uploadedSafetyAfterPhotoData ? 'is-hidden' : ''}">
@@ -1551,6 +1571,9 @@
               <div id="photoAfterPreviewWrap" class="photo-preview-wrap ${uploadedSafetyAfterPhotoData ? '' : 'is-hidden'}">
                 <img id="mobileSafetyAfterPreviewImg" src="${uploadedSafetyAfterPhotoData || ''}" alt="Ảnh sau cải tiến" class="photo-preview-img cursor-pointer" data-preview-img="${uploadedSafetyAfterPhotoData || ''}" data-safety-annotations="${escapeHtml(JSON.stringify(pendingSafetyAfterPhotoAnnotations))}" data-safety-record-id="${escapeHtml(editingRecord?.id || "")}" data-safety-photo-field="afterPhotoAnnotations" data-safety-draft-field="afterPhotoAnnotations" data-safety-source-pending="false" title="Chạm để phóng to ảnh">
                 <div class="photo-preview-actions">
+                  <button type="button" id="mobileOpenAfterPhotoBtn" class="photo-btn open-btn" title="Mở ảnh" aria-label="Mở ảnh sau cải tiến">
+                    <i class="fa-solid fa-expand"></i>
+                  </button>
                   <button type="button" id="mobileRetakeAfterPhotoBtn" class="photo-btn retake-btn" title="Đổi ảnh">
                     <i class="fa-solid fa-arrows-rotate"></i>
                   </button>
@@ -1765,6 +1788,7 @@
             }
             placeholder?.classList.add("is-hidden");
             previewWrap?.classList.remove("is-hidden");
+            screen.querySelector("#mobilePhotoUploadBox")?.classList.add("has-photo");
           };
           reader.readAsDataURL(file);
         }
@@ -1791,6 +1815,7 @@
         fileInput.value = "";
         previewWrap?.classList.add("is-hidden");
         placeholder?.classList.remove("is-hidden");
+        screen.querySelector("#mobilePhotoUploadBox")?.classList.remove("has-photo");
       });
     }
 
@@ -1816,6 +1841,7 @@
             }
             afterPlaceholder?.classList.add("is-hidden");
             afterPreviewWrap?.classList.remove("is-hidden");
+            screen.querySelector("#mobilePhotoAfterUploadBox")?.classList.add("has-photo");
           };
           reader.readAsDataURL(file);
         }
@@ -1842,6 +1868,7 @@
         afterFileInput.value = "";
         afterPreviewWrap?.classList.add("is-hidden");
         afterPlaceholder?.classList.remove("is-hidden");
+        screen.querySelector("#mobilePhotoAfterUploadBox")?.classList.remove("has-photo");
       });
     }
 
@@ -1867,36 +1894,45 @@
       });
     });
 
-    // Image 1-tap quick preview (lightbox)
+    // Image quick preview (lightbox)
+    const openPhotoPreview = (imgEl, event) => {
+      event?.preventDefault();
+      event?.stopPropagation();
+      if (!imgEl) return;
+      const src = imgEl.dataset.previewImg || imgEl.src;
+      if (src && src !== "images/Logo.jpg") {
+        const field = imgEl.dataset.safetyPhotoField || "photoAnnotations";
+        const recordId = imgEl.dataset.safetyRecordId || "";
+        const record = recordId
+          ? (context?.state?.safetyRecords || []).find((item) => item.id === recordId)
+          : null;
+        const draftField = imgEl.dataset.safetyDraftField || "";
+        const isAfterPhoto = field === "afterPhotoAnnotations";
+        const localOnly = imgEl.dataset.safetySourcePending === "true" || !record;
+        const annotationOptions = buildMobilePhotoAnnotationOptions(context, record, field, {
+          initialCircles: record?.[field] || (isAfterPhoto ? pendingSafetyAfterPhotoAnnotations : pendingSafetyPhotoAnnotations),
+          localOnly,
+          onChange: draftField
+            ? (annotations) => {
+                if (draftField === "afterPhotoAnnotations") pendingSafetyAfterPhotoAnnotations = annotations;
+                else pendingSafetyPhotoAnnotations = annotations;
+                imgEl.dataset.safetyAnnotations = JSON.stringify(annotations);
+                window.refreshSafetyPhotoAnnotationThumbnail?.(imgEl, annotations);
+              }
+            : undefined,
+        });
+        openMobileImageModal(src, annotationOptions);
+      }
+    };
+
     screen.querySelectorAll("[data-preview-img]").forEach((imgEl) => {
-      imgEl.addEventListener("click", (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        const src = imgEl.dataset.previewImg || imgEl.src;
-        if (src && src !== "images/Logo.jpg") {
-          const field = imgEl.dataset.safetyPhotoField || "photoAnnotations";
-          const recordId = imgEl.dataset.safetyRecordId || "";
-          const record = recordId
-            ? (context?.state?.safetyRecords || []).find((item) => item.id === recordId)
-            : null;
-          const draftField = imgEl.dataset.safetyDraftField || "";
-          const isAfterPhoto = field === "afterPhotoAnnotations";
-          const localOnly = imgEl.dataset.safetySourcePending === "true" || !record;
-          const annotationOptions = buildMobilePhotoAnnotationOptions(context, record, field, {
-            initialCircles: record?.[field] || (isAfterPhoto ? pendingSafetyAfterPhotoAnnotations : pendingSafetyPhotoAnnotations),
-            localOnly,
-            onChange: draftField
-              ? (annotations) => {
-                  if (draftField === "afterPhotoAnnotations") pendingSafetyAfterPhotoAnnotations = annotations;
-                  else pendingSafetyPhotoAnnotations = annotations;
-                  imgEl.dataset.safetyAnnotations = JSON.stringify(annotations);
-                  window.refreshSafetyPhotoAnnotationThumbnail?.(imgEl, annotations);
-                }
-              : undefined,
-          });
-          openMobileImageModal(src, annotationOptions);
-        }
-      });
+      imgEl.addEventListener("click", (event) => openPhotoPreview(imgEl, event));
+    });
+    [
+      ["#mobileOpenPhotoBtn", previewImg],
+      ["#mobileOpenAfterPhotoBtn", afterPreviewImg],
+    ].forEach(([selector, imgEl]) => {
+      screen.querySelector(selector)?.addEventListener("click", (event) => openPhotoPreview(imgEl, event));
     });
 
     // Form submit handler
@@ -1904,12 +1940,12 @@
     if (form) {
       if (!checkSafetyPermission(context)) {
         form.querySelectorAll("input, select, textarea").forEach((input) => { input.disabled = true; });
-        form.insertAdjacentHTML("afterbegin", '<p class="findings-readonly" role="status">Chỉ xem — bạn không có quyền thêm, sửa, xóa đánh giá an toàn.</p>');
+        form.insertAdjacentHTML("afterbegin", '<p class="findings-readonly" role="status">Chỉ xem — tài khoản người xem không có quyền thêm, sửa, xóa đánh giá an toàn.</p>');
         form.addEventListener("click", (event) => {
           if (event.target.closest("button")) {
             event.preventDefault();
             event.stopImmediatePropagation();
-            showMobileToast("Bạn không có quyền thêm, sửa, lưu hoặc xóa đánh giá an toàn.", true);
+            showMobileToast("Tài khoản người xem không có quyền thêm, sửa, lưu hoặc xóa đánh giá an toàn.", true);
           }
         }, true);
       }
@@ -1937,8 +1973,8 @@
         const isEditing = Boolean(editingSafetyRecordId);
         const existingRecord = isEditing ? (context?.state?.safetyRecords || []).find((r) => r.id === editingSafetyRecordId) : null;
         const areaId = screen.querySelector("#mobileSafetyZoneSelect")?.value;
-        if (areaId && allowedAreaIds && !allowedAreaIds.has(areaId)) {
-          showMobileToast("Bạn không có quyền thêm, sửa đánh giá an toàn trong Zone này.", true);
+        if (isEditing && areaId && allowedAreaIds && !allowedAreaIds.has(areaId)) {
+          showMobileToast("Bạn chỉ có quyền thêm các đối sách liên quan đến Zone của mình.", true);
           return;
         }
         const desc = screen.querySelector("#mobileSafetyDescription")?.value?.trim();

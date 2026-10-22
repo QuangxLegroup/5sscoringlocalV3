@@ -230,10 +230,49 @@
     const match = /^(\d{4})-(\d{2})-\d{2}$/.exec(sheet.inspectionDate || "");
     return match ? periods.find((period) => Number(period.year) === Number(match[1]) && Number(period.month) === Number(match[2]))?.id || "" : "";
   }
-  const sheets = (ctx) => [...(ctx.state.fiveSFindings || [])].sort((a, b) => String(b.inspectionDate).localeCompare(String(a.inspectionDate)) || String(b.updatedAt).localeCompare(String(a.updatedAt)));
+  const sheets = (ctx) => [...(ctx.state.fiveSFindings || [])].sort(compareFindingsNewestFirst);
   const zoneLabel = (area) => `Zone ${area.code}`;
   const shortZoneLabel = (value) => String(value || "").split("·")[0].trim();
   const rowHasContent = (row) => Boolean(row?.photoDataUrl) || fields.some((key) => key === "progress" ? Number(row[key]) > 0 : Boolean(row[key]));
+  function monthKeyFromDate(value) {
+    const text = String(value || "").trim();
+    const isoMatch = /^(\d{4})-(\d{1,2})-(\d{1,2})/.exec(text);
+    if (isoMatch) return `${isoMatch[1]}-${String(Number(isoMatch[2])).padStart(2, "0")}`;
+    const displayMatch = /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/.exec(text);
+    return displayMatch ? `${displayMatch[3]}-${String(Number(displayMatch[2])).padStart(2, "0")}` : "";
+  }
+  function monthKeyFromPeriod(period) {
+    const year = Number(period?.year);
+    const month = Number(period?.month);
+    if (Number.isInteger(year) && year > 0 && Number.isInteger(month) && month >= 1 && month <= 12) {
+      return `${year}-${String(month).padStart(2, "0")}`;
+    }
+    const idMatch = /5s-(\d{4})-(\d{1,2})/i.exec(String(period?.id || ""));
+    if (idMatch) return `${idMatch[1]}-${String(Number(idMatch[2])).padStart(2, "0")}`;
+    return monthKeyFromDate(period?.label);
+  }
+  function monthKeyForFinding(sheet, periods) {
+    const dateKey = monthKeyFromDate(sheet?.inspectionDate);
+    if (dateKey) return dateKey;
+    const periodId = resolvePeriodId(sheet, periods);
+    return monthKeyFromPeriod(periods.find((period) => period.id === periodId));
+  }
+  function findingDateSortValue(value) {
+    const text = String(value || "").trim();
+    const isoMatch = /^(\d{4})-(\d{1,2})-(\d{1,2})/.exec(text);
+    if (isoMatch) return Date.UTC(Number(isoMatch[1]), Number(isoMatch[2]) - 1, Number(isoMatch[3]));
+    const displayMatch = /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/.exec(text);
+    if (displayMatch) return Date.UTC(Number(displayMatch[3]), Number(displayMatch[2]) - 1, Number(displayMatch[1]));
+    return Date.parse(text) || 0;
+  }
+  function compareFindingsNewestFirst(left, right) {
+    return findingDateSortValue(right?.inspectionDate) - findingDateSortValue(left?.inspectionDate)
+      || String(right?.updatedAt || "").localeCompare(String(left?.updatedAt || ""))
+      || String(right?.id || "").localeCompare(String(left?.id || ""));
+  }
+  function isFindingResolved(row) {
+    return Boolean(String(row?.countermeasure || "").trim()) || Number(row?.progress) >= 100;
+  }
   function defaultRows(rows = []) {
     const result = [...rows];
     while (result.length > ROWS_PER_PAGE && !rowHasContent(result[result.length - 1])) result.pop();
@@ -309,7 +348,7 @@
     });
     if (!zoneOptions.has(view.zoneFilter)) view.zoneFilter = "";
     const records = periodRecords.filter((item) => !view.zoneFilter || zoneKey(item) === view.zoneFilter)
-      .sort((a, b) => zoneOptions.get(zoneKey(a)).localeCompare(zoneOptions.get(zoneKey(b)), "vi", { numeric: true }));
+      .sort(compareFindingsNewestFirst);
     const mobilePeriodBadge = host.closest("#mobileProtoOverlay")?.querySelector(".period-pill-text");
     if (mobilePeriodBadge) mobilePeriodBadge.textContent = ctx.periodLabel(periods.find((period) => period.id === view.periodId));
     const saved = records.find((sheet) => sheet.id === view.selectedId) || records[0];
@@ -318,7 +357,8 @@
     const editing = Boolean(view.draft && canEditPeriod(ctx, view.draft.periodId));
     const isAllZones = !view.zoneFilter;
     const combined = !mobile && !editing && (isAllZones || records.length > 1);
-    const rowSources = combined ? records.flatMap((record) => (record.rows || []).map((row, index) => ({ record, index, row })).filter(({ row }) => rowHasContent(row))) : [];
+    const rowSources = combined ? records.flatMap((record) => (record.rows || []).map((row, index) => ({ record, index, row })).filter(({ row }) => rowHasContent(row)))
+      .sort((left, right) => compareFindingsNewestFirst(left.record, right.record) || right.index - left.index) : [];
     const tableRows = editing ? sheet.rows : defaultRows(combined ? rowSources.map(({ row }) => row) : sheet.rows);
     if (!tableRows.length) tableRows.push(blankRow());
     const rowPageCount = Math.max(1, Math.ceil(tableRows.length / ROWS_PER_PAGE));
@@ -689,11 +729,39 @@
   function renderMobile(host, view) {
     const ctx = view.ctx;
     const esc = ctx.escapeHtml;
-    const periods = ctx.getPeriodsByType(ctx.FIVE_S_PERIOD_TYPE).filter((period) => ctx.isAdminAccount(ctx.currentUser) || (!period.archived && period.id === ctx.getActivePeriodId(ctx.FIVE_S_PERIOD_TYPE)));
+    const allPeriods = ctx.getPeriodsByType(ctx.FIVE_S_PERIOD_TYPE);
+    const activePeriodId = ctx.getActivePeriodId(ctx.FIVE_S_PERIOD_TYPE);
+    const activePeriod = allPeriods.find((period) => period.id === activePeriodId);
+    const activeMonthKey = monthKeyFromPeriod(activePeriod);
+    if (view.activeFindingMonthKey !== activeMonthKey) {
+      view.activeFindingMonthKey = activeMonthKey;
+      view.findingMonthKey = activeMonthKey;
+    }
+    const allRecords = sheets(ctx);
+    const monthOptions = new Map();
+    allPeriods.forEach((period) => {
+      const key = monthKeyFromPeriod(period);
+      if (key) monthOptions.set(key, key);
+    });
+    allRecords.forEach((record) => {
+      const key = monthKeyForFinding(record, allPeriods);
+      if (key) monthOptions.set(key, key);
+    });
+    const sortedMonthKeys = [...monthOptions.keys()].sort((left, right) => right.localeCompare(left));
+    if (!sortedMonthKeys.includes(view.findingMonthKey)) {
+      view.findingMonthKey = sortedMonthKeys.includes(activeMonthKey) ? activeMonthKey : sortedMonthKeys[0] || "";
+    }
+    const monthOptionsHtml = sortedMonthKeys.map((key) => {
+      const [year, month] = key.split("-");
+      return `<option value="${esc(key)}" ${key === view.findingMonthKey ? "selected" : ""}>Tháng ${Number(month)}/${year}</option>`;
+    }).join("");
+    const periods = allPeriods.filter((period) => ctx.isAdminAccount(ctx.currentUser) || (!period.archived && period.id === activePeriodId));
     if (!periods.some((period) => period.id === view.periodId)) view.periodId = periods[0]?.id || "";
     const periodId = view.periodId;
-    const records = sheets(ctx).filter((record) => resolvePeriodId(record, periods) === periodId)
-      .sort((a, b) => shortZoneLabel(a.area).localeCompare(shortZoneLabel(b.area), "vi", { numeric: true }));
+    const records = allRecords.filter((record) => resolvePeriodId(record, allPeriods) === periodId);
+    const monthRecords = allRecords
+      .filter((record) => monthKeyForFinding(record, allPeriods) === view.findingMonthKey)
+      .sort(compareFindingsNewestFirst);
     const areas = sortedAreas(ctx, periodId);
     const zoneOptions = new Map(areas.map((area) => [area.id, zoneLabel(area)]));
     records.forEach((record) => { const id = resolveAreaId(record, areas) || record.areaId || shortZoneLabel(record.area); if (!zoneOptions.has(id)) zoneOptions.set(id, shortZoneLabel(record.area)); });
@@ -751,11 +819,15 @@
         ${view.mobileEdit ? `<button type="button" data-mobile-reset>${writable ? "Hủy sửa" : "Đóng chi tiết"}</button>${writable ? '<button type="button" class="findings-remove-issue" data-mobile-delete>Xóa vấn đề</button>' : ""}` : ""}</div>
         <p class="findings-message" role="status" aria-live="polite"></p>
       </form>
-      ${mobileList(records, records, esc, ctx)}
+      ${mobileList(monthRecords, monthRecords, esc, ctx, monthOptionsHtml)}
     </div>`;
     const badge = host.closest("#mobileProtoOverlay")?.querySelector(".period-pill-text");
     if (badge) badge.textContent = ctx.periodLabel(ctx.getPeriod(periodId));
     const form = host.querySelector("form");
+    host.querySelector("[data-finding-month]")?.addEventListener("change", (event) => {
+      view.findingMonthKey = event.target.value;
+      renderMobile(host, view);
+    });
     host.querySelector("[data-findings-denied]")?.addEventListener("click", () => ctx.showToast("Bạn không có quyền thêm, sửa, lưu hoặc xóa vấn đề 5S trong kỳ hoặc Zone này.", true));
     bindPhotoEditor(form, ctx, draft.rows[0], { sheetId: view.mobileEdit?.id, rowIndex: view.mobileEdit?.index, editable: writable, onAnnotationsSaved: (annotations, { pending }) => { if (!pending && view.mobileEdit?.original) view.mobileEdit.original.photoAnnotations = annotations; } });
     if (view.mobileEdit) form.elements.areaId.disabled = true;
@@ -798,7 +870,7 @@
     });
     host.querySelectorAll("[data-open-finding]").forEach((button) => button.addEventListener("click", () => {
       if (view.busy) return;
-      const record = records.find((item) => item.id === button.dataset.openFinding);
+      const record = monthRecords.find((item) => item.id === button.dataset.openFinding);
       const index = Number(button.dataset.issueIndex);
       if (!record?.rows[index]) return;
       capture();
@@ -851,6 +923,7 @@
           }
           await ctx.saveFiveSFinding(data);
           ctx.state.fiveSFindings = [...ctx.state.fiveSFindings.filter((record) => record.id !== data.id), data];
+          if (!deleting) view.findingMonthKey = monthKeyForFinding(data, allPeriods);
           await ctx.deleteUnusedPhotoFiles([oldPhotoUrl]);
         } catch (error) {
           if (!deleting) await ctx.deleteUnusedPhotoFiles([row.photoDataUrl]);
@@ -998,6 +1071,7 @@
             await ctx.saveFiveSFindingsBatch(updates);
           } else await ctx.saveFiveSFinding(data);
           ctx.state.fiveSFindings = [...ctx.state.fiveSFindings.filter((item) => !updates.some((updated) => updated.id === item.id)), ...updates];
+          if (mobile) view.findingMonthKey = monthKeyForFinding(data, ctx.getPeriodsByType(ctx.FIVE_S_PERIOD_TYPE));
           await ctx.deleteUnusedPhotoFiles([originalPhotoUrl]);
           if (editing && view.zoneFilter) view.zoneFilter = `id:${selected.id}`;
           view.selectedId = data.id;
@@ -1115,19 +1189,20 @@
     return true;
   }
 
-  function mobileList(records, periodRecords, esc, ctx) {
-    const issues = records.flatMap((sheet) => (sheet.rows || []).map((row, index) => ({ sheet, row, index })).filter(({ row }) => rowHasContent(row)));
+  function mobileList(records, periodRecords, esc, ctx, monthOptionsHtml = "") {
+    const issues = records.flatMap((sheet) => (sheet.rows || []).map((row, index) => ({ sheet, row, index })).filter(({ row }) => rowHasContent(row)))
+      .sort((left, right) => compareFindingsNewestFirst(left.sheet, right.sheet) || right.index - left.index);
     const total = periodRecords.reduce((count, sheet) => count + (sheet.rows || []).filter(rowHasContent).length, 0);
     return `<section class="findings-mobile-list" aria-label="Danh sách vấn đề 5S">
-      <div class="findings-list-heading"><h3>VẤN ĐỀ 5S ĐÃ GHI NHẬN</h3><span>${issues.length === total ? `${total} vấn đề` : `${issues.length} / ${total} vấn đề trong kỳ`}</span></div>
+      <div class="findings-list-heading"><div class="history-heading-filter"><h3 class="history-section-title">VẤN ĐỀ 5S ĐÃ GHI NHẬN</h3><label class="history-period-filter"><span>Tháng</span><select data-finding-month aria-label="Lọc vấn đề 5S theo tháng" ${monthOptionsHtml ? "" : "disabled"}>${monthOptionsHtml || '<option value="">Chưa có dữ liệu</option>'}</select></label></div><span>${issues.length === total ? `${total} vấn đề` : `${issues.length} / ${total} vấn đề trong tháng`}</span></div>
       ${issues.length ? issues.map(({ sheet, row, index }) => {
-        const complete = Number(row.progress) === 100;
+        const complete = isFindingResolved(row);
         return `<button type="button" class="findings-record-card" data-open-finding="${esc(sheet.id)}" data-issue-index="${index}">
           ${row.photoDataUrl ? `<img class="findings-record-thumb" src="${esc(row.photoDataUrl)}" data-preview-img="${esc(row.photoDataUrl)}" alt="Ảnh vấn đề 5S" ${photoImageAttributes(row, esc, { sheetId: sheet.id, rowIndex: index, editable: canEditSheet(ctx, sheet) })}>` : '<span class="findings-record-icon" aria-hidden="true">▤</span>'}
           <span class="findings-record-copy"><strong>${esc(shortZoneLabel(sheet.area) || "Chưa chọn Zone")}</strong><span>${esc(row.problem || "Vấn đề 5S")}</span><small>${esc(displayDate(sheet.inspectionDate))}</small></span>
-          <span class="findings-status ${complete ? "is-done" : ""}">${complete ? "Hoàn thành" : "Đang xử lý"}</span><span aria-hidden="true">›</span>
+          <span class="findings-status ${complete ? "is-done" : ""}">${complete ? "Đã xử lý" : "Chưa xử lý"}</span><span aria-hidden="true">›</span>
         </button>`;
-      }).join("") : '<div class="findings-empty"><span aria-hidden="true">▤</span><strong>Chưa có vấn đề trong kỳ này</strong><p>Điền thông tin ở trên để ghi nhận vấn đề 5S.</p></div>'}
+      }).join("") : '<div class="findings-empty"><span aria-hidden="true">▤</span><strong>Chưa có vấn đề trong tháng này</strong><p>Điền thông tin ở trên để ghi nhận vấn đề 5S.</p></div>'}
     </section>`;
   }
 
@@ -1152,11 +1227,14 @@
       </div>
     </div>
     <div class="findings-list-heading"><h3>VẤN ĐỀ PHÁT HIỆN</h3><span>${rows.length} vấn đề</span></div>
-    <div class="findings-issue-list">${rows.map(({ row, index }) => `<details class="findings-issue-card" ${!editing || Number.isInteger(selectedIndex) || index === (view.openRow || 0) ? "open" : ""}>
-      <summary><span class="findings-issue-number">${index + 1}</span><span>${esc(row.problem || "Vấn đề mới")}</span><span class="findings-status ${Number(row.progress) === 100 ? "is-done" : ""}">${Number(row.progress) || 0}%</span></summary>
+    <div class="findings-issue-list">${rows.map(({ row, index }) => {
+      const complete = isFindingResolved(row);
+      return `<details class="findings-issue-card" ${!editing || Number.isInteger(selectedIndex) || index === (view.openRow || 0) ? "open" : ""}>
+      <summary><span class="findings-issue-number">${index + 1}</span><span>${esc(row.problem || "Vấn đề mới")}</span><span class="findings-status ${complete ? "is-done" : ""}">${complete ? "Đã xử lý" : `${Number(row.progress) || 0}%`}</span></summary>
       <div class="findings-mobile-grid">${fields.map((key, col) => field(labels[col], cell(row, key, index, labels[col], editing, esc, true), ["location", "problem", "countermeasure"].includes(key))).join("")}</div>
       ${editing ? `<button type="button" class="findings-remove-issue" data-remove-row="${index}" aria-label="Xóa vấn đề ${index + 1}">Xóa vấn đề</button>` : ""}
-    </details>`).join("")}</div>`;
+    </details>`;
+    }).join("")}</div>`;
   }
 
   function cell(row, key, index, label, editing, esc, mobile = false) {
@@ -1233,6 +1311,6 @@
     }
   }
 
-  window.FiveSFindingsPage = { mount, resolvePeriodId, resolveAreaId, findingCategoryLabel, FINDING_CATEGORIES, parseInspectors, formatInspectors, canEditSheet, openIssueById };
+  window.FiveSFindingsPage = { mount, resolvePeriodId, resolveAreaId, findingCategoryLabel, FINDING_CATEGORIES, parseInspectors, formatInspectors, canEditSheet, isFindingResolved, openIssueById };
   window.PageRegistry.register({ id: "five-s-findings", title: "Vấn đề 5S", render: (ctx) => mount(document.getElementById("tab-five-s-findings"), ctx) });
 })();

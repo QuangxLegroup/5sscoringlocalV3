@@ -179,7 +179,8 @@
     }
 
     const adminAllowed = !button.classList.contains("admin-only") || context.isAdminAccount(context.currentUser);
-    const safetyAllowed = !button.classList.contains("safety-access-only") || context.canUseSafety(context.currentUser);
+    const safetyAllowed = !button.classList.contains("safety-access-only")
+      || (context.canAddSafetyEvaluation?.(context.currentUser) ?? context.canUseSafety(context.currentUser));
     button.classList.toggle(SAFETY_REPORT_HIDDEN_CLASS, !visible);
     button.hidden = !visible || !adminAllowed || !safetyAllowed;
   }
@@ -210,7 +211,8 @@
     const isAdmin = Boolean(context.isAdminAccount?.(context.currentUser));
     const activePeriodId = elements.safetyPeriodSelect?.value || context.getActivePeriodId(context.SAFETY_PERIOD_TYPE) || "";
     const isPeriodOpen = Boolean(activePeriodId && !context.isPeriodArchived(activePeriodId, context.SAFETY_PERIOD_TYPE) && (typeof context.isPeriodOpen === "function" ? context.isPeriodOpen(activePeriodId, context.SAFETY_PERIOD_TYPE) : activePeriodId === context.getActivePeriodId(context.SAFETY_PERIOD_TYPE)));
-    const canAdd = isAssessment && isPeriodOpen && context.canUseSafety(context.currentUser);
+    const canAdd = isAssessment && isPeriodOpen
+      && (context.canAddSafetyEvaluation?.(context.currentUser) ?? context.canUseSafety(context.currentUser));
 
     setButtonVisible(elements.addSafetyRecordButton, canAdd, context);
     if (elements.safetyReadonlyBadge) {
@@ -1804,7 +1806,9 @@
     const rawMonthRows = filterRowsByMonth(rawYearRows, filters.month, context);
     const yearRows = isAdmin || shouldUseAdminScope ? rawYearRows : rawYearRows.filter((row) => row.score.periodId === activePeriodId);
     const monthRows = isAdmin || shouldUseAdminScope ? rawMonthRows : rawMonthRows.filter((row) => row.score.periodId === activePeriodId);
-    const canAdd = activeReport === "assessment" && canUseSafety(context.currentUser) && isCurrentPeriodOpen;
+    const canAdd = activeReport === "assessment"
+      && (context.canAddSafetyEvaluation?.(context.currentUser) ?? canUseSafety(context.currentUser))
+      && isCurrentPeriodOpen;
 
     setButtonVisible(elements.addSafetyRecordButton, canAdd, context);
     if (elements.addSafetyRecordButton) {

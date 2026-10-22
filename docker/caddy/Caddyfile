@@ -1,8 +1,0 @@
-{
-	default_sni {$APP_HOST}
-}
-
-{$APP_HOST} {
-	tls internal
-	reverse_proxy frontend:80
-}

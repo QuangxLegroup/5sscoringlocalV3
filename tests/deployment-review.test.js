@@ -62,16 +62,13 @@ test("frontend Docker port and allowed origins default to 5500", () => {
   assert.doesNotMatch(compose + env, /8080/);
 });
 
-test("LAN Docker deployment terminates HTTPS at Caddy and preserves the secure scheme", () => {
+test("LAN Docker deployment serves the frontend over HTTP without Caddy", () => {
   const compose = fs.readFileSync(path.join(__dirname, "..", "docker-compose.yml"), "utf8");
-  const caddyfile = fs.readFileSync(path.join(__dirname, "..", "docker", "caddy", "Caddyfile"), "utf8");
   const nginx = fs.readFileSync(path.join(__dirname, "..", "docker", "nginx", "default.conf"), "utf8");
 
-  assert.match(compose, /APP_HOST:\s*\$\{APP_HOST:-192\.168\.2\.61\}/);
-  assert.match(compose, /\$\{HTTPS_PORT:-443\}:443/);
-  assert.match(caddyfile, /tls internal/);
-  assert.match(caddyfile, /reverse_proxy frontend:80/);
-  assert.match(nginx, /proxy_set_header X-Forwarded-Proto \$http_x_forwarded_proto;/);
+  assert.match(compose, /\$\{FRONTEND_PORT:-5500\}:80/);
+  assert.doesNotMatch(compose, /\bcaddy:/i);
+  assert.match(nginx, /proxy_pass http:\/\/backend:5175;/);
 });
 
 test("new 5S issues reuse only records with matching inspection details", () => {
