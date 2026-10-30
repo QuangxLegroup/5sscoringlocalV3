@@ -359,10 +359,16 @@ class AuthService {
     return clone(safeAccount);
   }
 
-  sanitizeRoot(root) {
+  sanitizeRoot(root, viewerAccount = null) {
     const safeRoot = clone(root);
     if (!safeRoot || typeof safeRoot !== "object") {
       return safeRoot;
+    }
+
+    // Audit history is an admin-only view. Keep it out of every non-admin
+    // response (including login, polling and write acknowledgements).
+    if (!isAdminAccount(viewerAccount)) {
+      safeRoot.history = {};
     }
 
     if (Array.isArray(safeRoot.accounts)) {
@@ -394,13 +400,15 @@ class AuthService {
     return nextAccount;
   }
 
-  prepareRootForStorage(nextRoot, previousRoot = null) {
-    const root = clone(nextRoot);
+  prepareRootForStorage(nextRoot, previousRoot = null, { mutate = false, collections = null } = {}) {
+    const root = mutate && isPlainObject(nextRoot) ? nextRoot : clone(nextRoot);
     if (!root || typeof root !== "object") {
       return root;
     }
 
-    if (root.history) {
+    const shouldPrepare = (collection) => !collections || collections.has(collection);
+
+    if (shouldPrepare("history") && root.history) {
       const cutoff = new Date();
       cutoff.setMonth(cutoff.getMonth() - 3);
       const cutoffMs = cutoff.getTime();
@@ -419,7 +427,7 @@ class AuthService {
       }
     }
 
-    if (!root.accounts) {
+    if (!shouldPrepare("accounts") || !root.accounts) {
       return root;
     }
 
@@ -571,14 +579,17 @@ class AuthService {
     return {
       ...result,
       account: this.sanitizeAccount(account),
-      root: this.sanitizeRoot(nextRoot),
+      root: this.sanitizeRoot(nextRoot, account),
     };
   }
 
   async authenticateRequest(request) {
     const token = this.extractToken(request);
     const payload = this.verifyToken(token);
-    const root = await this.repository.readRoot();
+    const snapshot = typeof this.repository.readRootSnapshot === "function"
+      ? await this.repository.readRootSnapshot()
+      : null;
+    const root = snapshot?.root ?? await this.repository.readRoot();
     const account = this.findAccount(root, (item) => item.id === payload.sub)
       || this.findAccount(root, (item) => item.username === payload.username);
     if (!account) {
@@ -594,6 +605,7 @@ class AuthService {
       payload,
       token,
       root,
+      revision: snapshot?.revision ?? null,
     };
   }
 
@@ -631,7 +643,7 @@ class AuthService {
 
     return {
       ...result,
-      ...(includeRoot ? { root: this.sanitizeRoot(nextRoot) } : {}),
+      ...(includeRoot ? { root: this.sanitizeRoot(nextRoot, result?.account) } : {}),
     };
   }
 
@@ -1201,7 +1213,7 @@ class AuthService {
     });
   }
 
-  assertHistoryWriteAllowed(account, command) {
+  assertHistoryWriteAllowed(account, command, authContext = null) {
     const operation = String(command.operation || "");
     if (operation === "remove") {
       throw createHttpError("Bạn không có quyền xóa lịch sử.", 403);
@@ -1209,7 +1221,23 @@ class AuthService {
 
     const entry = isPlainObject(command.value) ? command.value : {};
     const username = String(entry.username || "");
-    if (username && username !== String(account.username || "")) {
+    if (!isAdminAccount(account)) {
+      const parts = pathParts(command.path);
+      const sessionId = String(authContext?.payload?.sid || "");
+      if (username !== String(account.username || "")
+        || String(entry.accountId || "") !== String(account.id || "")
+        || parts.length !== 2
+        || !sessionId
+        || String(entry.id || "") !== parts[1]
+        || String(entry.sessionId || "") !== sessionId) {
+        throw createHttpError("Bạn chỉ được ghi nhật ký cho phiên đăng nhập hiện tại.", 403);
+      }
+      const employeeCode = String(entry.employeeCode || "").trim();
+      const accountEmployeeCode = String(account.employeeCode || "").trim();
+      if (accountEmployeeCode && employeeCode !== accountEmployeeCode) {
+        throw createHttpError("Mã nhân viên trong nhật ký không khớp tài khoản.", 403);
+      }
+    } else if (username && username !== String(account.username || "")) {
       throw createHttpError("Bạn không có quyền ghi lịch sử cho tài khoản khác.", 403);
     }
   }
@@ -1414,7 +1442,7 @@ class AuthService {
       return;
     }
     if (rootKey === "history") {
-      this.assertHistoryWriteAllowed(account, command);
+      this.assertHistoryWriteAllowed(account, command, authContext);
       return;
     }
 

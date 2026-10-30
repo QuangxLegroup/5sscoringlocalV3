@@ -46,12 +46,28 @@
     5: "Rất tốt",
   };
 
+  function photoThumbnailUrl(value) {
+    const raw = String(value || "");
+    if (!raw.includes("/api/photos/")) return raw;
+    try {
+      const url = new URL(raw, window.location.href);
+      url.searchParams.set("size", "thumb");
+      return url.origin === window.location.origin ? `${url.pathname}${url.search}${url.hash}` : url.toString();
+    } catch (_) {
+      return raw;
+    }
+  }
+
   // State
   let activeTab = "safety"; // "safety" | "5s"
   let isFullWidth = false;
   let currentFiveSZoneId = "";
   let currentSafetyZoneId = "";
   let currentSafetyHistoryPeriodId = "";
+  let currentSafetyHistoryPage = 1;
+  let safetyHistoryPageData = null;
+  let safetyHistoryPageKey = "";
+  let safetyHistoryPageRequestId = 0;
   let activeSectionFilter = "all";
   let currentFiveSScoreSource = "";
   let currentFiveSScoreSourceUserKey = null;
@@ -70,7 +86,7 @@
     const existing = document.getElementById("mobileImageModal");
     if (existing) existing.remove();
 
-    const modal = document.createElement("div");
+    const modal = document.createElement("dialog");
     modal.id = "mobileImageModal";
     modal.className = "mobile-image-modal-fullscreen";
     modal.innerHTML = `
@@ -85,30 +101,76 @@
       </div>
     `;
     document.body.appendChild(modal);
+    if (typeof modal.showModal === "function") {
+      try {
+        modal.showModal();
+      } catch (_) {}
+    }
 
-    const cleanupAnnotation = window.mountImageCircleAnnotator?.(
-      modal.querySelector(".mobile-image-fullscreen-stage"),
-      modal,
-      {
-        ...annotationOptions,
-        onError: (error) => {
-          annotationOptions.onError?.(error);
-          showMobileToast(error?.message || "Không lưu được nét khoanh.", true);
+    const stage = modal.querySelector(".mobile-image-fullscreen-stage");
+    const image = stage?.querySelector("img");
+    let cleanupAnnotation = null;
+    let viewerInteractions = null;
+    let resizeFullscreenImage = null;
+    let annotationMounted = false;
+    const initializeFullscreenImage = () => {
+      if (!modal.isConnected || !image?.naturalWidth || !image?.naturalHeight || !stage) return;
+      if (annotationMounted) {
+        resizeFullscreenImage?.();
+        return;
+      }
+      resizeFullscreenImage = () => {
+        const maxWidth = Math.max(1, window.innerWidth * 0.95);
+        const maxHeight = Math.max(1, window.innerHeight * 0.9);
+        const scale = Math.min(maxWidth / image.naturalWidth, maxHeight / image.naturalHeight);
+        const width = Math.max(1, Math.round(image.naturalWidth * scale));
+        const height = Math.max(1, Math.round(image.naturalHeight * scale));
+        stage.style.width = `${width}px`;
+        stage.style.height = `${height}px`;
+        image.style.width = `${width}px`;
+        image.style.height = `${height}px`;
+        viewerInteractions?.reset();
+      };
+      resizeFullscreenImage();
+      viewerInteractions = window.mountImageViewerInteractions?.(modal, stage) || null;
+      annotationMounted = true;
+      cleanupAnnotation = window.mountImageCircleAnnotator?.(
+        stage,
+        modal,
+        {
+          ...annotationOptions,
+          onError: (error) => {
+            annotationOptions.onError?.(error);
+            showMobileToast(error?.message || "Không lưu được nét khoanh.", true);
+          },
         },
-      },
-    );
+      );
+      window.addEventListener("resize", resizeFullscreenImage);
+    };
+    image?.addEventListener("load", initializeFullscreenImage, { once: true });
+    if (image?.complete && image.naturalWidth) initializeFullscreenImage();
+
     let isClosing = false;
     const closeModal = async () => {
       if (isClosing) return;
       isClosing = true;
       try {
         await cleanupAnnotation?.();
+        if (resizeFullscreenImage) window.removeEventListener("resize", resizeFullscreenImage);
+        viewerInteractions?.destroy();
+        if (typeof modal.close === "function" && modal.open) {
+          modal.close();
+        }
         modal.remove();
       } catch (error) {
         showMobileToast(error?.message || "Không lưu được nét khoanh. Vui lòng thử lại.", true);
         isClosing = false;
       }
     };
+    modal.addEventListener("cancel", (e) => {
+      e.preventDefault();
+      closeModal();
+    });
     modal.querySelector(".mobile-image-fullscreen-backdrop").addEventListener("click", closeModal);
     modal.querySelector(".mobile-image-fullscreen-close").addEventListener("click", closeModal);
     modal.querySelector(".mobile-image-fullscreen-container").addEventListener("click", (event) => {
@@ -309,9 +371,9 @@
       defaultIssueDate = todayValue;
     }
 
-    const rawLevel = String(item.issueLevel || item.level || item.riskLevel || "").trim().toUpperCase();
-    const rawStop6 = String(item.issueType || item.stop6 || item.stop_6 || item.issue_type || "").trim();
-    const statusVal = item.issueStatus || "open";
+    let rawLevel = String(item.issueLevel || item.level || item.riskLevel || "").trim().toUpperCase();
+    let rawStop6 = String(item.issueType || item.stop6 || item.stop_6 || item.issue_type || "").trim();
+    let statusVal = item.issueStatus || "open";
 
     let modalPhotoUrl = item.photoDataUrl || "";
     let modalAfterPhotoUrl = item.afterPhotoDataUrl || "";
@@ -319,6 +381,30 @@
     let modalAfterPhotoAnnotations = [...(item.afterPhotoAnnotations || [])];
     let modalPhotoWasReplaced = false;
     let modalAfterPhotoWasReplaced = false;
+
+    const modalDraftKey = `mob_safety_detail_${item.id}`;
+    const savedModalDraft = window.FormDraftManager?.getDraft(modalDraftKey);
+    if (savedModalDraft) {
+      if (savedModalDraft.note !== undefined) item.note = savedModalDraft.note;
+      if (savedModalDraft.issueStatus) statusVal = savedModalDraft.issueStatus;
+      if (savedModalDraft.issueDate) defaultIssueDate = savedModalDraft.issueDate;
+      if (savedModalDraft.level !== undefined) rawLevel = savedModalDraft.level;
+      if (savedModalDraft.stop6 !== undefined) rawStop6 = savedModalDraft.stop6;
+      if (savedModalDraft.issueCount !== undefined) item.issueCount = savedModalDraft.issueCount;
+      if (savedModalDraft.foundChannel) item.foundChannel = savedModalDraft.foundChannel;
+      if (savedModalDraft.foundBy !== undefined) item.issueFoundBy = savedModalDraft.foundBy;
+      if (savedModalDraft.employeeCode !== undefined) item.employeeCode = savedModalDraft.employeeCode;
+      if (savedModalDraft.completionDate !== undefined) item.completionDate = savedModalDraft.completionDate;
+      if (savedModalDraft.improvementContent !== undefined) item.improvementContent = savedModalDraft.improvementContent;
+      if (savedModalDraft.photoDataUrl) {
+        modalPhotoUrl = savedModalDraft.photoDataUrl;
+        modalPhotoAnnotations = savedModalDraft.photoAnnotations || [];
+      }
+      if (savedModalDraft.afterPhotoDataUrl) {
+        modalAfterPhotoUrl = savedModalDraft.afterPhotoDataUrl;
+        modalAfterPhotoAnnotations = savedModalDraft.afterPhotoAnnotations || [];
+      }
+    }
 
     const modal = document.createElement("div");
     modal.id = "mobileSafetyDetailModal";
@@ -329,10 +415,9 @@
         
         <div class="detail-modal-header">
           <div class="detail-header-title">
-            <i class="fa-solid fa-pen-to-square text-brand-400"></i>
             <span>${countermeasureOnly ? "Cập Nhật Cải Tiến / Xử Lý" : "Sửa Báo Cáo Mối Nguy"}</span>
           </div>
-          <button type="button" class="btn-close-modal" id="closeDetailModalBtn">
+          <button type="button" class="btn-close-modal" id="closeDetailModalBtn" aria-label="Đóng">
             <i class="fa-solid fa-xmark"></i>
           </button>
         </div>
@@ -353,12 +438,12 @@
 
           <!-- Discovery Date (Ngày phát hiện) -->
           <div class="modal-form-group">
-            <label class="modal-form-label"><i class="fa-regular fa-calendar-days"></i> Ngày phát hiện</label>
+            <label class="modal-form-label">Ngày phát hiện</label>
             <div class="date-input-container">
               <input type="text" id="modalDetailIssueDateDisplay" class="modal-form-input date-custom-input" placeholder="dd/mm/yyyy" value="${formatIsoToVnDate(defaultIssueDate)}" readonly ${lockedAttr}>
               <input type="date" id="modalDetailIssueDate" class="native-hidden-date-input" value="${escapeHtml(defaultIssueDate)}" ${lockedAttr}>
               <button type="button" class="btn-calendar-trigger" tabindex="-1" ${lockedAttr}>
-                <i class="fa-solid fa-calendar-days text-white"></i>
+                <i class="fa-solid fa-calendar-days"></i>
               </button>
             </div>
           </div>
@@ -397,7 +482,7 @@
 
           <!-- Photo 1: Ảnh hiện trường (Edit, Add & Delete) -->
           <div class="modal-form-group">
-            <label class="modal-form-label"><i class="fa-solid fa-camera"></i> Ảnh hiện trường</label>
+            <label class="modal-form-label">Ảnh hiện trường</label>
             <div class="modal-photo-upload-box" id="modalPhotoBox1">
               <input type="file" id="modalPhotoInput1" accept="image/*" class="photo-file-input ${modalPhotoUrl ? 'is-hidden' : ''}" ${lockedAttr}>
               
@@ -414,13 +499,17 @@
               <div id="modalPhotoWrap1" class="photo-preview-wrap ${modalPhotoUrl ? '' : 'is-hidden'}">
                 <img id="modalPhotoImg1" src="${modalPhotoUrl || ''}" alt="Ảnh hiện trường" class="photo-preview-img cursor-pointer" data-preview-img="${modalPhotoUrl || ''}" data-safety-annotations="${escapeHtml(JSON.stringify(modalPhotoAnnotations))}" title="Chạm để xem phóng to">
                 <div class="photo-preview-actions">
-                  <button type="button" id="modalRetakePhotoBtn1" class="photo-btn retake-btn" title="Đổi / Chụp lại ảnh khác" ${lockedAttr}>
-                    <i class="fa-solid fa-arrows-rotate"></i>
-                    <span>Đổi ảnh</span>
+                  <button type="button" id="modalAnnotatePhotoBtn1" class="photo-btn annotate-btn" title="Vẽ nét & chú thích ảnh" aria-label="Vẽ nét & chú thích ảnh" ${modalPhotoUrl ? '' : 'hidden'}>
+                    <i class="fa-solid fa-pen-to-square"></i>
                   </button>
-                  <button type="button" id="modalRemovePhotoBtn1" class="photo-btn delete-btn" title="Xóa ảnh này" ${lockedAttr}>
+                  <button type="button" id="modalOpenPhotoBtn1" class="photo-btn open-btn" title="Mở ảnh lớn" aria-label="Mở ảnh hiện trường" ${modalPhotoUrl ? '' : 'hidden'}>
+                    <i class="fa-solid fa-expand"></i>
+                  </button>
+                  <button type="button" id="modalRetakePhotoBtn1" class="photo-btn retake-btn" title="Đổi ảnh" aria-label="Đổi ảnh hiện trường" ${lockedAttr}>
+                    <i class="fa-solid fa-arrows-rotate"></i>
+                  </button>
+                  <button type="button" id="modalRemovePhotoBtn1" class="photo-btn delete-btn" title="Xóa ảnh" aria-label="Xóa ảnh hiện trường" ${lockedAttr}>
                     <i class="fa-solid fa-trash-can"></i>
-                    <span>Xóa ảnh</span>
                   </button>
                 </div>
                 <div class="photo-attached-badge">
@@ -464,13 +553,13 @@
 
           <!-- Improvement / Countermeasure Details -->
           <div class="modal-form-group">
-            <label class="modal-form-label text-emerald-400"><i class="fa-solid fa-wrench"></i> Đối sách cải tiến, xử lý</label>
+            <label class="modal-form-label">Đối sách cải tiến, xử lý</label>
             <textarea id="modalDetailImprovement" class="modal-form-textarea" rows="2" placeholder="Nội dung phương án cải tiến / xử lý...">${escapeHtml(item.improvementContent || '')}</textarea>
           </div>
 
           <!-- Photo 2: Ảnh sau cải tiến (Edit, Add & Delete) -->
           <div class="modal-form-group">
-            <label class="modal-form-label text-emerald-400"><i class="fa-solid fa-camera"></i> Ảnh sau cải tiến (nếu có)</label>
+            <label class="modal-form-label">Ảnh sau cải tiến (nếu có)</label>
             <div class="modal-photo-upload-box" id="modalPhotoBox2">
               <input type="file" id="modalPhotoInput2" accept="image/*" class="photo-file-input ${modalAfterPhotoUrl ? 'is-hidden' : ''}">
               
@@ -487,13 +576,17 @@
               <div id="modalPhotoWrap2" class="photo-preview-wrap ${modalAfterPhotoUrl ? '' : 'is-hidden'}">
                 <img id="modalPhotoImg2" src="${modalAfterPhotoUrl || ''}" alt="Ảnh sau cải tiến" class="photo-preview-img cursor-pointer" data-preview-img="${modalAfterPhotoUrl || ''}" data-safety-annotations="${escapeHtml(JSON.stringify(modalAfterPhotoAnnotations))}" title="Chạm để xem phóng to">
                 <div class="photo-preview-actions">
-                  <button type="button" id="modalRetakePhotoBtn2" class="photo-btn retake-btn" title="Đổi / Chụp lại ảnh khác">
-                    <i class="fa-solid fa-arrows-rotate"></i>
-                    <span>Đổi ảnh</span>
+                  <button type="button" id="modalAnnotatePhotoBtn2" class="photo-btn annotate-btn" title="Vẽ nét & chú thích ảnh" aria-label="Vẽ nét & chú thích ảnh" ${modalAfterPhotoUrl ? '' : 'hidden'}>
+                    <i class="fa-solid fa-pen-to-square"></i>
                   </button>
-                  <button type="button" id="modalRemovePhotoBtn2" class="photo-btn delete-btn" title="Xóa ảnh này">
+                  <button type="button" id="modalOpenPhotoBtn2" class="photo-btn open-btn" title="Mở ảnh lớn" aria-label="Mở ảnh sau cải tiến" ${modalAfterPhotoUrl ? '' : 'hidden'}>
+                    <i class="fa-solid fa-expand"></i>
+                  </button>
+                  <button type="button" id="modalRetakePhotoBtn2" class="photo-btn retake-btn" title="Đổi ảnh" aria-label="Đổi ảnh sau cải tiến">
+                    <i class="fa-solid fa-arrows-rotate"></i>
+                  </button>
+                  <button type="button" id="modalRemovePhotoBtn2" class="photo-btn delete-btn" title="Xóa ảnh" aria-label="Xóa ảnh sau cải tiến">
                     <i class="fa-solid fa-trash-can"></i>
-                    <span>Xóa ảnh</span>
                   </button>
                 </div>
                 <div class="photo-attached-badge">
@@ -519,10 +612,10 @@
         <!-- Action Buttons Footer -->
         <div class="detail-modal-footer ${canEditFull ? "has-delete" : "countermeasure-only"}">
           ${canEditFull ? `<button type="button" class="btn-detail-delete" id="btnDetailDelete">
-            <i class="fa-solid fa-trash-can"></i> XÓA BÁO CÁO
+            XÓA BÁO CÁO
           </button>` : ""}
           <button type="button" class="btn-detail-save" id="btnDetailSave">
-            <i class="fa-solid fa-floppy-disk"></i> LƯU THAY ĐỔI
+            LƯU THAY ĐỔI
           </button>
         </div>
 
@@ -543,9 +636,129 @@
       }
     }, true);
 
-    const closeModal = () => modal.remove();
-    modal.querySelector(".detail-modal-backdrop").addEventListener("click", closeModal);
-    modal.querySelector("#closeDetailModalBtn").addEventListener("click", closeModal);
+    const captureModalSnapshot = () => ({
+      note: modal.querySelector("#modalDetailNote")?.value?.trim() || "",
+      issueStatus: modal.querySelector("#modalDetailStatus")?.value || "open",
+      issueDate: modal.querySelector("#modalDetailIssueDate")?.value || "",
+      level: modal.querySelector("#modalDetailLevel")?.value || "",
+      stop6: modal.querySelector("#modalDetailStop6")?.value || "",
+      issueCount: modal.querySelector("#modalDetailIssueCount")?.value || "1",
+      foundChannel: modal.querySelector("#modalDetailFoundChannel")?.value || "worker",
+      foundBy: modal.querySelector("#modalDetailFoundBy")?.value?.trim() || "",
+      employeeCode: modal.querySelector("#modalDetailEmployeeCode")?.value?.trim() || "",
+      completionDate: modal.querySelector("#modalDetailCompletionDate")?.value || "",
+      improvementContent: modal.querySelector("#modalDetailImprovement")?.value?.trim() || "",
+      photoDataUrl: modalPhotoUrl || "",
+      photoAnnotations: modalPhotoAnnotations || [],
+      afterPhotoDataUrl: modalAfterPhotoUrl || "",
+      afterPhotoAnnotations: modalAfterPhotoAnnotations || [],
+    });
+
+    const isModalDirty = () => {
+      if (!modal?.isConnected) return false;
+      const cur = captureModalSnapshot();
+      return Boolean(
+        cur.note !== String(item.note || "").trim() ||
+        cur.issueStatus !== (item.issueStatus || "open") ||
+        cur.improvementContent !== String(item.improvementContent || "").trim() ||
+        cur.photoDataUrl !== (item.photoDataUrl || "") ||
+        JSON.stringify(cur.photoAnnotations || []) !== JSON.stringify(item.photoAnnotations || []) ||
+        cur.afterPhotoDataUrl !== (item.afterPhotoDataUrl || "") ||
+        JSON.stringify(cur.afterPhotoAnnotations || []) !== JSON.stringify(item.afterPhotoAnnotations || []) ||
+        cur.level !== (item.issueLevel || "") ||
+        cur.stop6 !== (item.issueType || "") ||
+        cur.foundBy !== String(item.issueFoundBy || "").trim() ||
+        cur.employeeCode !== String(item.employeeCode || "").trim() ||
+        cur.completionDate !== (item.completionDate ? item.completionDate.split("T")[0] : "")
+      );
+    };
+
+    const showModalDraftBanner = () => {
+      let banner = modal.querySelector("#modalDetailDraftBanner");
+      if (!banner) {
+        const bodyEl = modal.querySelector(".detail-modal-body");
+        if (bodyEl) {
+          banner = typeof document !== "undefined" ? document.createElement("div") : null;
+          if (!banner) return;
+          banner.id = "modalDetailDraftBanner";
+          banner.className = "mobile-draft-banner";
+          banner.innerHTML = `
+            <div class="draft-banner-content">
+              <i class="fa-solid fa-clock-rotate-left"></i>
+              <span>Nội dung chỉnh sửa mối nguy này đã được lưu tạm trong bộ nhớ (cache).</span>
+            </div>
+            <button type="button" class="btn-clear-draft-mobile" id="modalDetailClearDraftBtn" title="Xóa bản nháp này">
+              <i class="fa-solid fa-trash-can"></i> Xóa nháp
+            </button>
+          `;
+          bodyEl.insertBefore(banner, bodyEl.firstElementChild);
+          banner.querySelector("#modalDetailClearDraftBtn")?.addEventListener("click", () => {
+            window.FormDraftManager?.clearDraft(modalDraftKey);
+            window.FormDraftManager?.unregisterDirtyForm(modalDraftKey);
+            modal.remove();
+            showMobileToast("Đã xóa bản nháp chỉnh sửa!");
+            openSafetyDetailModal(item, overlay, context);
+          });
+        }
+      }
+    };
+
+    const markModalDirty = () => {
+      if (isModalDirty()) {
+        window.FormDraftManager?.saveDraft(modalDraftKey, captureModalSnapshot());
+      } else {
+        window.FormDraftManager?.clearDraft(modalDraftKey);
+      }
+    };
+    if (savedModalDraft && !isModalDirty()) {
+      window.FormDraftManager?.clearDraft(modalDraftKey);
+    }
+
+    window.FormDraftManager?.registerDirtyForm(modalDraftKey, {
+      isDirty: isModalDirty,
+      getSnapshot: captureModalSnapshot,
+      onDiscard: () => {
+        window.FormDraftManager?.clearDraft(modalDraftKey);
+      },
+    });
+
+    modal.addEventListener("input", markModalDirty);
+    modal.addEventListener("change", markModalDirty);
+
+    modal.querySelector("#modalDetailClearDraftBtn")?.addEventListener("click", () => {
+      window.FormDraftManager?.clearDraft(modalDraftKey);
+      window.FormDraftManager?.unregisterDirtyForm(modalDraftKey);
+      modal.remove();
+      showMobileToast("Đã xóa bản nháp chỉnh sửa!");
+      openSafetyDetailModal(item, overlay, context);
+    });
+
+    const closeModal = (force = false) => {
+      const doClose = () => {
+        window.FormDraftManager?.unregisterDirtyForm(modalDraftKey);
+        modal.remove();
+      };
+      if (!force && isModalDirty()) {
+        window.FormDraftManager.showUnsavedConfirmModal({
+          title: "Bạn có thay đổi chưa lưu!",
+          message: "Nội dung chỉnh sửa mối nguy đã được lưu tạm vào bộ nhớ (cache). Bạn có muốn tiếp tục chỉnh sửa hay thoát?",
+          onKeepEditing: () => {},
+          onSaveDraftAndExit: () => {
+            window.FormDraftManager?.saveDraft(modalDraftKey, captureModalSnapshot());
+            doClose();
+          },
+          onDiscardAndExit: () => {
+            window.FormDraftManager?.clearDraft(modalDraftKey);
+            doClose();
+          },
+        });
+        return;
+      }
+      doClose();
+    };
+
+    modal.querySelector(".detail-modal-backdrop").addEventListener("click", () => closeModal());
+    modal.querySelector("#closeDetailModalBtn").addEventListener("click", () => closeModal());
 
     // Lightbox for photos in detail modal
     modal.querySelectorAll("[data-preview-img]").forEach((el) => {
@@ -568,10 +781,23 @@
               else modalPhotoAnnotations = annotations;
               el.dataset.safetyAnnotations = JSON.stringify(annotations);
               window.refreshSafetyPhotoAnnotationThumbnail?.(el, annotations);
+              markModalDirty();
             },
           });
           openMobileImageModal(src, annotationOptions);
         }
+      });
+    });
+    [
+      ["#modalOpenPhotoBtn1", "#modalPhotoImg1"],
+      ["#modalAnnotatePhotoBtn1", "#modalPhotoImg1"],
+      ["#modalOpenPhotoBtn2", "#modalPhotoImg2"],
+      ["#modalAnnotatePhotoBtn2", "#modalPhotoImg2"],
+    ].forEach(([buttonSelector, imageSelector]) => {
+      modal.querySelector(buttonSelector)?.addEventListener("click", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        modal.querySelector(imageSelector)?.click();
       });
     });
 
@@ -580,6 +806,7 @@
     const placeholder1 = modal.querySelector("#modalPhotoPlaceholder1");
     const wrap1 = modal.querySelector("#modalPhotoWrap1");
     const img1 = modal.querySelector("#modalPhotoImg1");
+    const openButton1 = modal.querySelector("#modalOpenPhotoBtn1");
 
     if (fileInput1) {
       fileInput1.addEventListener("change", (e) => {
@@ -598,6 +825,8 @@
             placeholder1?.classList.add("is-hidden");
             wrap1?.classList.remove("is-hidden");
             fileInput1?.classList.add("is-hidden");
+            if (openButton1) openButton1.hidden = false;
+            markModalDirty();
           };
           reader.readAsDataURL(file);
         }
@@ -607,7 +836,6 @@
     modal.querySelector("#modalRetakePhotoBtn1")?.addEventListener("click", (e) => {
       e.preventDefault();
       e.stopPropagation();
-      fileInput1?.classList.remove("is-hidden");
       fileInput1?.click();
     });
 
@@ -626,6 +854,8 @@
       wrap1?.classList.add("is-hidden");
       placeholder1?.classList.remove("is-hidden");
       fileInput1?.classList.remove("is-hidden");
+      if (openButton1) openButton1.hidden = true;
+      markModalDirty();
     });
 
     // Wire Photo 2 (Ảnh sau cải tiến) events
@@ -633,6 +863,7 @@
     const placeholder2 = modal.querySelector("#modalPhotoPlaceholder2");
     const wrap2 = modal.querySelector("#modalPhotoWrap2");
     const img2 = modal.querySelector("#modalPhotoImg2");
+    const openButton2 = modal.querySelector("#modalOpenPhotoBtn2");
 
     if (fileInput2) {
       fileInput2.addEventListener("change", (e) => {
@@ -651,6 +882,8 @@
             placeholder2?.classList.add("is-hidden");
             wrap2?.classList.remove("is-hidden");
             fileInput2?.classList.add("is-hidden");
+            if (openButton2) openButton2.hidden = false;
+            markModalDirty();
           };
           reader.readAsDataURL(file);
         }
@@ -660,7 +893,6 @@
     modal.querySelector("#modalRetakePhotoBtn2")?.addEventListener("click", (e) => {
       e.preventDefault();
       e.stopPropagation();
-      fileInput2?.classList.remove("is-hidden");
       fileInput2?.click();
     });
 
@@ -679,6 +911,8 @@
       wrap2?.classList.add("is-hidden");
       placeholder2?.classList.remove("is-hidden");
       fileInput2?.classList.remove("is-hidden");
+      if (openButton2) openButton2.hidden = true;
+      markModalDirty();
     });
 
     // Wire date picker change sync to display inputs (dd/mm/yyyy)
@@ -775,7 +1009,7 @@
       const file1 = fileInput1?.files?.[0];
       if (file1 && typeof context?.prepareScorePhoto === "function") {
         try {
-          const prepared1 = await context.prepareScorePhoto(file1, null, false, fiveSPeriodId);
+          const prepared1 = await context.prepareScorePhoto(file1, null, false, fiveSPeriodId, "van-de-5s");
           finalPhotoDataUrl = prepared1.photoDataUrl || finalPhotoDataUrl;
           finalPhotoName = prepared1.photoName || finalPhotoName;
         } catch (_) {}
@@ -786,7 +1020,7 @@
       const file2 = fileInput2?.files?.[0];
       if (file2 && typeof context?.prepareScorePhoto === "function") {
         try {
-          const prepared2 = await context.prepareScorePhoto(file2, null, false, fiveSPeriodId);
+          const prepared2 = await context.prepareScorePhoto(file2, null, false, fiveSPeriodId, "van-de-5s");
           finalAfterPhotoDataUrl = prepared2.photoDataUrl || finalAfterPhotoDataUrl;
           finalAfterPhotoName = prepared2.photoName || finalAfterPhotoName;
         } catch (_) {}
@@ -847,7 +1081,9 @@
           await context.tryUnmarkSafetyRecordDeleted(item.id);
         }
 
-        closeModal();
+        window.FormDraftManager?.clearDraft(modalDraftKey);
+        window.FormDraftManager?.unregisterDirtyForm(modalDraftKey);
+        closeModal(true);
         showMobileToast("Đã lưu thay đổi báo cáo thành công!");
         renderSafetyScreen(overlay, context);
       } catch (err) {
@@ -885,7 +1121,9 @@
           uploadedSafetyPhotoData = "";
           uploadedSafetyAfterPhotoData = "";
         }
-        closeModal();
+        window.FormDraftManager?.clearDraft(modalDraftKey);
+        window.FormDraftManager?.unregisterDirtyForm(modalDraftKey);
+        closeModal(true);
         showMobileToast("Đã xóa báo cáo mối nguy thành công!");
         renderSafetyScreen(overlay, context);
       } catch (err) {
@@ -994,7 +1232,7 @@
   }
 
   // Open Mobile Prototype View
-  function openMobilePrototype(initialTab = "safety", passedContext = null) {
+  function openMobilePrototype(initialTab = "safety", passedContext = null, options = {}) {
     if (passedContext) {
       currentAppContext = passedContext;
     }
@@ -1019,6 +1257,19 @@
     const existingOverlay = document.getElementById("mobileProtoOverlay");
     if (existingOverlay && document.body.contains(existingOverlay)) {
       showMobilePane(existingOverlay, context);
+      return;
+    }
+
+    const draftManager = typeof window !== "undefined" ? window.FormDraftManager : null;
+    if (!options?.force && draftManager?.hasAnyDirty?.()) {
+      draftManager.showUnsavedConfirmModal({
+        title: "Bạn có thay đổi chưa lưu!",
+        onKeepEditing: () => {},
+        onDiscardAndExit: () => {
+          draftManager.discardAllDirty?.();
+          openMobilePrototype(initialTab, passedContext, { ...options, force: true });
+        },
+      });
       return;
     }
 
@@ -1191,12 +1442,31 @@
     const returnBtn = overlay.querySelector("#mobileReturnDashboardBtn");
     const closeBtn = overlay.querySelector("#mobileNavCloseBtn");
     const handleClose = () => {
-      closeMobilePrototype();
-      if (typeof context?.setActiveTab === "function") {
-        context.setActiveTab("home");
-      } else if (typeof context?.pushRoute === "function") {
-        context.pushRoute("/home");
+      const doClose = () => {
+        closeMobilePrototype();
+        if (typeof context?.setActiveTab === "function") {
+          context.setActiveTab("home", { force: true });
+        } else if (typeof context?.pushRoute === "function") {
+          context.pushRoute("/home");
+        }
+      };
+      if (window.FormDraftManager?.hasAnyDirty()) {
+        window.FormDraftManager.showUnsavedConfirmModal({
+          title: "Bạn có thay đổi chưa lưu!",
+          message: "Nội dung đang nhập đã được lưu tạm vào bộ nhớ (cache). Bạn có muốn tiếp tục chỉnh sửa hay thoát?",
+          onKeepEditing: () => {},
+          onSaveDraftAndExit: () => {
+            window.FormDraftManager?.flushAllDrafts();
+            doClose();
+          },
+          onDiscardAndExit: () => {
+            window.FormDraftManager?.discardAllDirty();
+            doClose();
+          },
+        });
+        return;
       }
+      doClose();
     };
     if (returnBtn) returnBtn.addEventListener("click", handleClose);
     if (closeBtn) closeBtn.addEventListener("click", handleClose);
@@ -1213,6 +1483,10 @@
     }
 
     const helpBtn = overlay.querySelector("#mobileHelpBtn");
+    const isViewerAccount = Boolean(context?.isViewerAccount?.(context?.currentUser || user));
+    if (helpBtn && isViewerAccount) {
+      helpBtn.hidden = true;
+    }
     const helpDialog = overlay.querySelector("#mobileHelpDialog");
     const helpCloseBtn = overlay.querySelector("#mobileHelpCloseBtn");
     const helpTitle = overlay.querySelector("#mobileHelpDialogTitle");
@@ -1241,6 +1515,30 @@
       if (event.target === helpDialog) helpDialog.close();
     });
 
+    const handleGuideImageClick = (event) => {
+      const img = event.target.closest("img.mobile-user-guide-image, img");
+      if (!img) return;
+      const src = img.currentSrc || img.src || img.dataset.photoSrc || "";
+      if (!src) return;
+      event.preventDefault();
+      event.stopPropagation();
+      const annotations = (() => {
+        try {
+          return JSON.parse(img.dataset.guideAnnotations || img.dataset.safetyAnnotations || "[]");
+        } catch (_) {
+          return [];
+        }
+      })();
+      openMobileImageModal(src, {
+        initialCircles: annotations,
+        editable: false,
+        viewOnly: true,
+        showToolbar: false,
+      });
+    };
+    helpContent?.addEventListener("click", handleGuideImageClick);
+    helpContent?.addEventListener("dblclick", handleGuideImageClick);
+
     // Full width toggle
     const toggleWidthBtn = overlay.querySelector("#mobileToggleWidthBtn");
     const toggleWidthText = overlay.querySelector("#mobileToggleWidthText");
@@ -1255,13 +1553,30 @@
       });
     }
 
-    overlay.querySelector("#mobileTabBtnSafety")?.addEventListener("click", () => {
-      context.setActiveTab("mobile-safety");
-    });
-    overlay.querySelector("#mobileTabBtn5S")?.addEventListener("click", () => {
-      context.setActiveTab("mobile-5s");
-    });
-    overlay.querySelector("#mobileTabBtnFindings")?.addEventListener("click", () => context.setActiveTab("mobile-findings"));
+    const handleMobileTabSwitch = (targetTab) => {
+      if (activeTab === targetTab) return;
+      if (window.FormDraftManager?.hasAnyDirty()) {
+        window.FormDraftManager.showUnsavedConfirmModal({
+          title: "Bạn có thay đổi chưa lưu!",
+          message: "Nội dung đang nhập đã được lưu tạm vào bộ nhớ (cache). Bạn có muốn tiếp tục chỉnh sửa hay chuyển mục?",
+          onKeepEditing: () => {},
+          onSaveDraftAndExit: () => {
+            window.FormDraftManager?.flushAllDrafts();
+            context.setActiveTab("mobile-" + targetTab);
+          },
+          onDiscardAndExit: () => {
+            window.FormDraftManager?.discardAllDirty();
+            context.setActiveTab("mobile-" + targetTab);
+          },
+        });
+        return;
+      }
+      context.setActiveTab("mobile-" + targetTab);
+    };
+
+    overlay.querySelector("#mobileTabBtnSafety")?.addEventListener("click", () => handleMobileTabSwitch("safety"));
+    overlay.querySelector("#mobileTabBtn5S")?.addEventListener("click", () => handleMobileTabSwitch("5s"));
+    overlay.querySelector("#mobileTabBtnFindings")?.addEventListener("click", () => handleMobileTabSwitch("findings"));
     showMobilePane(overlay, context);
   }
 
@@ -1357,6 +1672,35 @@
     const defaultFinder = editingRecord ? (editingRecord.issueFoundBy || "") : (context?.getAccountDisplayName?.(user, context.SAFETY_PERIOD_TYPE, safetyPeriodId) || user?.name || "");
     const todayValue = typeof context?.todayIsoDate === "function" ? context.todayIsoDate() : new Date().toISOString().slice(0, 10);
 
+    const mobileSafetyDraftKey = editingSafetyRecordId ? (`mob_safety_edit_${editingSafetyRecordId}`) : (`mob_safety_new_${safetyPeriodId}`);
+    const draftManager = typeof window !== "undefined" ? window.FormDraftManager : null;
+    const savedSafetyDraft = window.FormDraftManager?.getDraft(mobileSafetyDraftKey);
+    if (savedSafetyDraft) {
+      if (savedSafetyDraft.areaId) currentSafetyZoneId = savedSafetyDraft.areaId;
+      if (savedSafetyDraft.issueDate) defaultIssueDate = savedSafetyDraft.issueDate;
+      if (savedSafetyDraft.photoDataUrl) {
+        uploadedSafetyPhotoData = savedSafetyDraft.photoDataUrl;
+        pendingSafetyPhotoAnnotations = savedSafetyDraft.photoAnnotations || [];
+      }
+      if (savedSafetyDraft.afterPhotoDataUrl) {
+        uploadedSafetyAfterPhotoData = savedSafetyDraft.afterPhotoDataUrl;
+        pendingSafetyAfterPhotoAnnotations = savedSafetyDraft.afterPhotoAnnotations || [];
+      }
+    }
+
+    const activeStop6 = savedSafetyDraft?.stop6 !== undefined ? savedSafetyDraft.stop6 : (editingRecord?.issueType || "");
+    const activeLevel = savedSafetyDraft?.level !== undefined ? savedSafetyDraft.level : (editingRecord?.issueLevel || "");
+    const activeFoundChannel = savedSafetyDraft?.foundChannel !== undefined ? savedSafetyDraft.foundChannel : (editingRecord?.foundChannel || (!editingRecord ? "assessor" : "worker"));
+    const activeIssueStatus = savedSafetyDraft?.issueStatus !== undefined ? savedSafetyDraft.issueStatus : (editingRecord?.issueStatus || "open");
+    const activeFinder = savedSafetyDraft?.issueFoundBy !== undefined ? savedSafetyDraft.issueFoundBy : defaultFinder;
+    const activeEmployeeCode = savedSafetyDraft?.employeeCode !== undefined ? savedSafetyDraft.employeeCode : (editingRecord?.employeeCode || "");
+    const activeIssueItemLabel = savedSafetyDraft?.issueItemLabel !== undefined ? savedSafetyDraft.issueItemLabel : (editingRecord?.issueItemLabel || "Nhận diện nguy cơ mất an toàn");
+    const activeImprovementContent = savedSafetyDraft?.improvementContent !== undefined ? savedSafetyDraft.improvementContent : (editingRecord?.improvementContent || "");
+    const activeActionOwner = savedSafetyDraft?.actionOwner !== undefined ? savedSafetyDraft.actionOwner : (editingRecord?.actionOwner || "");
+    const activeActionPlan = savedSafetyDraft?.actionPlan !== undefined ? savedSafetyDraft.actionPlan : (editingRecord?.actionPlan || "");
+    const activeCompletionDate = savedSafetyDraft?.completionDate !== undefined ? savedSafetyDraft.completionDate : (editingRecord?.completionDate ? editingRecord.completionDate.split("T")[0] : "");
+    const activeIssueCount = savedSafetyDraft?.issueCount !== undefined ? savedSafetyDraft.issueCount : (editingRecord?.issueCount || 1);
+
     screen.innerHTML = `
       <div class="mobile-safety-container">
         
@@ -1421,7 +1765,7 @@
             <label class="form-label">Mối nguy hiểm phát hiện <span class="required-star">*</span></label>
             <textarea id="mobileSafetyDescription" rows="3" required
               placeholder="Mô tả chi tiết vị trí và nội dung mối nguy hiểm phát hiện..."
-              class="form-control form-textarea">${escapeHtml(editingRecord?.note || "")}</textarea>
+              class="form-control form-textarea">${escapeHtml(savedSafetyDraft?.note ?? (editingRecord?.note || ""))}</textarea>
           </div>
 
           <!-- Row 3: Photo Upload & Camera Component (Ảnh hiện trường) -->
@@ -1429,7 +1773,7 @@
             <label class="form-label">Hình ảnh minh họa hiện trường</label>
             
             <div id="mobilePhotoUploadBox" class="photo-upload-box ${uploadedSafetyPhotoData ? 'has-photo' : ''}">
-              <input type="file" id="mobileSafetyFileInput" accept="image/*" class="photo-file-input">
+              <input type="file" id="mobileSafetyFileInput" accept="image/*" class="photo-file-input ${uploadedSafetyPhotoData ? 'is-hidden' : ''}">
               
               <div id="photoPlaceholder" class="photo-placeholder ${uploadedSafetyPhotoData ? 'is-hidden' : ''}">
                 <div class="photo-icon-circle">
@@ -1445,13 +1789,16 @@
               <div id="photoPreviewWrap" class="photo-preview-wrap ${uploadedSafetyPhotoData ? '' : 'is-hidden'}">
                 <img id="mobileSafetyPreviewImg" src="${uploadedSafetyPhotoData || ''}" alt="Ảnh hiện trường" class="photo-preview-img cursor-pointer" data-preview-img="${uploadedSafetyPhotoData || ''}" data-safety-annotations="${escapeHtml(JSON.stringify(pendingSafetyPhotoAnnotations))}" data-safety-record-id="${escapeHtml(editingRecord?.id || "")}" data-safety-photo-field="photoAnnotations" data-safety-draft-field="photoAnnotations" data-safety-source-pending="false" title="Chạm để phóng to ảnh">
                 <div class="photo-preview-actions">
+                  <button type="button" id="mobileAnnotatePhotoBtn" class="photo-btn annotate-btn" title="Vẽ nét & chú thích ảnh" aria-label="Vẽ nét & chú thích ảnh">
+                    <i class="fa-solid fa-pen-to-square"></i>
+                  </button>
                   <button type="button" id="mobileOpenPhotoBtn" class="photo-btn open-btn" title="Mở ảnh" aria-label="Mở ảnh hiện trường">
                     <i class="fa-solid fa-expand"></i>
                   </button>
-                  <button type="button" id="mobileRetakePhotoBtn" class="photo-btn retake-btn" title="Đổi/Chụp lại ảnh">
+                  <button type="button" id="mobileRetakePhotoBtn" class="photo-btn retake-btn" title="Đổi ảnh" aria-label="Đổi ảnh hiện trường">
                     <i class="fa-solid fa-arrows-rotate"></i>
                   </button>
-                  <button type="button" id="mobileRemovePhotoBtn" class="photo-btn delete-btn" title="Xóa ảnh này">
+                  <button type="button" id="mobileRemovePhotoBtn" class="photo-btn delete-btn" title="Xóa ảnh" aria-label="Xóa ảnh hiện trường">
                     <i class="fa-solid fa-trash-can"></i>
                   </button>
                 </div>
@@ -1464,7 +1811,7 @@
 
           <div class="form-group">
             <label class="form-label">Số lần phát hiện</label>
-            <input type="number" id="mobileSafetyIssueCount" class="form-control" min="1" step="1" value="${escapeHtml(editingRecord?.issueCount || 1)}">
+            <input type="number" id="mobileSafetyIssueCount" class="form-control" min="1" step="1" value="${escapeHtml(activeIssueCount)}">
           </div>
 
           <!-- Row 4: STOP 6 & Severity Grid (Cấp bậc có Chưa phân loại) -->
@@ -1473,14 +1820,14 @@
               <label class="form-label">Phân loại STOP 6</label>
               <div class="select-wrapper">
                 <select id="mobileSafetyStop6" class="form-control form-select">
-                  <option value="" ${!editingRecord?.issueType ? 'selected' : ''}>Chưa phân loại</option>
-                  <option value="1-Kẹp,kẹt" ${editingRecord?.issueType === '1-Kẹp,kẹt' ? 'selected' : ''}>1-Kẹp, kẹt</option>
-                  <option value="2-Vật nặng" ${editingRecord?.issueType === '2-Vật nặng' ? 'selected' : ''}>2-Vật nặng</option>
-                  <option value="3-Xe cộ" ${editingRecord?.issueType === '3-Xe cộ' ? 'selected' : ''}>3-Xe cộ</option>
-                  <option value="4-Rơi,ngã" ${editingRecord?.issueType === '4-Rơi,ngã' ? 'selected' : ''}>4-Rơi, ngã</option>
-                  <option value="5-Điện giật" ${editingRecord?.issueType === '5-Điện giật' ? 'selected' : ''}>5-Điện giật</option>
-                  <option value="6-Cháy nổ" ${editingRecord?.issueType === '6-Cháy nổ' ? 'selected' : ''}>6-Cháy nổ</option>
-                  <option value="7-Loại khác" ${editingRecord?.issueType === '7-Loại khác' ? 'selected' : ''}>7-Loại khác</option>
+                  <option value="" ${!activeStop6 ? 'selected' : ''}>Chưa phân loại</option>
+                  <option value="1-Kẹp,kẹt" ${activeStop6 === '1-Kẹp,kẹt' ? 'selected' : ''}>1-Kẹp, kẹt</option>
+                  <option value="2-Vật nặng" ${activeStop6 === '2-Vật nặng' ? 'selected' : ''}>2-Vật nặng</option>
+                  <option value="3-Xe cộ" ${activeStop6 === '3-Xe cộ' ? 'selected' : ''}>3-Xe cộ</option>
+                  <option value="4-Rơi,ngã" ${activeStop6 === '4-Rơi,ngã' ? 'selected' : ''}>4-Rơi, ngã</option>
+                  <option value="5-Điện giật" ${activeStop6 === '5-Điện giật' ? 'selected' : ''}>5-Điện giật</option>
+                  <option value="6-Cháy nổ" ${activeStop6 === '6-Cháy nổ' ? 'selected' : ''}>6-Cháy nổ</option>
+                  <option value="7-Loại khác" ${activeStop6 === '7-Loại khác' ? 'selected' : ''}>7-Loại khác</option>
                 </select>
                 <i class="fa-solid fa-chevron-down select-chevron"></i>
               </div>
@@ -1489,10 +1836,10 @@
               <label class="form-label">Cấp bậc nguy cơ</label>
               <div class="select-wrapper">
                 <select id="mobileSafetyLevel" class="form-control form-select">
-                  <option value="" ${!editingRecord?.issueLevel ? 'selected' : ''}>Chưa phân loại</option>
-                  <option value="A" ${editingRecord?.issueLevel === 'A' ? 'selected' : ''}>Cấp độ A (Nghiêm trọng)</option>
-                  <option value="B" ${editingRecord?.issueLevel === 'B' ? 'selected' : ''}>Cấp độ B</option>
-                  <option value="C" ${editingRecord?.issueLevel === 'C' ? 'selected' : ''}>Cấp độ C (Nhẹ)</option>
+                  <option value="" ${!activeLevel ? 'selected' : ''}>Chưa phân loại</option>
+                  <option value="A" ${activeLevel === 'A' ? 'selected' : ''}>Cấp độ A (Nghiêm trọng)</option>
+                  <option value="B" ${activeLevel === 'B' ? 'selected' : ''}>Cấp độ B</option>
+                  <option value="C" ${activeLevel === 'C' ? 'selected' : ''}>Cấp độ C (Nhẹ)</option>
                 </select>
                 <i class="fa-solid fa-chevron-down select-chevron"></i>
               </div>
@@ -1505,9 +1852,9 @@
               <label class="form-label">Phát hiện bởi (kênh)</label>
               <div class="select-wrapper">
                 <select id="mobileSafetyFoundChannel" class="form-control form-select">
-                  <option value="worker" ${editingRecord?.foundChannel === 'worker' ? 'selected' : ''}>Công nhân</option>
-                  <option value="head" ${editingRecord?.foundChannel === 'head' ? 'selected' : ''}>Trưởng bộ phận</option>
-                  <option value="assessor" ${editingRecord?.foundChannel === 'assessor' || (!editingRecord && true) ? 'selected' : ''}>Assessor</option>
+                  <option value="worker" ${activeFoundChannel === 'worker' ? 'selected' : ''}>Công nhân</option>
+                  <option value="head" ${activeFoundChannel === 'head' ? 'selected' : ''}>Trưởng bộ phận</option>
+                  <option value="assessor" ${activeFoundChannel === 'assessor' ? 'selected' : ''}>Assessor</option>
                 </select>
                 <i class="fa-solid fa-chevron-down select-chevron"></i>
               </div>
@@ -1516,10 +1863,10 @@
               <label class="form-label">Tình trạng</label>
               <div class="select-wrapper">
                 <select id="mobileSafetyIssueStatus" class="form-control form-select">
-                  <option value="open" ${editingRecord?.issueStatus === 'open' || (!editingRecord && true) ? 'selected' : ''}>Chưa xử lý</option>
-                  <option value="in_progress" ${editingRecord?.issueStatus === 'in_progress' ? 'selected' : ''}>Đang xử lý</option>
-                  <option value="overdue" ${editingRecord?.issueStatus === 'overdue' ? 'selected' : ''}>Quá hạn</option>
-                  <option value="closed" ${editingRecord?.issueStatus === 'closed' ? 'selected' : ''}>Đã xử lý</option>
+                  <option value="open" ${activeIssueStatus === 'open' ? 'selected' : ''}>Chưa xử lý</option>
+                  <option value="in_progress" ${activeIssueStatus === 'in_progress' ? 'selected' : ''}>Đang xử lý</option>
+                  <option value="overdue" ${activeIssueStatus === 'overdue' ? 'selected' : ''}>Quá hạn</option>
+                  <option value="closed" ${activeIssueStatus === 'closed' ? 'selected' : ''}>Đã xử lý</option>
                 </select>
                 <i class="fa-solid fa-chevron-down select-chevron"></i>
               </div>
@@ -1530,18 +1877,18 @@
           <div class="form-grid-2">
             <div class="form-group">
               <label class="form-label">Tên người phát hiện</label>
-              <input type="text" id="mobileSafetyIssueFoundBy" class="form-control" placeholder="Ghi rõ tên người phát hiện..." value="${escapeHtml(defaultFinder)}">
+              <input type="text" id="mobileSafetyIssueFoundBy" class="form-control" placeholder="Ghi rõ tên người phát hiện..." value="${escapeHtml(activeFinder)}">
             </div>
             <div class="form-group">
               <label class="form-label">Mã nhân viên</label>
-              <input type="text" id="mobileSafetyEmployeeCode" class="form-control" placeholder="Mã NV (nếu có)..." value="${escapeHtml(editingRecord?.employeeCode || '')}">
+              <input type="text" id="mobileSafetyEmployeeCode" class="form-control" placeholder="Mã NV (nếu có)..." value="${escapeHtml(activeEmployeeCode)}">
             </div>
           </div>
 
           <!-- Row 7: Hạng mục -->
           <div class="form-group">
             <label class="form-label">Hạng mục</label>
-            <input type="text" id="mobileSafetyIssueItemLabel" class="form-control" placeholder="Hạng mục..." value="${escapeHtml(editingRecord?.issueItemLabel || 'Nhận diện nguy cơ mất an toàn')}">
+            <input type="text" id="mobileSafetyIssueItemLabel" class="form-control" placeholder="Hạng mục..." value="${escapeHtml(activeIssueItemLabel)}">
           </div>
 
           <!-- Row 8: Nội dung cải tiến, xử lý -->
@@ -1549,14 +1896,14 @@
             <label class="form-label">Nội dung cải tiến, xử lý</label>
             <textarea id="mobileSafetyImprovementContent" rows="2"
               placeholder="Giải pháp / biện pháp xử lý hoặc đối sách..."
-              class="form-control form-textarea">${escapeHtml(editingRecord?.improvementContent || '')}</textarea>
+              class="form-control form-textarea">${escapeHtml(activeImprovementContent)}</textarea>
           </div>
 
           <!-- Row 9: Ảnh sau cải tiến -->
           <div class="form-group">
             <label class="form-label">Ảnh sau cải tiến (nếu có)</label>
             <div id="mobilePhotoAfterUploadBox" class="photo-upload-box ${uploadedSafetyAfterPhotoData ? 'has-photo' : ''}">
-              <input type="file" id="mobileSafetyAfterFileInput" accept="image/*" class="photo-file-input">
+              <input type="file" id="mobileSafetyAfterFileInput" accept="image/*" class="photo-file-input ${uploadedSafetyAfterPhotoData ? 'is-hidden' : ''}">
               
               <div id="photoAfterPlaceholder" class="photo-placeholder ${uploadedSafetyAfterPhotoData ? 'is-hidden' : ''}">
                 <div class="photo-icon-circle">
@@ -1571,13 +1918,16 @@
               <div id="photoAfterPreviewWrap" class="photo-preview-wrap ${uploadedSafetyAfterPhotoData ? '' : 'is-hidden'}">
                 <img id="mobileSafetyAfterPreviewImg" src="${uploadedSafetyAfterPhotoData || ''}" alt="Ảnh sau cải tiến" class="photo-preview-img cursor-pointer" data-preview-img="${uploadedSafetyAfterPhotoData || ''}" data-safety-annotations="${escapeHtml(JSON.stringify(pendingSafetyAfterPhotoAnnotations))}" data-safety-record-id="${escapeHtml(editingRecord?.id || "")}" data-safety-photo-field="afterPhotoAnnotations" data-safety-draft-field="afterPhotoAnnotations" data-safety-source-pending="false" title="Chạm để phóng to ảnh">
                 <div class="photo-preview-actions">
+                  <button type="button" id="mobileAnnotateAfterPhotoBtn" class="photo-btn annotate-btn" title="Vẽ nét & chú thích ảnh" aria-label="Vẽ nét & chú thích ảnh">
+                    <i class="fa-solid fa-pen-to-square"></i>
+                  </button>
                   <button type="button" id="mobileOpenAfterPhotoBtn" class="photo-btn open-btn" title="Mở ảnh" aria-label="Mở ảnh sau cải tiến">
                     <i class="fa-solid fa-expand"></i>
                   </button>
-                  <button type="button" id="mobileRetakeAfterPhotoBtn" class="photo-btn retake-btn" title="Đổi ảnh">
+                  <button type="button" id="mobileRetakeAfterPhotoBtn" class="photo-btn retake-btn" title="Đổi ảnh" aria-label="Đổi ảnh sau cải tiến">
                     <i class="fa-solid fa-arrows-rotate"></i>
                   </button>
-                  <button type="button" id="mobileRemoveAfterPhotoBtn" class="photo-btn delete-btn" title="Xóa ảnh này">
+                  <button type="button" id="mobileRemoveAfterPhotoBtn" class="photo-btn delete-btn" title="Xóa ảnh" aria-label="Xóa ảnh sau cải tiến">
                     <i class="fa-solid fa-trash-can"></i>
                   </button>
                 </div>
@@ -1592,11 +1942,11 @@
           <div class="form-grid-2">
             <div class="form-group">
               <label class="form-label">Đảm nhiệm (PIC)</label>
-              <input type="text" id="mobileSafetyActionOwner" class="form-control" placeholder="Người chịu trách nhiệm..." value="${escapeHtml(editingRecord?.actionOwner || "")}">
+              <input type="text" id="mobileSafetyActionOwner" class="form-control" placeholder="Người chịu trách nhiệm..." value="${escapeHtml(activeActionOwner)}">
             </div>
             <div class="form-group">
               <label class="form-label">Kế hoạch</label>
-              <input type="text" id="mobileSafetyActionPlan" class="form-control" placeholder="Kế hoạch hoàn thành..." value="${escapeHtml(editingRecord?.actionPlan || '')}">
+              <input type="text" id="mobileSafetyActionPlan" class="form-control" placeholder="Kế hoạch hoàn thành..." value="${escapeHtml(activeActionPlan)}">
             </div>
           </div>
 
@@ -1604,8 +1954,8 @@
           <div class="form-group">
             <label class="form-label">Ngày dự kiến hoàn thành</label>
             <div class="date-input-container">
-              <input type="text" id="mobileSafetyCompletionDateDisplay" class="form-control date-custom-input" placeholder="dd/mm/yyyy" value="${formatIsoToVnDate(editingRecord?.completionDate ? editingRecord.completionDate.split('T')[0] : '')}" readonly>
-              <input type="date" id="mobileSafetyCompletionDate" class="native-hidden-date-input" value="${escapeHtml(editingRecord?.completionDate ? editingRecord.completionDate.split('T')[0] : '')}">
+              <input type="text" id="mobileSafetyCompletionDateDisplay" class="form-control date-custom-input" placeholder="dd/mm/yyyy" value="${formatIsoToVnDate(activeCompletionDate)}" readonly>
+              <input type="date" id="mobileSafetyCompletionDate" class="native-hidden-date-input" value="${escapeHtml(activeCompletionDate)}">
               <button type="button" class="btn-calendar-trigger" tabindex="-1">
                 <i class="fa-solid fa-calendar-days text-white"></i>
               </button>
@@ -1656,17 +2006,36 @@
     const period = context?.getPeriod?.(periodId);
     const periodAreas = context?.getAreasForPeriod?.(periodId) || [];
     const reportableAreas = periodAreas.filter((area) => String(area.templateCode || area.code || "").trim() !== "27");
-    const recentRecords = (context?.state?.safetyRecords || [])
+    const allRecords = (context?.state?.safetyRecords || [])
       .filter((record) => !periodId || record.periodId === periodId)
       .sort((a, b) => {
         const timeA = String(a.createdAt || a.updatedAt || "");
         const timeB = String(b.createdAt || b.updatedAt || "");
         if (timeA !== timeB) return timeB.localeCompare(timeA);
         return String(b.id || "").localeCompare(String(a.id || ""));
-      })
-      .slice(0, 20);
+      });
+    const pageKey = `${periodId}:${currentSafetyHistoryPage}`;
+    if (typeof context?.loadCollectionPage === "function" && safetyHistoryPageKey !== pageKey) {
+      const requestId = ++safetyHistoryPageRequestId;
+      safetyHistoryPageKey = pageKey;
+      context.loadCollectionPage({ collection: "safetyRecords", periodId, page: currentSafetyHistoryPage, pageSize: 20 })
+        .then((result) => {
+          if (requestId !== safetyHistoryPageRequestId || pageKey !== `${currentSafetyHistoryPeriodId}:${currentSafetyHistoryPage}`) return;
+          safetyHistoryPageData = { ...result, key: pageKey };
+          renderSafetyHistory(screen, context, periodId, dateStr);
+        })
+        .catch(() => {
+          if (requestId !== safetyHistoryPageRequestId) return;
+          safetyHistoryPageKey = "";
+        });
+    }
+    const serverPage = safetyHistoryPageData?.key === pageKey ? safetyHistoryPageData : null;
+    const recentRecords = serverPage?.items || allRecords.slice((currentSafetyHistoryPage - 1) * 20, currentSafetyHistoryPage * 20);
+    const totalRecords = serverPage?.total ?? allRecords.length;
+    const totalPages = Math.max(1, Math.ceil(totalRecords / 20));
+    currentSafetyHistoryPage = Math.min(currentSafetyHistoryPage, totalPages);
 
-    count.textContent = `${recentRecords.length} Mối nguy`;
+    count.textContent = `${totalRecords} Mối nguy`;
     if (!recentRecords.length) {
       list.innerHTML = `
         <div class="history-empty-card">
@@ -1682,7 +2051,7 @@
       const zoneLabel = itemArea ? `Zone ${itemArea.code}` : (item.issueLocation || "Zone");
       const statusText = item.issueStatus === "closed" ? "Đã xử lý" : item.issueStatus === "in_progress" ? "Đang xử lý" : item.issueStatus === "overdue" ? "Quá hạn" : "Chưa xử lý";
       const statusClass = item.issueStatus === "closed" ? "status-closed" : item.issueStatus === "in_progress" ? "status-progress" : item.issueStatus === "overdue" ? "status-overdue" : "status-open";
-      const photoThumb = item.photoDataUrl || "images/Logo.jpg";
+      const photoThumb = photoThumbnailUrl(item.photoDataUrl) || "images/Logo.jpg";
       const rawLevel = item.issueLevel || item.level || item.riskLevel || "";
       const issueLevel = String(rawLevel).trim().toUpperCase();
       const levelBadgeClass = issueLevel === "A" ? "pill-level-a" : issueLevel === "B" ? "pill-level-b" : issueLevel === "C" ? "pill-level-c" : "pill-level-none";
@@ -1696,7 +2065,7 @@
 
       return `
         <div class="history-card ${editingSafetyRecordId === item.id ? "is-editing" : ""}" data-action="open-safety-card-detail" data-id="${escapeHtml(item.id)}" role="button" tabindex="0" aria-label="Mở chi tiết mối nguy tại ${escapeHtml(zoneLabel)}" title="Chạm để xem chi tiết, sửa hoặc xóa">
-          <img src="${photoThumb}" alt="Ảnh mối nguy tại ${escapeHtml(zoneLabel)}" class="history-card-thumb" onerror="this.src='images/Logo.jpg'">
+          <img src="${photoThumb}" alt="Ảnh mối nguy tại ${escapeHtml(zoneLabel)}" class="history-card-thumb" loading="lazy" decoding="async" onerror="this.src='images/Logo.jpg'">
           <div class="history-card-body">
             <div class="history-card-top">
               <span class="history-zone-chip">${escapeHtml(zoneLabel)}</span>
@@ -1719,7 +2088,12 @@
           </div>
         </div>
       `;
-    }).join("");
+    }).join("") + (totalPages > 1 ? `
+      <div class="safety-table-pager" aria-label="Phân trang danh sách mối nguy">
+        <button type="button" class="tiny-button" data-safety-history-page="${currentSafetyHistoryPage - 1}" ${currentSafetyHistoryPage <= 1 ? "disabled" : ""}>Trước</button>
+        <span>Trang ${currentSafetyHistoryPage}/${totalPages}</span>
+        <button type="button" class="tiny-button" data-safety-history-page="${currentSafetyHistoryPage + 1}" ${currentSafetyHistoryPage >= totalPages ? "disabled" : ""}>Sau</button>
+      </div>` : "");
   }
 
   function wireSafetyHistory(screen, context, overlay) {
@@ -1729,6 +2103,20 @@
 
     filter.addEventListener("change", () => {
       currentSafetyHistoryPeriodId = filter.value;
+      currentSafetyHistoryPage = 1;
+      safetyHistoryPageData = null;
+      safetyHistoryPageKey = "";
+      const now = new Date();
+      const dateStr = `${String(now.getDate()).padStart(2, "0")}/${String(now.getMonth() + 1).padStart(2, "0")}/${now.getFullYear()} ${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
+      renderSafetyHistory(screen, context, currentSafetyHistoryPeriodId, dateStr);
+    });
+
+    list.addEventListener("click", (event) => {
+      const button = event.target.closest("[data-safety-history-page]");
+      if (!button || !list.contains(button) || button.disabled) return;
+      currentSafetyHistoryPage = Number(button.dataset.safetyHistoryPage) || 1;
+      safetyHistoryPageData = null;
+      safetyHistoryPageKey = "";
       const now = new Date();
       const dateStr = `${String(now.getDate()).padStart(2, "0")}/${String(now.getMonth() + 1).padStart(2, "0")}/${now.getFullYear()} ${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
       renderSafetyHistory(screen, context, currentSafetyHistoryPeriodId, dateStr);
@@ -1736,7 +2124,24 @@
 
     const openRecordFromCard = (card) => {
       const record = (context?.state?.safetyRecords || []).find((item) => item.id === card.dataset.id);
-      if (record) openSafetyDetailModal(record, overlay, context);
+      if (!record) return;
+      if (window.FormDraftManager?.hasAnyDirty()) {
+        window.FormDraftManager.showUnsavedConfirmModal({
+          title: "Bạn có thay đổi chưa lưu!",
+          message: "Nội dung đang nhập đã được lưu tạm vào bộ nhớ (cache). Bạn có muốn tiếp tục chỉnh sửa hay xem mối nguy khác?",
+          onKeepEditing: () => {},
+          onSaveDraftAndExit: () => {
+            window.FormDraftManager?.flushAllDrafts();
+            openSafetyDetailModal(record, overlay, context);
+          },
+          onDiscardAndExit: () => {
+            window.FormDraftManager?.discardAllDirty();
+            openSafetyDetailModal(record, overlay, context);
+          },
+        });
+        return;
+      }
+      openSafetyDetailModal(record, overlay, context);
     };
     list.addEventListener("click", (event) => {
       const card = event.target.closest('.history-card[data-action="open-safety-card-detail"]');
@@ -1754,15 +2159,74 @@
     const user = context?.currentUser;
     const safetyPeriod = context?.getPeriod?.(safetyPeriodId);
     const todayValue = typeof context?.todayIsoDate === "function" ? context.todayIsoDate() : new Date().toISOString().slice(0, 10);
+    const mobileSafetyDraftKey = editingSafetyRecordId ? (`mob_safety_edit_${editingSafetyRecordId}`) : (`mob_safety_new_${safetyPeriodId}`);
+    const draftManager = typeof window !== "undefined" ? window.FormDraftManager : null;
+
+    const showSafetyDraftBanner = () => {
+      let banner = screen.querySelector("#mobileSafetyDraftBanner");
+      if (!banner) {
+        const container = screen.querySelector(".mobile-safety-container");
+        const formEl = screen.querySelector("#mobileSafetyForm");
+        if (container && formEl) {
+          banner = document.createElement("div");
+          banner.id = "mobileSafetyDraftBanner";
+          banner.className = "mobile-draft-banner";
+          banner.innerHTML = `
+            <div class="draft-banner-content">
+              <i class="fa-solid fa-clock-rotate-left"></i>
+              <span>Nội dung báo cáo an toàn đang có bản nháp chưa lưu (lưu tạm trong cache).</span>
+            </div>
+            <button type="button" class="btn-clear-draft-mobile" id="mobileSafetyClearDraftBtn" title="Xóa bản nháp này">
+              <i class="fa-solid fa-trash-can"></i> Xóa nháp
+            </button>
+          `;
+          container.insertBefore(banner, formEl);
+          banner.querySelector("#mobileSafetyClearDraftBtn")?.addEventListener("click", handleClearDraft);
+        }
+      }
+    };
+
+    const handleClearDraft = () => {
+      draftManager?.clearDraft(mobileSafetyDraftKey);
+      draftManager?.unregisterDirtyForm(mobileSafetyDraftKey);
+      uploadedSafetyPhotoData = "";
+      uploadedSafetyAfterPhotoData = "";
+      pendingSafetyPhotoAnnotations = [];
+      pendingSafetyAfterPhotoAnnotations = [];
+      showMobileToast("Đã xóa bản nháp báo cáo an toàn!");
+      renderSafetyScreen(overlay, context);
+    };
+
+    screen.querySelector("#mobileSafetyClearDraftBtn")?.addEventListener("click", handleClearDraft);
 
     // Cancel Edit button
     const cancelEditBtn = screen.querySelector("#cancelEditSafetyBtn");
     if (cancelEditBtn) {
       cancelEditBtn.addEventListener("click", () => {
-        editingSafetyRecordId = "";
-        uploadedSafetyPhotoData = "";
-        uploadedSafetyAfterPhotoData = "";
-        renderSafetyScreen(overlay, context);
+        const doCancelEdit = () => {
+          editingSafetyRecordId = "";
+          uploadedSafetyPhotoData = "";
+          uploadedSafetyAfterPhotoData = "";
+          renderSafetyScreen(overlay, context);
+        };
+        if (draftManager?.isFormDirty(mobileSafetyDraftKey)) {
+          window.FormDraftManager.showUnsavedConfirmModal({
+            title: "Bạn có thay đổi chưa lưu!",
+            message: "Nội dung đang nhập đã được lưu tạm vào bộ nhớ (cache). Bạn có muốn tiếp tục chỉnh sửa hay thoát?",
+            onKeepEditing: () => {},
+            onSaveDraftAndExit: () => {
+              draftManager?.unregisterDirtyForm(mobileSafetyDraftKey);
+              doCancelEdit();
+            },
+            onDiscardAndExit: () => {
+              draftManager?.clearDraft(mobileSafetyDraftKey);
+              draftManager?.unregisterDirtyForm(mobileSafetyDraftKey);
+              doCancelEdit();
+            },
+          });
+          return;
+        }
+        doCancelEdit();
       });
     }
 
@@ -1788,7 +2252,9 @@
             }
             placeholder?.classList.add("is-hidden");
             previewWrap?.classList.remove("is-hidden");
+            fileInput.classList.add("is-hidden");
             screen.querySelector("#mobilePhotoUploadBox")?.classList.add("has-photo");
+            markMobileSafetyDirty();
           };
           reader.readAsDataURL(file);
         }
@@ -1815,7 +2281,9 @@
         fileInput.value = "";
         previewWrap?.classList.add("is-hidden");
         placeholder?.classList.remove("is-hidden");
+        fileInput.classList.remove("is-hidden");
         screen.querySelector("#mobilePhotoUploadBox")?.classList.remove("has-photo");
+        markMobileSafetyDirty();
       });
     }
 
@@ -1841,7 +2309,9 @@
             }
             afterPlaceholder?.classList.add("is-hidden");
             afterPreviewWrap?.classList.remove("is-hidden");
+            afterFileInput.classList.add("is-hidden");
             screen.querySelector("#mobilePhotoAfterUploadBox")?.classList.add("has-photo");
+            markMobileSafetyDirty();
           };
           reader.readAsDataURL(file);
         }
@@ -1868,7 +2338,9 @@
         afterFileInput.value = "";
         afterPreviewWrap?.classList.add("is-hidden");
         afterPlaceholder?.classList.remove("is-hidden");
+        afterFileInput.classList.remove("is-hidden");
         screen.querySelector("#mobilePhotoAfterUploadBox")?.classList.remove("has-photo");
+        markMobileSafetyDirty();
       });
     }
 
@@ -1917,7 +2389,8 @@
                 if (draftField === "afterPhotoAnnotations") pendingSafetyAfterPhotoAnnotations = annotations;
                 else pendingSafetyPhotoAnnotations = annotations;
                 imgEl.dataset.safetyAnnotations = JSON.stringify(annotations);
-                window.refreshSafetyPhotoAnnotationThumbnail?.(imgEl, annotations);
+                (typeof window !== "undefined" ? window.refreshSafetyPhotoAnnotationThumbnail : null)?.(imgEl, annotations);
+                markMobileSafetyDirty();
               }
             : undefined,
         });
@@ -1930,7 +2403,9 @@
     });
     [
       ["#mobileOpenPhotoBtn", previewImg],
+      ["#mobileAnnotatePhotoBtn", previewImg],
       ["#mobileOpenAfterPhotoBtn", afterPreviewImg],
+      ["#mobileAnnotateAfterPhotoBtn", afterPreviewImg],
     ].forEach(([selector, imgEl]) => {
       screen.querySelector(selector)?.addEventListener("click", (event) => openPhotoPreview(imgEl, event));
     });
@@ -1938,6 +2413,83 @@
     // Form submit handler
     const form = screen.querySelector("#mobileSafetyForm");
     if (form) {
+      const captureMobileSafetySnapshot = () => ({
+        areaId: screen.querySelector("#mobileSafetyZoneSelect")?.value || "",
+        issueDate: screen.querySelector("#mobileSafetyIssueDate")?.value || "",
+        note: screen.querySelector("#mobileSafetyDescription")?.value || "",
+        photoDataUrl: uploadedSafetyPhotoData || "",
+        photoAnnotations: pendingSafetyPhotoAnnotations || [],
+        afterPhotoDataUrl: uploadedSafetyAfterPhotoData || "",
+        afterPhotoAnnotations: pendingSafetyAfterPhotoAnnotations || [],
+        stop6: screen.querySelector("#mobileSafetyStop6")?.value || "",
+        level: screen.querySelector("#mobileSafetyLevel")?.value || "",
+        foundChannel: screen.querySelector("#mobileSafetyFoundChannel")?.value || "",
+        issueStatus: screen.querySelector("#mobileSafetyIssueStatus")?.value || "",
+        issueCount: screen.querySelector("#mobileSafetyIssueCount")?.value || "1",
+        issueFoundBy: screen.querySelector("#mobileSafetyIssueFoundBy")?.value || "",
+        employeeCode: screen.querySelector("#mobileSafetyEmployeeCode")?.value || "",
+        issueItemLabel: screen.querySelector("#mobileSafetyIssueItemLabel")?.value || "",
+        improvementContent: screen.querySelector("#mobileSafetyImprovementContent")?.value || "",
+        actionOwner: screen.querySelector("#mobileSafetyActionOwner")?.value || "",
+        actionPlan: screen.querySelector("#mobileSafetyActionPlan")?.value || "",
+        completionDate: screen.querySelector("#mobileSafetyCompletionDate")?.value || "",
+      });
+
+      const isMobileSafetyDirty = () => {
+        if (!form?.isConnected || screen.classList.contains("is-hidden")) return false;
+        const cur = captureMobileSafetySnapshot();
+        if (editingSafetyRecordId) {
+          const existing = (context?.state?.safetyRecords || []).find((r) => r.id === editingSafetyRecordId);
+          if (existing) {
+            return Boolean(
+              cur.note.trim() !== String(existing.note || "").trim() ||
+              cur.improvementContent.trim() !== String(existing.improvementContent || "").trim() ||
+              cur.photoDataUrl !== (existing.photoDataUrl || "") ||
+              JSON.stringify(cur.photoAnnotations || []) !== JSON.stringify(existing.photoAnnotations || []) ||
+              cur.afterPhotoDataUrl !== (existing.afterPhotoDataUrl || "") ||
+              JSON.stringify(cur.afterPhotoAnnotations || []) !== JSON.stringify(existing.afterPhotoAnnotations || []) ||
+              cur.areaId !== (existing.areaId || "") ||
+              cur.stop6 !== (existing.issueType || "") ||
+              cur.level !== (existing.issueLevel || "") ||
+              cur.issueStatus !== (existing.issueStatus || "open")
+            );
+          }
+        }
+        return Boolean(
+          cur.note.trim() ||
+          cur.photoDataUrl ||
+          cur.afterPhotoDataUrl ||
+          cur.improvementContent.trim()
+        );
+      };
+
+      const markMobileSafetyDirty = () => {
+        if (isMobileSafetyDirty()) {
+          draftManager?.saveDraft(mobileSafetyDraftKey, captureMobileSafetySnapshot());
+        } else {
+          draftManager?.clearDraft(mobileSafetyDraftKey);
+        }
+      };
+      if (!isMobileSafetyDirty()) {
+        draftManager?.clearDraft(mobileSafetyDraftKey);
+      }
+
+      draftManager?.registerDirtyForm(mobileSafetyDraftKey, {
+        isDirty: isMobileSafetyDirty,
+        getSnapshot: captureMobileSafetySnapshot,
+        onDiscard: () => {
+          draftManager?.clearDraft(mobileSafetyDraftKey);
+          uploadedSafetyPhotoData = "";
+          uploadedSafetyAfterPhotoData = "";
+          pendingSafetyPhotoAnnotations = [];
+          pendingSafetyAfterPhotoAnnotations = [];
+          editingSafetyRecordId = "";
+          screen.querySelector("#mobileSafetyDraftBanner")?.remove();
+        },
+      });
+
+      form.addEventListener("input", markMobileSafetyDirty);
+      form.addEventListener("change", markMobileSafetyDirty);
       if (!checkSafetyPermission(context)) {
         form.querySelectorAll("input, select, textarea").forEach((input) => { input.disabled = true; });
         form.insertAdjacentHTML("afterbegin", '<p class="findings-readonly" role="status">Chỉ xem — tài khoản người xem không có quyền thêm, sửa, xóa đánh giá an toàn.</p>');
@@ -1957,7 +2509,7 @@
         }
         if (isSubmittingSafety) return;
 
-        if (document.activeElement && typeof document.activeElement.blur === "function") {
+        if (typeof document !== "undefined" && document.activeElement && typeof document.activeElement.blur === "function") {
           document.activeElement.blur();
         }
 
@@ -1983,7 +2535,13 @@
         const level = screen.querySelector("#mobileSafetyLevel")?.value || "";
         const foundChannel = screen.querySelector("#mobileSafetyFoundChannel")?.value || "worker";
         const issueStatus = screen.querySelector("#mobileSafetyIssueStatus")?.value || "open";
-        const issueCount = parsePositiveIntegerInput(screen.querySelector("#mobileSafetyIssueCount")?.value);
+        const parseCount = typeof parsePositiveIntegerInput === "function"
+          ? parsePositiveIntegerInput
+          : (value) => {
+              const number = Number(String(value ?? "").trim());
+              return Number.isInteger(number) && number >= 1 ? number : null;
+            };
+        const issueCount = parseCount(screen.querySelector("#mobileSafetyIssueCount")?.value ?? "1");
         const issueFoundBy = screen.querySelector("#mobileSafetyIssueFoundBy")?.value?.trim() || "";
         const employeeCode = screen.querySelector("#mobileSafetyEmployeeCode")?.value?.trim() || "";
         const issueItemLabel = screen.querySelector("#mobileSafetyIssueItemLabel")?.value?.trim() || "Nhận diện nguy cơ mất an toàn";
@@ -2046,7 +2604,7 @@
         const file = fileInput?.files?.[0];
         if (file && typeof context?.prepareScorePhoto === "function") {
           try {
-            const prepared = await context.prepareScorePhoto(file, null, false, safetyPeriodId);
+            const prepared = await context.prepareScorePhoto(file, null, false, safetyPeriodId, "an-toan");
             finalPhotoDataUrl = prepared.photoDataUrl || finalPhotoDataUrl;
             finalPhotoName = prepared.photoName || finalPhotoName;
           } catch (_) {}
@@ -2057,7 +2615,7 @@
         const afterFile = afterFileInput?.files?.[0];
         if (afterFile && typeof context?.prepareScorePhoto === "function") {
           try {
-            const preparedAfter = await context.prepareScorePhoto(afterFile, null, false, safetyPeriodId);
+            const preparedAfter = await context.prepareScorePhoto(afterFile, null, false, safetyPeriodId, "an-toan");
             finalAfterPhotoDataUrl = preparedAfter.photoDataUrl || finalAfterPhotoDataUrl;
             finalAfterPhotoName = preparedAfter.photoName || finalAfterPhotoName;
           } catch (_) {}
@@ -2133,6 +2691,8 @@
           if (fileInput) fileInput.value = "";
           if (afterFileInput) afterFileInput.value = "";
 
+          draftManager?.clearDraft(mobileSafetyDraftKey);
+          draftManager?.unregisterDirtyForm(mobileSafetyDraftKey);
           showMobileToast(isEditing ? "Đã cập nhật báo cáo an toàn!" : "Đã lưu báo cáo an toàn thành công!");
           renderSafetyScreen(overlay, context);
         } catch (err) {

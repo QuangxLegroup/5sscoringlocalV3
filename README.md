@@ -8,12 +8,12 @@ Web app cham diem 5S theo bang mau `Tong Hop diem 5S thang 12.2025`.
 - CSS: giao dien, bang diem giong Excel, dashboard, popup.
 - JavaScript thuan: dang nhap, phan quyen, cham diem, luu du lieu noi bo, xuat Excel.
 
-Hien tai app luu file JSON noi bo trong folder `data` cua project. Anh minh hoa duoc nen JPEG va luu rieng theo thang-nam trong `data/photos/MM-YYYY`.
-Server Node nho trong `server.js` phuc vu giao dien va ghi du lieu noi bo, khong dung Firebase nua.
+Du lieu nghiep vu duoc luu trong PostgreSQL. Anh minh hoa duoc luu rieng theo thang-nam trong `data/photos/MM-YYYY`; PostgreSQL chi luu duong dan `/api/photos/...`, khong luu noi dung anh.
+Sau khi nhap va doi chieu PostgreSQL thanh cong, tep JSON nguon va cac ban JSON duoc to chuc lai da duoc xoa khoi may nay. Server khong doc/ghi JSON de luu du lieu khi chay.
 
 ## Chay app
 
-Chay server noi bo:
+Sau khi da chay `npm run migrate:postgres` thanh cong va cau hinh PostgreSQL trong `.env`, chay server noi bo:
 
 ```bash
 npm start
@@ -22,7 +22,35 @@ npm start
 Sau do mo dia chi localhost duoc in ra trong terminal, mac dinh la `http://127.0.0.1:5500`.
 Cac duong dan truc tiep gom `/login`, `/home`, `/assessor`, `/summary`, `/safety`, `/issue-stats`, `/catalog` va `/accounts`.
 Sau khi dang nhap, reload trinh duyet se giu phien noi bo va mo lai dung trang hien tai.
-Du lieu cham diem se nam tai `data/runtime/main-data.json`; anh moi se nam trong `data/photos/MM-YYYY` va file JSON chi giu duong dan anh.
+Du lieu cham diem va duong dan anh nam trong PostgreSQL; tep anh moi nam trong `data/photos/MM-YYYY`.
+
+Nhap du lieu cu vao PostgreSQL:
+
+```bash
+npm run migrate:postgres
+```
+
+Lenh nay doc `DATA_FILE`, chi nhap vao database trong neu database ung dung dang rong, doi chieu du lieu sau nhap va kiem tra tep nguon khong thay doi trong luc chay. Neu co bat ky loi nao, giao dich PostgreSQL bi rollback. Chi dung lenh nay khi co tep JSON nguon can nhap.
+
+## Cau truc PostgreSQL
+
+Schema duoc tao tu `src/server/repositories/schema.sql`. Du lieu nghiep vu duoc chia vao cac bang rieng:
+
+| Bang | Du lieu quan ly |
+| --- | --- |
+| `periods` | Ky cham diem va cau hinh ky |
+| `accounts` | Tai khoan va quyen |
+| `areas`, `safety_areas` | Zone cham diem 5S va zone an toan |
+| `managers`, `assessors`, `safety_managers`, `safety_assessors` | Danh muc quan ly va assessor |
+| `department_head_contacts`, `safety_department_head_contacts`, `safety_department_groups` | Truong bo phan va nhom phong ban |
+| `scores` | Tung diem cham theo ky, zone va tieu chi |
+| `safety_records` | Phieu danh gia an toan |
+| `five_s_findings` | Phieu van de 5S |
+| `five_s_finding_items` | Tung hang muc/van de va doi sach trong phieu 5S; co khoa ngoai den phieu cha |
+| `deleted_safety_records` | Thong tin truy vet phieu an toan da xoa |
+| `score_history` | Lich su thay doi diem |
+
+Cac cot loc pho bien nhu ky, nam/thang, zone, trang thai va ngay co chi muc de truy van nhanh. Cot `data` JSONB trong tung bang giu cac truong mo rong cua ban ghi de tuong thich day du voi app; day la du lieu PostgreSQL, khong phai tep JSON runtime. Cau hinh he thong it thay doi nam trong `app_root_values`; `app_meta`, `app_revision`, `app_collection_shapes` va `app_schema_migrations` la cac bang ho tro. Khi nang cap database da nhap JSON, server backfill cac bang moi trong transaction, doi chieu du lieu truoc khi commit, sau do doi ten bang chung cu thanh `app_records_legacy_archive`. Bang archive duoc giu de doi chieu va app khong doc/ghi bang nay.
 
 
 
@@ -88,10 +116,13 @@ Backend Node duoc tach theo Controller-Service-Repository:
 - `src/server/controllers/static-file-controller.js`: Controller phuc vu file giao dien.
 - `src/server/services/data-service.js`: Service xu ly lenh `set`, `update`, `remove` tren state va luu/doc anh trong `data/photos`.
 - `src/server/services/static-file-service.js`: Service doc file UI duoc phep public.
-- `src/server/repositories/json-file-repository.js`: Repository doc/ghi atomic file `data/runtime/main-data.json`.
+- `src/server/config/database-config.js`: nap cau hinh `.env` va tao thong so ket noi PostgreSQL.
+- `src/server/repositories/postgres-repository.js`: repository PostgreSQL; luu cac ban ghi lon theo hang, tao index theo ky/thang, zone va trang thai, ho tro phan trang.
+- `src/server/repositories/json-file-repository.js`: repository cu, chi duoc giu de phuc vu cac cong cu legacy; server production khong khoi tao repository nay.
+- `scripts/migrate-json-to-postgres.js`: nhap mot lan du lieu JSON cu, co transaction, checksum va doi chieu truoc khi commit.
 - `src/server/http/request.js` va `src/server/http/response.js`: helper HTTP dung chung.
 
-Luong luu du lieu: View -> `local-data-api.js` -> DataController -> DataService -> JsonFileRepository -> `data/runtime/main-data.json`; anh di qua `/api/photos` -> `data/photos/MM-YYYY`.
+Luong luu du lieu: View -> `local-data-api.js` -> DataController -> DataService -> PostgreSQL repository. Cac danh sach lon co endpoint phan trang `/api/data/page`; kiem tra thay doi su dung ETag de khong tai lai toan bo root khi du lieu khong doi. Anh di qua `/api/photos` -> `data/photos/MM-YYYY`.
 ## Chay bang Docker production
 
 Cau hinh Docker dung image Debian-based, khong dung Alpine:
@@ -99,19 +130,19 @@ Cau hinh Docker dung image Debian-based, khong dung Alpine:
 - Backend: `node:20-bookworm-slim`, cai `openssl` o ca build stage va runtime stage.
 - Frontend: copy static assets bang Node Debian image va serve bang `nginx:stable-bookworm`.
 - Nginx proxy `/api` ve service `backend`, nen may khac trong LAN chi can vao frontend port va API van la same-origin.
-- Du lieu JSON va anh upload duoc luu trong thu muc `data` cua project, duoc bind mount vao `/app/data`.
+- Anh upload duoc bind mount tu thu muc `data` vao `/app/data`; database PostgreSQL nam tren may host.
 
 Chay production stack:
 
-```bash
-cp .env.example .env
-node -e "console.log(require('node:crypto').randomBytes(32).toString('hex'))"
-# Dien ket qua vao JWT_SECRET trong .env, sau do:
+```powershell
+# Cau hinh .env, bat PostgreSQL tren may host va nhap du lieu cu mot lan.
+npm run migrate:postgres
+# Khoi dong app sau khi migration thanh cong.
 docker compose up -d --build
 ```
 
+Backend trong Docker dung `host.docker.internal:5432` de noi toi PostgreSQL tren Windows host. Neu PostgreSQL chi nghe `localhost`, can cho phep ket noi tu Docker gateway trong `postgresql.conf` va `pg_hba.conf` truoc khi chay stack. Thu muc `data/photos` chua cac tep anh app dang su dung; can giu va sao luu cung PostgreSQL.
+
 Docker Compose phuc vu frontend qua HTTP tren cong host `5500` (co the doi bang `FRONTEND_PORT`). Cac may tinh bang trong cung mang noi bo truy cap `http://<IP-LAN-cua-may-chu>:5500`; backend API chi bind loopback va duoc frontend proxy noi bo. Neu IP LAN thay doi, cap nhat `APP_URL` va `CORS_ORIGIN` trong `.env`. Khong chay dong thoi `npm start` va frontend Docker tren cung cong 5500.
 
-Truoc khi trien khai: chay `npm test`, `npm run check`, `docker compose config --quiet`; sao luu thu muc `data`. Tai khoan seed chi khoi tao khi chua co tai khoan, khong ghi de mat khau/quyen runtime khi khoi dong lai.
-
-Du an hien tai khong dung Prisma va khong co `schema.prisma`, nen khong can `binaryTargets`, migrate, db push hay seed. Du an cung khong dung PostgreSQL trong source hien tai, vi vay compose khong tao database service thua.
+Truoc khi trien khai: sao luu PostgreSQL va thu muc `data` (bao gom anh). Backend dung PostgreSQL duy nhat; neu chua co du lieu, no se dung khoi dong va yeu cau chay migration. Docker Compose khong tao them database container vi PostgreSQL dang chay tren may host.

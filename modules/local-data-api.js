@@ -23,6 +23,8 @@
   let rootCache = null;
   let rootSignature = "";
   let lastResponseSignature = "";
+  let lastDataEtag = "";
+  let lastDataRevision = null;
   let pollTimer = 0;
   let stream = null;
   let streamRetryTimer = 0;
@@ -30,9 +32,12 @@
   let pollAgainRequested = false;
   let activePollController = null;
   let offlineSyncing = false;
+  let onlineWriteInProgress = false;
+  const recentOwnDataWriteIds = new Map();
   let offlineSyncTimer = 0;
   let lastOfflineStatus = null;
   let offlineDbPromise = null;
+  let offlineRootPersistTimer = 0;
   let lastOfflineCommandTimestamp = 0;
   let demoMode = window.location.protocol === "file:";
   let authSession = null;
@@ -202,16 +207,7 @@
   }
 
   async function applyOfflineWrite(operation, path, value, writeOptions = {}) {
-    const currentRoot = clone(rootCache) || await readOfflineRoot() || {};
-    let nextRoot;
-
-    if (operation === "set") {
-      nextRoot = setAtPath(currentRoot, path, value);
-    } else if (operation === "update") {
-      nextRoot = updateAtPath(currentRoot, path, value);
-    } else if (operation === "remove") {
-      nextRoot = removeAtPath(currentRoot, path);
-    } else {
+    if (!["set", "update", "remove"].includes(operation)) {
       throw new Error(`LocalDataStore không hỗ trợ thao tác "${operation}".`);
     }
 
@@ -222,14 +218,31 @@
       value: clone(value),
       allowZoneManagerReassignment: writeOptions.allowZoneManagerReassignment === true,
       ...(writeOptions.scoreConflict ? { scoreConflict: clone(writeOptions.scoreConflict) } : {}),
-    });
-    rememberRoot(nextRoot);
-    notifyAll();
+    }, { scheduleSync: writeOptions.scheduleSync !== false });
+    const currentRoot = rootCache || await readOfflineRoot() || {};
+    const nextRoot = applyQueuedWritesToRoot(currentRoot, await getQueuedCommands());
+    rememberRoot(nextRoot, { signature: false, persist: false });
+    if (writeOptions.suppressLocalNotification !== true) notifyAll();
     return rootCache;
   }
 
+  async function stageOptimisticWrite(operation, path, value, writeOptions = {}) {
+    const entry = await enqueueOfflineCommand({
+      type: "data-write",
+      operation,
+      path: path || "",
+      value: clone(value),
+      allowZoneManagerReassignment: writeOptions.allowZoneManagerReassignment === true,
+      ...(writeOptions.scoreConflict ? { scoreConflict: clone(writeOptions.scoreConflict) } : {}),
+    }, { scheduleSync: false });
+    const currentRoot = rootCache || await readOfflineRoot() || {};
+    rememberRoot(applyQueuedWritesToRoot(currentRoot, await getQueuedCommands()), { signature: false, persist: false });
+    if (writeOptions.suppressLocalNotification !== true) notifyAll();
+    return entry;
+  }
+
   function applyQueuedWritesToRoot(root, entries) {
-    let nextRoot = clone(root) || {};
+    let nextRoot = isPlainObject(root) ? root : {};
     for (const entry of entries) {
       if ((entry.accountId && authSession?.accountId && entry.accountId !== authSession.accountId)
         || (entry.username && authSession?.username && entry.username !== authSession.username)) {
@@ -246,6 +259,74 @@
       }
     }
     return nextRoot;
+  }
+
+  function applyAcknowledgedWritesToRoot(root, acknowledgement) {
+    let nextRoot = isPlainObject(root) ? root : {};
+    (Array.isArray(acknowledgement?.applied) ? acknowledgement.applied : []).forEach((change) => {
+      if (!change?.path) return;
+      nextRoot = change.removed
+        ? removeAtPath(nextRoot, change.path)
+        : setAtPath(nextRoot, change.path, change.value);
+    });
+    return nextRoot;
+  }
+
+  function queuedWritePaths(entry) {
+    if (entry?.type !== "data-write") return [];
+    const baseParts = toPathParts(entry.path);
+    if (entry.operation === "update" && baseParts.length < 2 && isPlainObject(entry.value)) {
+      return Object.keys(entry.value).map((path) => [...baseParts, ...toPathParts(path)].join("/"));
+    }
+    return baseParts.length ? [baseParts.join("/")] : [];
+  }
+
+  function pathValueSignature(root, path) {
+    try {
+      return JSON.stringify(valueAtPath(root, path));
+    } catch (_) {
+      return "";
+    }
+  }
+
+  async function acceptWriteAcknowledgement(acknowledgement) {
+    const currentRoot = rootCache;
+    const currentPaths = (Array.isArray(acknowledgement?.applied) ? acknowledgement.applied : []).map((change) => change.path);
+    const pendingCommands = (await getQueuedCommands()).filter((entry) => entry.id !== acknowledgement?.commandId);
+    const affectedPaths = [...new Set([...currentPaths, ...pendingCommands.flatMap(queuedWritePaths)])];
+    const previousValues = affectedPaths.map((path) => pathValueSignature(currentRoot, path));
+    let acknowledgedRoot;
+    if (acknowledgement?.reloadRequired) {
+      acknowledgedRoot = await request("/api/data");
+    } else {
+      acknowledgedRoot = applyAcknowledgedWritesToRoot(rootCache, acknowledgement);
+    }
+    const finalRoot = applyQueuedWritesToRoot(acknowledgedRoot, pendingCommands);
+    const shouldNotify = Boolean(acknowledgement?.reloadRequired)
+      || affectedPaths.some((path, index) => previousValues[index] !== pathValueSignature(finalRoot, path));
+    rememberRoot(finalRoot, {
+      signature: Boolean(acknowledgement?.reloadRequired),
+      persist: !pendingCommands.length,
+    });
+    if (shouldNotify) notifyAll();
+  }
+
+  async function restoreAfterRejectedWrite(fallbackRoot) {
+    const pendingCommands = await getQueuedCommands();
+    try {
+      const serverRoot = await request("/api/data");
+      rememberRoot(applyQueuedWritesToRoot(serverRoot, pendingCommands), {
+        signature: !pendingCommands.length,
+        persist: !pendingCommands.length,
+      });
+    } catch (error) {
+      if (isAuthError(error)) clearAuthSession();
+      rememberRoot(applyQueuedWritesToRoot(fallbackRoot || {}, pendingCommands), {
+        signature: false,
+        persist: !pendingCommands.length,
+      });
+    }
+    notifyAll();
   }
 
   function getPhotoPeriodFolder(photo) {
@@ -295,6 +376,20 @@
     return signatureForText(JSON.stringify(root && typeof root === "object" ? root : null, (key, value) => (
       VOLATILE_ACCOUNT_FIELDS.has(key) ? undefined : value
     )));
+  }
+
+  function rememberDataRevision(revision) {
+    if (revision === null || revision === undefined || revision === "") return;
+    const value = Number(revision);
+    if (!Number.isSafeInteger(value) || value < 0) return;
+    if (lastDataRevision !== null && value < lastDataRevision) return;
+    lastDataRevision = value;
+    lastDataEtag = `"root-${value}"`;
+  }
+
+  function rememberDataEtag(etag) {
+    const match = /^"root-(\d+)"$/.exec(String(etag || "").trim());
+    if (match) rememberDataRevision(Number(match[1]));
   }
 
   function isIndexedDbAvailable() {
@@ -437,7 +532,7 @@
     await dispatchOfflineStatus({ pending: await getOfflineQueueCount(), lastError: "" });
   }
 
-  async function enqueueOfflineCommand(command) {
+  async function enqueueOfflineCommand(command, { scheduleSync = true } = {}) {
     let entry = null;
     const stored = await withOfflineStore(OFFLINE_QUEUE_STORE, "readwrite", (store) => {
       const getRequest = store.getAll();
@@ -465,7 +560,7 @@
       throw new Error("Trình duyệt không hỗ trợ bộ nhớ offline. Vui lòng dùng Chrome/Edge và thử lại.");
     }
     await dispatchOfflineStatus({ pending: await getOfflineQueueCount(), online: navigator.onLine });
-    scheduleOfflineSync();
+    if (scheduleSync) scheduleOfflineSync();
     return entry;
   }
 
@@ -627,14 +722,20 @@
       throw new Error("Ứng dụng đang mở bằng file nên sẽ chạy chế độ demo trong trình duyệt.");
     }
 
+    const { allowNotModified = false, ...fetchOptions } = options;
     const response = await fetch(buildUrl(path), {
-      ...options,
-      credentials: options.credentials || "include",
+      ...fetchOptions,
+      credentials: fetchOptions.credentials || "include",
       headers: {
         "Content-Type": "application/json",
         ...(options.headers || {}),
       },
     });
+
+    if (allowNotModified && response.status === 304) {
+      rememberDataEtag(response.headers.get("etag"));
+      return { notModified: true };
+    }
 
     const payload = await readJsonResponse(response);
     if (!response.ok) {
@@ -650,6 +751,10 @@
       throw error;
     }
 
+    const responseEtag = response.headers.get("etag");
+    if (responseEtag) rememberDataEtag(responseEtag);
+    if (path === "/api/data/write") rememberDataRevision(payload?.revision);
+
     return payload;
   }
 
@@ -657,9 +762,56 @@
     return error?.status === 401;
   }
 
+  function dataWriteRequest(entry, value = entry.value) {
+    rememberOwnDataWrite(entry.id);
+    return request("/api/data/write", {
+      method: "POST",
+      body: JSON.stringify({
+        commandId: entry.id,
+        operation: entry.operation,
+        path: entry.path || "",
+        value,
+        allowZoneManagerReassignment: entry.allowZoneManagerReassignment === true,
+        ...(entry.scoreConflict ? { scoreConflict: entry.scoreConflict } : {}),
+      }),
+    });
+  }
+
+  function rememberOwnDataWrite(commandId) {
+    const id = String(commandId || "");
+    if (!id) return;
+    if (recentOwnDataWriteIds.has(id)) {
+      window.clearTimeout(recentOwnDataWriteIds.get(id));
+      recentOwnDataWriteIds.delete(id);
+    }
+    const timer = window.setTimeout(() => recentOwnDataWriteIds.delete(id), 30000);
+    recentOwnDataWriteIds.set(id, timer);
+    while (recentOwnDataWriteIds.size > 256) {
+      const oldestId = recentOwnDataWriteIds.keys().next().value;
+      window.clearTimeout(recentOwnDataWriteIds.get(oldestId));
+      recentOwnDataWriteIds.delete(oldestId);
+    }
+  }
+
+  function dataChangedEventDetails(event) {
+    try {
+      return JSON.parse(event?.data || "");
+    } catch (_) {
+      return {};
+    }
+  }
+
+  function consumeOwnDataWriteEvent(detail) {
+    const commandId = String(detail?.commandId || "");
+    if (!commandId || !recentOwnDataWriteIds.has(commandId)) return false;
+    window.clearTimeout(recentOwnDataWriteIds.get(commandId));
+    recentOwnDataWriteIds.delete(commandId);
+    return true;
+  }
+
   async function flushOfflineQueue() {
     await dispatchOfflineStatus({ pending: await getOfflineQueueCount(), syncing: false, online: navigator.onLine, lastError: "" });
-    if (demoMode || offlineSyncing || !authSession) {
+    if (demoMode || offlineSyncing || onlineWriteInProgress || !authSession) {
       return false;
     }
     if (!navigator.onLine) {
@@ -676,11 +828,13 @@
     offlineSyncing = true;
     await dispatchOfflineStatus({ pending: entries.length, syncing: true, online: navigator.onLine, lastError: "" });
 
+    let activeEntry = null;
     try {
       await request("/api/health");
       let photoMap = await getPhotoMappings();
 
       for (const entry of entries) {
+        activeEntry = entry;
         if ((entry.accountId && authSession.accountId && entry.accountId !== authSession.accountId)
           || (entry.username && authSession.username && entry.username !== authSession.username)) {
           await dispatchOfflineStatus({
@@ -703,40 +857,24 @@
             photoMap = await getPhotoMappings();
           }
         } else if (entry.type === "photo-delete") {
+          const photo = transformOfflinePhotoRefs(entry.photo, photoMap);
           await request("/api/photos/delete", {
             method: "POST",
-            body: JSON.stringify(entry.photo || {}),
+            body: JSON.stringify(photo || {}),
           });
         } else if (entry.type === "data-write") {
           const value = transformOfflinePhotoRefs(entry.value, photoMap);
-          await request("/api/data/write", {
-            method: "POST",
-            body: JSON.stringify({
-              operation: entry.operation,
-              path: entry.path || "",
-              value,
-              allowZoneManagerReassignment: entry.allowZoneManagerReassignment === true,
-              ...(entry.scoreConflict ? { scoreConflict: entry.scoreConflict } : {}),
-            }),
-          });
+          const acknowledgement = await dataWriteRequest(entry, value);
+          await acceptWriteAcknowledgement(acknowledgement);
+          await deleteQueuedCommand(entry.id);
+          await dispatchOfflineStatus({ pending: await getOfflineQueueCount(), syncing: true, online: true, lastError: "" });
+          activeEntry = null;
+          continue;
         }
 
         await deleteQueuedCommand(entry.id);
         await dispatchOfflineStatus({ pending: await getOfflineQueueCount(), syncing: true, online: true, lastError: "" });
-      }
-
-      entries = await getQueuedCommands();
-      if (!entries.length) {
-        try {
-          const root = await request("/api/data");
-          const pendingEntries = await getQueuedCommands();
-          rememberRoot(applyQueuedWritesToRoot(root, pendingEntries));
-          notifyAll();
-        } catch (error) {
-          if (isAuthError(error)) {
-            throw error;
-          }
-        }
+        activeEntry = null;
       }
 
       return true;
@@ -744,6 +882,18 @@
       if (isAuthError(error)) {
         clearAuthSession();
         notifyAuthRevoked();
+      } else if ([400, 403, 409].includes(Number(error?.status))) {
+        if (activeEntry?.type === "data-write") {
+          await deleteQueuedCommand(activeEntry.id);
+          await restoreAfterRejectedWrite(rootCache);
+        }
+        await dispatchOfflineStatus({
+          pending: await getOfflineQueueCount(),
+          syncing: false,
+          online: navigator.onLine,
+          lastError: error.message || "Máy chủ từ chối một thay đổi đang chờ đồng bộ.",
+        });
+        return false;
       }
       await dispatchOfflineStatus({
         pending: await getOfflineQueueCount(),
@@ -758,6 +908,24 @@
       await dispatchOfflineStatus({ pending, syncing: false, online: navigator.onLine });
       if (pending && authSession && !demoMode && navigator.onLine) {
         scheduleOfflineSync(OFFLINE_SYNC_INTERVAL_MS);
+      }
+    }
+  }
+
+  async function waitForQueuedWritesToDrain() {
+    while (true) {
+      if (!navigator.onLine) {
+        throw new Error(CONNECTION_LOST_MESSAGE);
+      }
+      if (onlineWriteInProgress || offlineSyncing) {
+        await new Promise((resolve) => window.setTimeout(resolve, 30));
+        continue;
+      }
+      const pending = await getQueuedCommands();
+      if (!pending.length) return;
+      const synced = await flushOfflineQueue();
+      if (!synced && (await getQueuedCommands()).length) {
+        throw new Error("Một số thay đổi trước đó chưa đồng bộ được. Bản nháp điểm sẽ được giữ để thử lại.");
       }
     }
   }
@@ -937,10 +1105,19 @@
     }
   }
 
-  function rememberRoot(root) {
+  function rememberRoot(root, { signature = true, persist = true } = {}) {
     rootCache = root && typeof root === "object" ? root : null;
-    rootSignature = signatureForRoot(rootCache);
-    persistOfflineRoot(rootCache).catch(() => {});
+    if (signature) rootSignature = signatureForRoot(rootCache);
+    else if (!rootSignature) rootSignature = "pending-local-updates";
+    if (persist) scheduleOfflineRootPersist();
+  }
+
+  function scheduleOfflineRootPersist() {
+    if (offlineRootPersistTimer) return;
+    offlineRootPersistTimer = window.setTimeout(() => {
+      offlineRootPersistTimer = 0;
+      persistOfflineRoot(rootCache).catch(() => {});
+    }, 750);
   }
 
   async function loadRoot() {
@@ -952,8 +1129,8 @@
       const root = await request("/api/data");
       const queuedCommands = await getQueuedCommands();
       if (queuedCommands.length) {
-        const localRoot = rootCache || await readOfflineRoot() || root;
-        rememberRoot(applyQueuedWritesToRoot(localRoot, queuedCommands));
+        scheduleOfflineRootPersist();
+        rememberRoot(applyQueuedWritesToRoot(root, queuedCommands), { signature: false, persist: false });
         scheduleOfflineSync(500);
       } else {
         rememberRoot(root);
@@ -1011,10 +1188,17 @@
           return;
         }
       }
-      const root = demoMode ? readDemoRoot() : await request("/api/data", { signal: pollController.signal });
-      const signature = signatureForRoot(root);
+      const root = demoMode ? readDemoRoot() : await request("/api/data", {
+        signal: pollController.signal,
+        headers: lastDataEtag ? { "If-None-Match": lastDataEtag } : {},
+        allowNotModified: true,
+      });
+      if (root?.notModified) return;
+      const latestQueuedCommands = await getQueuedCommands();
+      const mergedRoot = applyQueuedWritesToRoot(root, latestQueuedCommands);
+      const signature = signatureForRoot(mergedRoot);
       if (signature !== rootSignature) {
-        rememberRoot(root);
+        rememberRoot(mergedRoot);
         notifyAll();
       }
       await notifyConnectionRestored({ retryPending: true });
@@ -1074,7 +1258,15 @@
 
     try {
       stream = new EventSource(buildUrl("/api/data/stream"), { withCredentials: true });
-      stream.addEventListener("data-changed", () => {
+      stream.addEventListener("data-changed", (event) => {
+        const detail = dataChangedEventDetails(event);
+        const revision = Number(detail?.revision);
+        if (consumeOwnDataWriteEvent(detail)) {
+          rememberDataRevision(revision);
+          return;
+        }
+        if (detail?.revision !== null && detail?.revision !== undefined
+          && Number.isSafeInteger(revision) && lastDataRevision !== null && revision <= lastDataRevision) return;
         pollRoot({ retryIfBusy: true });
       });
       stream.addEventListener("session-revoked", () => {
@@ -1097,41 +1289,119 @@
       return applyDemoWrite(operation, path, value);
     }
 
-    const queuedCommands = await getQueuedCommands().catch(() => []);
-    if (offlineSyncing || queuedCommands.length) {
+    let queuedCommands = await getQueuedCommands().catch(() => []);
+    while (writeOptions.scoreConflict && (!navigator.onLine || offlineSyncing || onlineWriteInProgress || queuedCommands.length)) {
+      try {
+        await waitForQueuedWritesToDrain();
+      } catch (waitError) {
+        waitError.offlineDraftSaved = true;
+        throw waitError;
+      }
+      queuedCommands = await getQueuedCommands().catch(() => []);
+    }
+    if (!navigator.onLine || offlineSyncing || onlineWriteInProgress || queuedCommands.length) {
       return applyOfflineWrite(operation, path, value, writeOptions);
     }
 
+    onlineWriteInProgress = true;
+    let fallbackRoot = clone(rootCache);
+    let entry = null;
+    let ephemeralEntry = false;
     try {
-      const root = await request("/api/data/write", {
-        method: "POST",
-        body: JSON.stringify({
+      fallbackRoot = fallbackRoot || await readOfflineRoot() || {};
+      try {
+        entry = await stageOptimisticWrite(operation, path, value, writeOptions);
+      } catch (storageError) {
+        if (!navigator.onLine) throw storageError;
+        entry = {
+          type: "data-write",
+          id: `online-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
           operation,
           path: path || "",
-          value,
+          value: clone(value),
           allowZoneManagerReassignment: writeOptions.allowZoneManagerReassignment === true,
-          ...(writeOptions.scoreConflict ? { scoreConflict: writeOptions.scoreConflict } : {}),
-        }),
+          ...(writeOptions.scoreConflict ? { scoreConflict: clone(writeOptions.scoreConflict) } : {}),
+        };
+        ephemeralEntry = true;
+        const localRoot = rootCache || clone(fallbackRoot) || {};
+        rememberRoot(applyQueuedWritesToRoot(localRoot, [entry]), { signature: false, persist: false });
+        if (writeOptions.suppressLocalNotification !== true) notifyAll();
+      }
+      await dispatchOfflineStatus({
+        pending: await getOfflineQueueCount(),
+        syncing: true,
+        online: true,
+        lastError: "",
       });
-      rememberRoot(root);
+      const photoMap = await getPhotoMappings();
+      const acknowledgement = await dataWriteRequest(entry, transformOfflinePhotoRefs(entry.value, photoMap));
+      await acceptWriteAcknowledgement(acknowledgement);
+      if (!ephemeralEntry) await deleteQueuedCommand(entry.id);
       await notifyConnectionRestored({ retryPending: true });
     } catch (error) {
       if (isAuthError(error)) {
+        if (entry && !ephemeralEntry) await deleteQueuedCommand(entry.id);
+        const pendingCommands = await getQueuedCommands();
+        rememberRoot(applyQueuedWritesToRoot(fallbackRoot, pendingCommands));
+        notifyAll();
+        clearAuthSession();
+        notifyAuthRevoked();
+        await dispatchOfflineStatus({
+          pending: await getOfflineQueueCount(),
+          syncing: false,
+          online: navigator.onLine,
+          lastError: error.message,
+        });
+        throw error;
+      }
+      if (!entry) {
+        await dispatchOfflineStatus({
+          pending: await getOfflineQueueCount(),
+          syncing: false,
+          online: navigator.onLine,
+          lastError: error.message || "Không lưu được thay đổi trên thiết bị.",
+        });
         throw error;
       }
       if (isNetworkLikeError(error)) {
-        const root = await applyOfflineWrite(operation, path, value, writeOptions);
+        if (entry.scoreConflict) {
+          if (!ephemeralEntry) await deleteQueuedCommand(entry.id);
+          await restoreAfterRejectedWrite(fallbackRoot);
+          error.offlineDraftSaved = true;
+          throw error;
+        }
+        if (ephemeralEntry) {
+          await restoreAfterRejectedWrite(fallbackRoot);
+          await dispatchOfflineStatus({
+            pending: await getOfflineQueueCount(),
+            syncing: false,
+            online: navigator.onLine,
+            lastError: error.message || "Không thể lưu thay đổi khi máy chủ mất kết nối.",
+          });
+          throw error;
+        }
         await notifyConnectionLost(error);
-        return root;
+        return rootCache;
       }
       if (Number.isFinite(Number(error?.status))) {
+        if (entry && !ephemeralEntry) await deleteQueuedCommand(entry.id);
+        await restoreAfterRejectedWrite(fallbackRoot);
+        await dispatchOfflineStatus({
+          pending: await getOfflineQueueCount(),
+          syncing: false,
+          online: navigator.onLine,
+          lastError: error.message,
+        });
         throw error;
       }
-      enterDemoMode(error);
-      return applyDemoWrite(operation, path, value);
+      await notifyConnectionLost(error);
+      return rootCache;
+    } finally {
+      onlineWriteInProgress = false;
+      const pending = await getOfflineQueueCount().catch(() => 0);
+      if (pending && authSession && !demoMode && navigator.onLine) scheduleOfflineSync(0);
     }
 
-    notifyAll();
     return rootCache;
   }
 
@@ -1142,7 +1412,7 @@
       photo: clone(photo || {}),
       localSignature: signatureForText(dataUrl),
     });
-    return saveDemoPhoto(photo);
+    return { ...saveDemoPhoto(photo), queued: true };
   }
 
   async function queuePhotoDelete(photo) {
@@ -1154,57 +1424,65 @@
     if (demoMode) {
       return saveDemoPhoto(photo);
     }
-
-    const queuedCommands = await getQueuedCommands().catch(() => []);
-    if (offlineSyncing || queuedCommands.length) {
-      return queuePhotoSave(photo);
-    }
-
-    try {
-      return await request("/api/photos", {
-        method: "POST",
-        body: JSON.stringify(photo || {}),
-      });
-    } catch (error) {
-      if (isAuthError(error)) {
-        throw error;
-      }
-      if (isNetworkLikeError(error)) {
-        const localPhoto = await queuePhotoSave(photo);
-        await notifyConnectionLost(error);
-        return localPhoto;
-      }
-      enterDemoMode(error);
-      return saveDemoPhoto(photo);
-    }
+    return queuePhotoSave(photo);
   }
 
   async function deletePhoto(photo) {
     if (demoMode) {
       return { ok: true };
     }
+    return queuePhotoDelete(photo);
+  }
 
-    const queuedCommands = await getQueuedCommands().catch(() => []);
-    if (offlineSyncing || queuedCommands.length) {
-      return queuePhotoDelete(photo);
-    }
-
-    try {
-      return await request("/api/photos/delete", {
-        method: "POST",
-        body: JSON.stringify(photo || {}),
+  function loadLocalCollectionPage(filters = {}) {
+    const sourceRoot = rootCache || readDemoRoot() || {};
+    let items = valueAtPath(sourceRoot, filters.collection);
+    items = Array.isArray(items) ? [...items] : isPlainObject(items)
+      ? Object.entries(items).map(([id, value]) => value && typeof value === "object" ? { id: value.id || id, ...value } : value)
+      : [];
+    const periods = valueAtPath(sourceRoot, "periods");
+    const periodValues = Array.isArray(periods) ? periods : isPlainObject(periods) ? Object.values(periods) : [];
+    const periodById = new Map(periodValues.map((period) => [String(period?.id || ""), period]));
+    if (filters.periodId) items = items.filter((item) => String(item?.periodId || "") === String(filters.periodId));
+    if (filters.areaId) items = items.filter((item) => String(item?.areaId || "") === String(filters.areaId));
+    if (filters.status) items = items.filter((item) => String(item?.issueStatus || item?.status || "") === String(filters.status));
+    if (filters.year || filters.month) {
+      items = items.filter((item) => {
+        const period = periodById.get(String(item?.periodId || ""));
+        const rawDate = String(item?.inspectionDate || item?.issueDate || item?.date || item?.createdAt || "");
+        const isoMatch = /^(\d{4})-(\d{1,2})/.exec(rawDate);
+        const localMatch = /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/.exec(rawDate);
+        const year = Number(period?.year || isoMatch?.[1] || localMatch?.[3] || 0);
+        const month = Number(period?.month || isoMatch?.[2] || localMatch?.[2] || 0);
+        return (!filters.year || year === Number(filters.year)) && (!filters.month || month === Number(filters.month));
       });
+    }
+    items.sort((left, right) => String(right?.inspectionDate || right?.createdAt || right?.updatedAt || "")
+      .localeCompare(String(left?.inspectionDate || left?.createdAt || left?.updatedAt || "")));
+    const page = Math.max(1, Math.trunc(Number(filters.page) || 1));
+    const pageSize = Math.min(100, Math.max(1, Math.trunc(Number(filters.pageSize) || 50)));
+    const total = items.length;
+    return {
+      items: items.slice((page - 1) * pageSize, page * pageSize),
+      page,
+      pageSize,
+      total,
+      totalPages: Math.ceil(total / pageSize),
+    };
+  }
+
+  async function loadCollectionPage(filters = {}) {
+    if (demoMode || !navigator.onLine) return loadLocalCollectionPage(filters);
+    const params = new URLSearchParams();
+    Object.entries(filters || {}).forEach(([key, value]) => {
+      if (value !== undefined && value !== null && String(value).trim() !== "") params.set(key, String(value));
+    });
+    const suffix = params.toString();
+    try {
+      return await request(`/api/data/page${suffix ? `?${suffix}` : ""}`);
     } catch (error) {
-      if (isAuthError(error)) {
-        throw error;
-      }
-      if (isNetworkLikeError(error)) {
-        await queuePhotoDelete(photo);
-        await notifyConnectionLost(error);
-        return { ok: true, queued: true };
-      }
-      enterDemoMode(error);
-      return { ok: true };
+      if (isNetworkLikeError(error)) return loadLocalCollectionPage(filters);
+      throw error;
     }
   }
 
@@ -1258,15 +1536,24 @@
   }
 
   function startOfflineSyncWatch() {
+    const persistBeforePageLeave = () => {
+      if (offlineRootPersistTimer) {
+        window.clearTimeout(offlineRootPersistTimer);
+        offlineRootPersistTimer = 0;
+      }
+      persistOfflineRoot(rootCache).catch(() => {});
+    };
     window.addEventListener("offline", () => {
       activePollController?.abort();
       notifyConnectionLost().catch(() => {});
     });
+    window.addEventListener("pagehide", persistBeforePageLeave);
     window.addEventListener("online", () => {
       scheduleOfflineSync(0);
       pollRoot({ retryIfBusy: true });
     });
     document.addEventListener("visibilitychange", () => {
+      if (document.hidden) persistBeforePageLeave();
       if (!document.hidden && navigator.onLine) {
         scheduleOfflineSync(0);
         pollRoot({ retryIfBusy: true });
@@ -1282,6 +1569,7 @@
   window.LocalDataStore = {
     ref,
     loadRoot,
+    loadCollectionPage,
     login,
     logout,
     restoreSession,

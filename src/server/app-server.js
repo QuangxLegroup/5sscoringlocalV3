@@ -34,7 +34,8 @@ function applyCorsHeaders(request, response, allowedOrigins) {
   response.setHeader("Access-Control-Allow-Origin", allowedOrigin);
   response.setHeader("Vary", "Origin");
   response.setHeader("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
-  response.setHeader("Access-Control-Allow-Headers", "Content-Type");
+  response.setHeader("Access-Control-Allow-Headers", "Content-Type, If-None-Match");
+  response.setHeader("Access-Control-Expose-Headers", "ETag");
   if (allowedOrigin !== "*") {
     response.setHeader("Access-Control-Allow-Credentials", "true");
   }
@@ -86,6 +87,12 @@ function createAppServer({ authController, authService, dataController, staticFi
       if (requestUrl.pathname === "/api/data" && request.method === "GET") {
         const authContext = await authService.authenticateRequest(request);
         await dataController.handleRead(request, response, authContext);
+        return;
+      }
+
+      if (requestUrl.pathname === "/api/data/page" && request.method === "GET") {
+        const authContext = await authService.authenticateRequest(request);
+        await dataController.handleReadPage(request, response, authContext, requestUrl);
         return;
       }
 

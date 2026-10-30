@@ -4,7 +4,7 @@
  * Khi mất mạng sẽ hiển thị trang offline thay vì lỗi trắng.
  */
 
-const CACHE_NAME = "legroup-5s-v45";
+const CACHE_NAME = "legroup-5s-v64";
 
 const STATIC_ASSETS = [
   "/",
@@ -13,6 +13,7 @@ const STATIC_ASSETS = [
   "/app.js",
   "/modules/local-data-api.js",
   "/modules/pages/user-guide-content.js",
+  "/modules/pages/guide-setup-page.js",
   "/standards.js",
   "/images/Logo.jpg",
   "/images/pwa-192.png",

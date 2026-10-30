@@ -400,11 +400,11 @@
                   <span>🗂</span>
                   Danh mục
                 </button>
-                <button class="account-menu-item admin-only" type="button" data-action="setup-user-guide">
+                <button class="account-menu-item admin-only" type="button" data-go-tab="guide-setup" data-action="setup-user-guide">
                   <span>❔</span>
                   Thiết lập hướng dẫn
                 </button>
-                <button class="account-menu-item admin-only" type="button" data-action="show-edit-history">
+                <button class="account-menu-item admin-only" type="button" data-go-tab="audit-log" data-action="show-edit-history">
                   <span>🕘</span>
                   Lịch sử chỉnh sửa
                 </button>

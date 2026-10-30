@@ -29,6 +29,18 @@
   let activeFactoryTab = "overview";
   let activeDepartmentChartView = "stacked";
 
+  function photoThumbnailUrl(value) {
+    const raw = String(value || "");
+    if (!raw.includes("/api/photos/")) return raw;
+    try {
+      const url = new URL(raw, window.location.href);
+      url.searchParams.set("size", "thumb");
+      return url.origin === window.location.origin ? `${url.pathname}${url.search}${url.hash}` : url.toString();
+    } catch (_) {
+      return raw;
+    }
+  }
+
   function clampPage(value, totalPages) {
     const page = Number(value);
     if (!Number.isFinite(page)) return 1;
@@ -1154,14 +1166,14 @@
       <td>${escapeHtml(getIssueDay(row, row.score.periodId))}</td>
       <td>${escapeHtml(getIssueMonth(row, row.score.periodId))}</td>
       <td>${escapeHtml(row.score.note || getIssueDescription(row))}</td>
-      <td>${row.score.photoDataUrl ? `<img class="safety-thumb" src="${row.score.photoDataUrl}" alt="Ảnh minh họa" ${photoAnnotationAttrs("photoAnnotations", canEdit)}>` : ""}</td>
+      <td>${row.score.photoDataUrl ? `<img class="safety-thumb" src="${escapeHtml(photoThumbnailUrl(row.score.photoDataUrl))}" data-preview-img="${escapeHtml(row.score.photoDataUrl)}" loading="lazy" decoding="async" alt="Ảnh minh họa" ${photoAnnotationAttrs("photoAnnotations", canEdit)}>` : ""}</td>
       <td>${escapeHtml(getIssueCount(row))}</td>
       ${SAFETY_STOP6_COLUMNS.map((column) => renderSafetyMarkCell(isSafetyStop6Selected(row.score, column.value), context)).join("")}
       ${SAFETY_LEVEL_COLUMNS.map((column) => renderSafetyMarkCell(isSafetyLevelSelected(row.score, column.value), context, column.value === "A" ? "level-a-column" : "level-mark")).join("")}
       ${SAFETY_FOUND_COLUMNS.map((column) => renderSafetyMarkCell(isSafetyFoundSelected(row.score, column.value), context, "", "v")).join("")}
       <td>${escapeHtml(getIssueEmployeeCode(row))}</td>
       <td>${escapeHtml(row.score.improvementContent || "")}${row.score.countermeasureDate ? `<br><small>Triển khai: ${escapeHtml(context.formatDateDisplay(row.score.countermeasureDate))}</small>` : ""}</td>
-      <td>${row.score.afterPhotoDataUrl ? `<img class="safety-thumb" src="${row.score.afterPhotoDataUrl}" alt="Ảnh sau cải tiến" ${photoAnnotationAttrs("afterPhotoAnnotations", canAnnotateCountermeasure)}>` : ""}</td>
+      <td>${row.score.afterPhotoDataUrl ? `<img class="safety-thumb" src="${escapeHtml(photoThumbnailUrl(row.score.afterPhotoDataUrl))}" data-preview-img="${escapeHtml(row.score.afterPhotoDataUrl)}" loading="lazy" decoding="async" alt="Ảnh sau cải tiến" ${photoAnnotationAttrs("afterPhotoAnnotations", canAnnotateCountermeasure)}>` : ""}</td>
       <td>${escapeHtml(row.score.actionOwner || "")}</td>
       <td>${escapeHtml(row.score.actionPlan || "")}</td>
       <td>${escapeHtml(completionDate)}</td>

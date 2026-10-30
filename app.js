@@ -415,6 +415,7 @@
   let expandedCatalogScope = "";
   let expandedAccountScope = "";
   let activeHistoryScope = FIVE_S_PERIOD_TYPE;
+  let expandedHistoryScope = FIVE_S_PERIOD_TYPE;
   const HISTORY_RETENTION_MONTHS = 3;
 
   function isHistoryEntryExpired(entry, months = HISTORY_RETENTION_MONTHS) {
@@ -446,8 +447,11 @@
   let pendingScoreUiRefreshRaf = null;
   let pendingScoreDraftProcessing = false;
   let modalCancelHandler = null;
+  let currentModalDraftKey = null;
+  let currentModalDraftSnapshotGetter = null;
   let imageAnnotatorCleanup = null;
   let imageAnnotatorClosing = false;
+  let fullscreenImageResizeCleanup = null;
   const SESSION_STORAGE_KEY = "legroup-5s-session";
   const SESSION_HEARTBEAT_MS = 30 * 1000;
   const LOGIN_ROUTE = "/login";
@@ -464,6 +468,8 @@
     accounts: "/accounts",
     "mobile-5s": "/mobile/5s",
     "mobile-safety": "/mobile/safety",
+    "audit-log": "/audit-log",
+    "guide-setup": "/guide-setup",
   });
   const SAFETY_REPORT_OPTIONS = Object.freeze([
     { id: "assessment", route: "/safety/danh-gia-an-toan", title: "ĐÁNH GIÁ AN TOÀN" },
@@ -977,10 +983,22 @@
       };
     });
 
-    normalized.fiveSFindings = normalized.fiveSFindings.map((sheet) => ({
-      ...sheet,
-      periodId: window.FiveSFindingsPage.resolvePeriodId(sheet, normalized.periods.filter((period) => period.type !== SAFETY_PERIOD_TYPE)),
-    }));
+    normalized.fiveSFindings = normalized.fiveSFindings.map((sheet) => {
+      const annotationsByRow = sheet.photoAnnotationsByRow && typeof sheet.photoAnnotationsByRow === "object"
+        ? sheet.photoAnnotationsByRow
+        : {};
+      const rows = Array.isArray(sheet.rows)
+        ? sheet.rows.map((row, index) => Object.prototype.hasOwnProperty.call(annotationsByRow, String(index))
+          ? { ...row, photoAnnotations: normalizeSafetyPhotoAnnotations(annotationsByRow[String(index)]) }
+          : row)
+        : sheet.rows;
+      const normalizedSheet = {
+        ...sheet,
+        rows,
+        periodId: window.FiveSFindingsPage.resolvePeriodId(sheet, normalized.periods.filter((period) => period.type !== SAFETY_PERIOD_TYPE)),
+      };
+      return normalizedSheet;
+    });
 
     normalized.managers = normalized.managers
       .map((manager) => {
@@ -1594,6 +1612,7 @@
             slot: draft.slot,
             expectedValue: draft.expectedValue || null,
           },
+          suppressLocalNotification: true,
         };
         if (draft.score) {
           await dbRef(`scores/${scoreId}`).set(draft.score, writeOptions);
@@ -1602,7 +1621,7 @@
         }
 
         for (const historyEntry of draft.historyEntries || []) {
-          await saveHistoryEntry(historyEntry);
+          await saveHistoryEntry(historyEntry, { suppressLocalNotification: true });
         }
         await dataStore.removePendingScoreDraft(draft.id);
         return { status: "saved" };
@@ -1643,6 +1662,64 @@
     throw error;
   }
 
+  function createScoreAuditHistoryEntry(score, previous, slot) {
+    const period = getPeriod(slot.periodId);
+    const area = getAreaForPeriod(slot.periodId, slot.areaId);
+    const item = getItem(slot.itemId);
+    const criterion = getCriterion(item, slot.criterionId);
+    const areaCode = area?.code || slot.areaId;
+    const target = `Zone ${areaCode} · ${item?.code || slot.itemId}${criterion?.label ? ` - ${criterion.label}` : ""}`;
+    const action = !previous ? "Thêm" : !score ? "Xóa" : "Sửa";
+    const beforeScore = formatScoreRecord(previous) || "Chưa chấm";
+    const afterScore = !score ? "Đã xóa" : formatScoreRecord(score) || "Chưa chấm";
+    const details = [];
+    if (beforeScore !== afterScore) details.push({ action, label: "Điểm chấm", target, before: beforeScore, after: afterScore });
+    if (String(previous?.note || "") !== String(score?.note || "")) {
+      details.push({
+        action: isAuditValueEmpty(previous?.note) ? "Thêm" : isAuditValueEmpty(score?.note) ? "Xóa" : "Sửa",
+        label: "Ghi chú",
+        target,
+        before: formatAuditValue(previous?.note),
+        after: formatAuditValue(score?.note),
+      });
+    }
+    if (Boolean(previous?.photoDataUrl) !== Boolean(score?.photoDataUrl)) {
+      details.push({
+        action: score?.photoDataUrl ? "Thêm" : "Xóa",
+        label: "Ảnh minh họa",
+        target,
+        before: previous?.photoDataUrl ? "Có ảnh" : "Không có ảnh",
+        after: score?.photoDataUrl ? "Có ảnh" : "Không có ảnh",
+      });
+    }
+    return {
+      id: makeId("history"),
+      timestamp: new Date().toISOString(),
+      periodId: slot.periodId,
+      periodLabel: periodLabel(period),
+      userName: getAccountDisplayName(currentUser, FIVE_S_PERIOD_TYPE, slot.periodId),
+      employeeCode: getHistoryEmployeeCode(currentUser, FIVE_S_PERIOD_TYPE, slot.periodId),
+      username: currentUser?.username || "",
+      areaId: slot.areaId,
+      areaCode,
+      itemId: slot.itemId,
+      itemCode: item?.code || slot.itemId,
+      itemName: item?.name || "",
+      criterionId: slot.criterionId,
+      criterionLabel: criterion?.label || "",
+      beforeLabel: beforeScore,
+      afterLabel: afterScore,
+      changeLabel: `${action} điểm 5S · ${target}`,
+      subjectLabel: "Chấm điểm 5S",
+      sectionLabel: "Chấm điểm 5S",
+      action,
+      auditTarget: target,
+      auditChanges: details.map((detail) => ({ ...detail, section: "Chấm điểm 5S", scope: FIVE_S_PERIOD_TYPE, periodId: slot.periodId })),
+      scoreSource: slot.scoreSource,
+      scope: FIVE_S_PERIOD_TYPE,
+    };
+  }
+
   async function saveScore(score, options = {}) {
     const expectedValue = Object.prototype.hasOwnProperty.call(options, "expectedValue")
       ? options.expectedValue
@@ -1651,10 +1728,15 @@
     if (!slot.periodId || !slot.areaId || !slot.itemId || !slot.criterionId) {
       throw new Error("Không xác định được ô điểm cần lưu.");
     }
+    const scoreFields = ["score", "status", "note", "photoDataUrl"];
+    const scoreChanged = scoreFields.some((field) => JSON.stringify(expectedValue?.[field] ?? null) !== JSON.stringify(score?.[field] ?? null));
+    const historyEntries = options.historyEntries || ((scoreChanged && (expectedValue || score))
+      ? [createScoreAuditHistoryEntry(score, expectedValue, slot)]
+      : []);
     if (dataStore?.isDemoMode?.()) {
       if (score) await dbRef(`scores/${score.id}`).set(score);
       else if (expectedValue?.id) await dbRef(`scores/${expectedValue.id}`).remove();
-      for (const entry of options.historyEntries || []) await saveHistoryEntry(entry);
+      for (const entry of historyEntries) await saveHistoryEntry(entry);
       return { status: "saved" };
     }
 
@@ -1663,7 +1745,7 @@
       slot,
       score: cloneValue(score),
       expectedValue: cloneValue(expectedValue),
-      historyEntries: options.historyEntries || [],
+      historyEntries,
       localUpdatedAt: score?.updatedAt || new Date().toISOString(),
       accountId: currentUser?.id || "",
       username: currentUser?.username || "",
@@ -1703,6 +1785,67 @@
       return ["open", "in_progress"].includes(previousStatus) || ["open", "in_progress"].includes(currentStatus);
     }
     return false;
+  }
+
+  const SAFETY_AUDIT_FIELDS = Object.freeze({
+    issueDate: "Ngày phát hiện",
+    issueDay: "Ngày phát hiện",
+    issueMonth: "Tháng phát hiện",
+    issueLocation: "Zone",
+    note: "Mối nguy hiểm / nội dung phát hiện",
+    photoDataUrl: "Ảnh hiện trường",
+    photoName: "Tên ảnh hiện trường",
+    photoAnnotations: "Nét khoanh ảnh hiện trường",
+    issueCount: "Số lần",
+    issueType: "STOP 6",
+    issueLevel: "Cấp bậc",
+    issueStatus: "Tình trạng",
+    issueFoundBy: "Người phát hiện",
+    employeeCode: "Mã nhân viên người phát hiện",
+    issueItemLabel: "Hạng mục",
+    foundChannel: "Nguồn phát hiện",
+    improvementContent: "Nội dung cải tiến / xử lý",
+    afterPhotoDataUrl: "Ảnh sau cải tiến",
+    afterPhotoName: "Tên ảnh sau cải tiến",
+    afterPhotoAnnotations: "Nét khoanh ảnh sau cải tiến",
+    actionOwner: "Người đảm nhiệm",
+    actionPlan: "Kế hoạch",
+    completionDate: "Ngày dự kiến hoàn thành",
+    countermeasureDate: "Ngày xử lý",
+    completedDate: "Ngày hoàn thành",
+  });
+
+  function isAuditValueEmpty(value) {
+    if (value === null || value === undefined) return true;
+    if (typeof value === "string") return !value.trim();
+    if (Array.isArray(value)) return value.length === 0;
+    return false;
+  }
+
+  function formatAuditValue(value, field = "") {
+    if (field === "photoDataUrl" || field === "afterPhotoDataUrl") return value ? "Có ảnh" : "Không có ảnh";
+    if (field === "photoAnnotations" || field === "afterPhotoAnnotations") return `${Array.isArray(value) ? value.length : 0} nét khoanh`;
+    if (isAuditValueEmpty(value)) return "(trống)";
+    const text = typeof value === "object" ? JSON.stringify(value) : String(value);
+    return text.length > 180 ? `${text.slice(0, 177)}…` : text;
+  }
+
+  function buildSafetyAuditDetails(previous, next, areaCode) {
+    const target = `Zone ${areaCode || "?"}`;
+    if (!previous) {
+      return [{ action: "Thêm", label: "Báo cáo đánh giá an toàn", target, before: "", after: String(next.note || "").trim() }];
+    }
+    return Object.entries(SAFETY_AUDIT_FIELDS).flatMap(([field, label]) => {
+      const before = previous[field];
+      const after = next[field];
+      if (JSON.stringify(before ?? null) === JSON.stringify(after ?? null)) return [];
+      if (isAuditValueEmpty(before) && isAuditValueEmpty(after)) return [];
+      const beforeFormatted = formatAuditValue(before, field);
+      const afterFormatted = formatAuditValue(after, field);
+      if (beforeFormatted === afterFormatted) return [];
+      const action = isAuditValueEmpty(before) ? "Thêm" : isAuditValueEmpty(after) ? "Xóa" : "Sửa";
+      return [{ action, label, target, before: beforeFormatted, after: afterFormatted }];
+    });
   }
 
   async function saveSafetyRecord(record) {
@@ -1759,6 +1902,24 @@
     } else {
       await dbRef(`safetyRecords/${record.id}`).set(record);
     }
+    const area = getAreaForPeriod(record.periodId, record.areaId);
+    const areaCode = area?.code || String(record.issueLocation || "").replace(/^zone\s*/i, "").trim();
+    const details = buildSafetyAuditDetails(previous, record, areaCode);
+    if (details.length) {
+      await logDetailedHistoryChange({
+        sectionLabel: "Đánh giá an toàn",
+        action: previous ? "Sửa" : "Thêm",
+        target: `Zone ${areaCode || "?"}`,
+        summary: `${previous ? "Sửa" : "Thêm"} báo cáo AT Zone ${areaCode || "?"}`,
+        before: previous ? String(previous.note || "") : "",
+        after: String(record.note || ""),
+        scope: SAFETY_PERIOD_TYPE,
+        periodId: record.periodId,
+        areaId: record.areaId,
+        areaCode,
+        details,
+      });
+    }
   }
 
   async function saveSafetyPhotoAnnotations(recordId, field, annotations) {
@@ -1775,17 +1936,49 @@
       : canManageSafetyRecord(record, currentUser);
     if (!canEdit) throw new Error("Bạn không có quyền lưu nét khoanh trên ảnh này.");
 
-    const nextRecord = {
-      ...record,
-      [field]: normalizeSafetyPhotoAnnotations(annotations),
-      updatedAt: new Date().toISOString(),
-    };
-    await saveSafetyRecord(nextRecord);
-    const index = state.safetyRecords.findIndex((item) => item.id === recordId);
-    if (index >= 0) {
+    const previousAnnotations = record[field];
+    const previousUpdatedAt = record.updatedAt;
+    const nextAnnotations = normalizeSafetyPhotoAnnotations(annotations);
+    if (JSON.stringify(normalizeSafetyPhotoAnnotations(previousAnnotations)) === JSON.stringify(nextAnnotations)) return true;
+    const updatedAt = new Date().toISOString();
+    const legacyScoreId = String(record.id || "").startsWith("safety-") ? String(record.id).slice("safety-".length) : "";
+    const isLegacyScoreRecord = Boolean(legacyScoreId && state.scores.some((score) => score.id === legacyScoreId));
+    if (isLegacyScoreRecord) {
+      const nextRecord = { ...record, [field]: nextAnnotations, updatedAt };
+      await saveSafetyRecord(nextRecord);
       Object.assign(record, nextRecord);
-      state.safetyRecords[index] = record;
+      return true;
     }
+    record[field] = nextAnnotations;
+    record.updatedAt = updatedAt;
+    try {
+      await dbRef(`safetyRecords/${record.id}`).update({ [field]: nextAnnotations, updatedAt });
+    } catch (error) {
+      if (record[field] === nextAnnotations) {
+        record[field] = previousAnnotations;
+        record.updatedAt = previousUpdatedAt;
+      }
+      throw error;
+    }
+    const area = getAreaForPeriod(record.periodId, record.areaId);
+    const label = field === "afterPhotoAnnotations" ? "Nét khoanh ảnh sau cải tiến" : "Nét khoanh ảnh hiện trường";
+    await logDetailedHistoryChange({
+      sectionLabel: "Đánh giá an toàn",
+      action: nextAnnotations.length ? "Sửa" : "Xóa",
+      target: `Zone ${area?.code || "?"}`,
+      summary: `${nextAnnotations.length ? "Sửa" : "Xóa"} ${label} · Zone ${area?.code || "?"}`,
+      scope: SAFETY_PERIOD_TYPE,
+      periodId: record.periodId,
+      areaId: record.areaId,
+      areaCode: area?.code || "",
+      details: [{
+        action: nextAnnotations.length ? "Sửa" : "Xóa",
+        label,
+        target: `Zone ${area?.code || "?"}`,
+        before: `${normalizeSafetyPhotoAnnotations(previousAnnotations).length} nét khoanh`,
+        after: `${nextAnnotations.length} nét khoanh`,
+      }],
+    });
     return true;
   }
 
@@ -1799,14 +1992,60 @@
     if (!window.FiveSFindingsPage?.canEditSheet?.(createPageContext(), sheet)) {
       throw new Error("Bạn không có quyền lưu nét khoanh trên ảnh vấn đề 5S này.");
     }
-    const nextSheet = JSON.parse(JSON.stringify(sheet));
-    nextSheet.rows[index].photoAnnotations = normalizeSafetyPhotoAnnotations(annotations);
-    nextSheet.updatedAt = new Date().toISOString();
-    nextSheet.updatedBy = currentUser?.id || "";
+    const nextAnnotations = normalizeSafetyPhotoAnnotations(annotations);
+    if (JSON.stringify(normalizeSafetyPhotoAnnotations(row.photoAnnotations)) === JSON.stringify(nextAnnotations)) return true;
+    const previousSheet = sheet;
+    const annotationsByRow = {
+      ...(sheet.photoAnnotationsByRow && typeof sheet.photoAnnotationsByRow === "object" ? sheet.photoAnnotationsByRow : {}),
+      ...Object.fromEntries((sheet.rows || []).flatMap((item, rowNumber) => (
+        Array.isArray(item?.photoAnnotations) && item.photoAnnotations.length
+          ? [[String(rowNumber), item.photoAnnotations]]
+          : []
+      ))),
+    };
+    const photoAnnotationsByRow = { ...annotationsByRow, [index]: nextAnnotations };
+    const nextSheet = {
+      ...sheet,
+      rows: sheet.rows.map((item, rowNumber) => rowNumber === index
+        ? { ...item, photoAnnotations: nextAnnotations }
+        : item),
+      photoAnnotationsByRow,
+      updatedAt: new Date().toISOString(),
+      updatedBy: currentUser?.id || "",
+    };
     validateFiveSFindingSave(nextSheet);
-    await dbRef(`fiveSFindings/${sheetId}`).set(nextSheet);
     const stateIndex = state.fiveSFindings.findIndex((item) => item.id === sheetId);
     if (stateIndex >= 0) state.fiveSFindings[stateIndex] = nextSheet;
+    try {
+      // Keep large photos and finding rows out of each annotation save request.
+      await dbRef(`fiveSFindings/${sheetId}`).update({
+        photoAnnotationsByRow,
+        updatedAt: nextSheet.updatedAt,
+        updatedBy: nextSheet.updatedBy,
+      });
+    } catch (error) {
+      if (state.fiveSFindings[stateIndex] === nextSheet) state.fiveSFindings[stateIndex] = previousSheet;
+      throw error;
+    }
+    const area = getAreaForPeriod(sheet.periodId, sheet.areaId);
+    const auditTarget = `Zone ${area?.code || "?"} · dòng ${index + 1}`;
+    await logDetailedHistoryChange({
+      sectionLabel: "Vấn đề 5S",
+      action: nextAnnotations.length ? "Sửa" : "Xóa",
+      target: auditTarget,
+      summary: `${nextAnnotations.length ? "Sửa" : "Xóa"} nét khoanh ảnh vấn đề 5S · ${auditTarget}`,
+      scope: FIVE_S_PERIOD_TYPE,
+      periodId: sheet.periodId,
+      areaId: sheet.areaId,
+      areaCode: area?.code || "",
+      details: [{
+        action: nextAnnotations.length ? "Sửa" : "Xóa",
+        label: "Nét khoanh ảnh vấn đề",
+        target: auditTarget,
+        before: `${normalizeSafetyPhotoAnnotations(row.photoAnnotations).length} nét khoanh`,
+        after: `${nextAnnotations.length} nét khoanh`,
+      }],
+    });
     return true;
   }
 
@@ -1817,14 +2056,32 @@
     await dbRef(`scores/${scoreId}`).remove();
   }
 
-  async function deleteSafetyRecordFromDb(recordId) {
+  async function deleteSafetyRecordFromDb(recordId, recordSnapshot = null) {
     await dbRef(`safetyRecords/${recordId}`).remove();
+    const record = recordSnapshot || state.safetyRecords.find((item) => item.id === recordId);
+    if (!record) return;
+    const area = getAreaForPeriod(record.periodId, record.areaId);
+    const areaCode = area?.code || String(record.issueLocation || "").replace(/^zone\s*/i, "").trim();
+    await logDetailedHistoryChange({
+      sectionLabel: "Đánh giá an toàn",
+      action: "Xóa",
+      target: `Zone ${areaCode || "?"}`,
+      summary: `Xóa báo cáo AT Zone ${areaCode || "?"}`,
+      before: String(record.note || ""),
+      after: "Đã xóa",
+      scope: SAFETY_PERIOD_TYPE,
+      periodId: record.periodId,
+      areaId: record.areaId,
+      areaCode,
+      details: [{ action: "Xóa", label: "Báo cáo đánh giá an toàn", target: `Zone ${areaCode || "?"}`, before: String(record.note || ""), after: "Đã xóa" }],
+    });
   }
 
   async function deleteSafetyRecordDirect(recordId) {
     const record = state.safetyRecords.find((item) => item.id === recordId);
     if (!record) return false;
     if (!canManageSafetyRecord(record)) throw new Error("Bạn không có quyền xóa báo cáo an toàn này.");
+    const recordCopy = cloneValue(record);
     const deletedMarker = getDeletedSafetyRecordMarker(record);
     const keepDeletedMarker = shouldKeepDeletedSafetyRecordMarker(record);
     const updates = {
@@ -1839,6 +2096,21 @@
           deletedMarker,
         ]
       : (state.deletedSafetyRecords || []).filter((item) => item.id !== deletedMarker.id);
+    const area = getAreaForPeriod(recordCopy.periodId, recordCopy.areaId);
+    const areaCode = area?.code || String(recordCopy.issueLocation || "").replace(/^zone\s*/i, "").trim();
+    await logDetailedHistoryChange({
+      sectionLabel: "Đánh giá an toàn",
+      action: "Xóa",
+      target: `Zone ${areaCode || "?"}`,
+      summary: `Xóa báo cáo AT Zone ${areaCode || "?"}`,
+      before: String(recordCopy.note || ""),
+      after: "Đã xóa",
+      scope: SAFETY_PERIOD_TYPE,
+      periodId: recordCopy.periodId,
+      areaId: recordCopy.areaId,
+      areaCode,
+      details: [{ action: "Xóa", label: "Báo cáo đánh giá an toàn", target: `Zone ${areaCode || "?"}`, before: String(recordCopy.note || ""), after: "Đã xóa" }],
+    });
     return true;
   }
 
@@ -1902,6 +2174,10 @@
       return false;
     }
 
+    if (Array.isArray(entry.auditChanges) && entry.auditChanges.length) {
+      return true;
+    }
+
     const beforeLabel = String(entry.beforeLabel || "");
     const afterLabel = String(entry.afterLabel || "");
     if (beforeLabel && afterLabel && beforeLabel === afterLabel) {
@@ -1919,6 +2195,66 @@
       return entry.subjectLabel;
     }
     return [entry.beforeLabel, entry.afterLabel].filter(Boolean).join(" → ") || "Cập nhật dữ liệu";
+  }
+
+  function getAuditAction(entry) {
+    if (["Thêm", "Sửa", "Xóa"].includes(entry?.action)) return entry.action;
+    const text = String(entry?.changeLabel || "").trim().toLocaleLowerCase("vi");
+    if (/^(thêm|tạo|nhập|khôi phục)\b/.test(text) || !entry?.beforeLabel) return "Thêm";
+    if (/^(xóa|đã xóa|gỡ)\b/.test(text) || String(entry?.afterLabel || "").trim().toLocaleLowerCase("vi") === "đã xóa") return "Xóa";
+    return "Sửa";
+  }
+
+  function isMeaningfulAuditItem(change) {
+    if (!change) return false;
+    const before = String(change.before ?? "").trim();
+    const after = String(change.after ?? "").trim();
+    if (before && after && before === after) {
+      return false;
+    }
+    return true;
+  }
+
+  function getAuditChanges(entry) {
+    const inferredScope = entry?.scope ? normalizeCatalogType(entry.scope) : getHistoryEntryScope(entry);
+    if (Array.isArray(entry?.changes) && entry.changes.length) {
+      return entry.changes
+        .filter(isMeaningfulAuditItem)
+        .map((change) => ({
+          section: String(change.section || entry.sectionLabel || entry.subjectLabel || "Dữ liệu"),
+          action: ["Thêm", "Sửa", "Xóa"].includes(change.action) ? change.action : getAuditAction(entry),
+          label: String(change.label || entry.changeLabel || getHistoryChangeText(entry)),
+          target: String(change.target || entry.auditTarget || ""),
+          before: String(change.before || ""),
+          after: String(change.after || ""),
+          scope: change.scope ? normalizeCatalogType(change.scope) : inferredScope,
+          periodId: String(change.periodId || entry.periodId || ""),
+        }));
+    }
+    if (Array.isArray(entry?.auditChanges) && entry.auditChanges.length) {
+      return entry.auditChanges
+        .filter(isMeaningfulAuditItem)
+        .map((change) => ({
+          section: String(change.section || entry.sectionLabel || entry.subjectLabel || "Dữ liệu"),
+          action: ["Thêm", "Sửa", "Xóa"].includes(change.action) ? change.action : getAuditAction(entry),
+          label: String(change.label || entry.changeLabel || getHistoryChangeText(entry)),
+          target: String(change.target || entry.auditTarget || ""),
+          before: String(change.before || ""),
+          after: String(change.after || ""),
+          scope: change.scope ? normalizeCatalogType(change.scope) : inferredScope,
+          periodId: String(change.periodId || entry.periodId || ""),
+        }));
+    }
+    return [{
+      section: String(entry?.sectionLabel || entry?.subjectLabel || "Dữ liệu"),
+      action: getAuditAction(entry),
+      label: getHistoryChangeText(entry),
+      target: String(entry?.auditTarget || ""),
+      before: String(entry?.beforeLabel || ""),
+      after: String(entry?.afterLabel || ""),
+      scope: inferredScope,
+      periodId: String(entry?.periodId || ""),
+    }];
   }
 
   function stageHistoryEntry(entry) {
@@ -1944,6 +2280,12 @@
     const existing = (state.history || []).find((item) => item.id === sessionHistoryId || item.sessionId === currentSessionId);
     const changeCount = Number(existing?.changeCount || 0) + 1;
     const latestChange = getHistoryChangeText(normalizedEntry);
+    const addedChanges = getAuditChanges(normalizedEntry).map((change) => ({ ...change, timestamp }));
+    const changes = [...(Array.isArray(existing?.changes) ? existing.changes : []), ...addedChanges];
+    const scopes = [...new Set([
+      ...(Array.isArray(existing?.scopes) ? existing.scopes : existing?.scope ? [existing.scope] : []),
+      ...addedChanges.map((change) => change.scope).filter(Boolean),
+    ].map(normalizeCatalogType))];
     state.history = (state.history || []).filter((item) => item.id !== normalizedEntry.id && item.id !== sessionHistoryId && item.sessionId !== currentSessionId);
 
     const sessionPeriodId = normalizedEntry.periodId || existing?.periodId || "";
@@ -1955,6 +2297,8 @@
       periodId: sessionPeriodId,
       periodLabel: normalizedEntry.periodLabel || existing?.periodLabel || "",
       userName: getAccountDisplayName(currentUser, sessionScope, sessionPeriodId),
+      employeeCode: getHistoryEmployeeCode(currentUser, sessionScope, sessionPeriodId) || String(existing?.employeeCode || "").trim(),
+      accountId: currentUser?.id || "",
       username: currentUser?.username || "",
       areaId: normalizedEntry.areaId || existing?.areaId || "",
       areaCode: normalizedEntry.areaCode || existing?.areaCode || "",
@@ -1972,8 +2316,10 @@
       sessionStartedAt: currentSessionStartedAt || existing?.sessionStartedAt || timestamp,
       sessionLastChangedAt: timestamp,
       changeCount,
+      changes,
+      scopes,
       latestChange,
-      changeLabel: `Phiên đăng nhập có ${changeCount} thay đổi`,
+      changeLabel: `Phiên đăng nhập có ${changes.length} thay đổi`,
       note: changeCount === 1 ? latestChange : `Thay đổi gần nhất: ${latestChange}`,
     };
 
@@ -1981,7 +2327,7 @@
     return sessionEntry;
   }
 
-  async function saveHistoryEntry(entry) {
+  async function saveHistoryEntry(entry, writeOptions = {}) {
     const stagedEntry = stageHistoryEntry(entry);
     if (!stagedEntry) {
       return;
@@ -1998,12 +2344,12 @@
           }
         });
         cleanupUpdates[`history/${stagedEntry.id}`] = stagedEntry;
-        await dbRef().update(cleanupUpdates);
+        await dbRef().update(cleanupUpdates, writeOptions);
         return;
       }
     }
 
-    await dbRef(`history/${stagedEntry.id}`).set(stagedEntry);
+    await dbRef(`history/${stagedEntry.id}`).set(stagedEntry, writeOptions);
   }
 
   async function updateRootWithOptionalRenderSuppression(updates, { suppressRender = false } = {}) {
@@ -3132,11 +3478,158 @@
     return normalizeAccountRole(account?.role) === ROLE_DEPARTMENT_HEAD;
   }
 
+  function normalizePersonNameKey(name) {
+    return String(name || "")
+      .trim()
+      .toLowerCase()
+      .replace(/^(mrs\b\.?|ms\b\.?|mr\b\.?)\s*/i, "")
+      .trim();
+  }
+
   function getAccountIdentityNames(account) {
     return [...new Set([
       account?.name,
+      account?.displayName,
       isDepartmentHeadAccount(account) ? account?.departmentHeadName : "",
     ].map((value) => String(value || "").trim()).filter(Boolean))];
+  }
+
+  function getHistoryEmployeeCode(account = currentUser, scope = "", periodId = "") {
+    const direct = String(account?.employeeCode || "").trim();
+    if (direct && direct.toLowerCase() !== "chưa có") return direct;
+    const names = getAccountIdentityNames(account);
+    const types = scope ? [normalizeCatalogType(scope)] : [FIVE_S_PERIOD_TYPE, SAFETY_PERIOD_TYPE];
+    const candidates = [];
+    types.forEach((type) => {
+      const scopedPeriodId = periodId && getCatalogTypeForPeriod(periodId) === type ? periodId : getActivePeriodId(type);
+      if (!scopedPeriodId) return;
+      const personId = getAccountPersonId(account, type);
+      const people = [
+        ...getPeriodCatalogManagers(type, scopedPeriodId),
+        ...getPeriodCatalogAssessors(type, scopedPeriodId),
+        ...getDepartmentHeadRows(scopedPeriodId),
+      ];
+      people.forEach((person) => {
+        const isLinked = personId && String(person.id || "") === String(personId);
+        const isNamed = names.some((name) => sameNormalizedText(name, person.name) || normalizePersonNameKey(name) === normalizePersonNameKey(person.name));
+        if ((isLinked || isNamed) && String(person.employeeCode || "").trim()) candidates.push(String(person.employeeCode).trim());
+      });
+    });
+    if (!candidates.length && typeof getCatalogPersonProfiles === "function") {
+      getCatalogPersonProfiles().forEach((person) => {
+        const isMatched = account && accountMatchesCatalogPerson(account, person);
+        const isNamed = names.some((name) => sameNormalizedText(name, person.name) || normalizePersonNameKey(name) === normalizePersonNameKey(person.name));
+        if ((isMatched || isNamed) && String(person.employeeCode || "").trim()) candidates.push(String(person.employeeCode).trim());
+      });
+    }
+    const uniqueCodes = [...new Set(candidates.map(employeeCodeKey))];
+    const resolvedCode = uniqueCodes.length === 1 ? candidates.find((code) => employeeCodeKey(code) === uniqueCodes[0]) : (candidates[0] || "");
+    if (resolvedCode && account && !account.employeeCode) {
+      account.employeeCode = resolvedCode;
+    }
+    return resolvedCode;
+  }
+
+  function resolveHistoryEntryEmployeeCode(entry) {
+    const direct = String(entry?.employeeCode || "").trim();
+    if (direct && direct.toLowerCase() !== "chưa có") {
+      return direct;
+    }
+
+    const username = String(entry?.username || "").trim().toLowerCase();
+    const accountId = String(entry?.accountId || "").trim();
+    const userName = String(entry?.userName || "").trim();
+
+    let account = null;
+    if (username) {
+      account = (state.accounts || []).find((acc) => String(acc.username || "").trim().toLowerCase() === username);
+    }
+    if (!account && accountId) {
+      account = (state.accounts || []).find((acc) => String(acc.id || "").trim() === accountId);
+    }
+    if (!account && userName) {
+      account = (state.accounts || []).find((acc) => {
+        return getAccountIdentityNames(acc).some((name) => sameNormalizedText(name, userName) || normalizePersonNameKey(name) === normalizePersonNameKey(userName))
+          || sameNormalizedText(acc.displayName, userName)
+          || sameNormalizedText(acc.name, userName);
+      });
+    }
+
+    if (account) {
+      const accDirect = String(account.employeeCode || "").trim();
+      if (accDirect && accDirect.toLowerCase() !== "chưa có") {
+        return accDirect;
+      }
+      const computed = getHistoryEmployeeCode(account, entry?.scope || "", entry?.periodId || "");
+      if (computed && computed.toLowerCase() !== "chưa có") {
+        return computed;
+      }
+    }
+
+    if (typeof getCatalogPersonProfiles === "function") {
+      const profiles = getCatalogPersonProfiles();
+      const matchedProfile = profiles.find((p) => {
+        if (!p.employeeCode) return false;
+        if (account && accountMatchesCatalogPerson(account, p)) return true;
+        if (userName && (sameNormalizedText(p.name, userName) || normalizePersonNameKey(p.name) === normalizePersonNameKey(userName))) return true;
+        if (account?.name && (sameNormalizedText(p.name, account.name) || normalizePersonNameKey(p.name) === normalizePersonNameKey(account.name))) return true;
+        if (account?.displayName && (sameNormalizedText(p.name, account.displayName) || normalizePersonNameKey(p.name) === normalizePersonNameKey(account.displayName))) return true;
+        return false;
+      });
+      if (matchedProfile?.employeeCode) {
+        return String(matchedProfile.employeeCode).trim();
+      }
+    }
+
+    const defaultType = typeof FIVE_S_PERIOD_TYPE !== "undefined" ? FIVE_S_PERIOD_TYPE : "5s";
+    const periodId = entry?.periodId || (typeof getActivePeriodId === "function" ? getActivePeriodId(entry?.scope || defaultType) : "");
+    if (periodId && typeof getPeriodSnapshot === "function") {
+      const snapshot = getPeriodSnapshot(periodId);
+      if (snapshot) {
+        const peopleInSnapshot = [
+          ...(snapshot.assessors || []),
+          ...(snapshot.managers || []),
+          ...(snapshot.safetyAssessors || []),
+          ...(snapshot.safetyManagers || []),
+        ];
+        const matched = peopleInSnapshot.find((p) => {
+          if (!p.employeeCode) return false;
+          if (userName && (sameNormalizedText(p.name, userName) || normalizePersonNameKey(p.name) === normalizePersonNameKey(userName))) return true;
+          if (account && (accountMatchesCatalogPerson(account, p) || sameNormalizedText(account.name, p.name) || sameNormalizedText(account.displayName, p.name))) return true;
+          return false;
+        });
+        if (matched?.employeeCode) {
+          return String(matched.employeeCode).trim();
+        }
+
+        if (entry?.areaId || entry?.areaCode) {
+          const area = (snapshot.areas || []).find((a) => (entry.areaId && a.id === entry.areaId) || (entry.areaCode && a.code === entry.areaCode));
+          if (area?.departmentHeadEmployeeCode && userName && (sameNormalizedText(area.departmentHead, userName) || normalizePersonNameKey(area.departmentHead) === normalizePersonNameKey(userName))) {
+            return String(area.departmentHeadEmployeeCode).trim();
+          }
+        }
+      }
+    }
+
+    const allCatalogPeople = [
+      ...(state.assessors || []),
+      ...(state.managers || []),
+      ...(state.safetyAssessors || []),
+      ...(state.safetyManagers || []),
+      ...(state.departmentHeadContacts || []),
+      ...(state.safetyDepartmentHeadContacts || []),
+    ];
+    const catalogMatch = allCatalogPeople.find((p) => {
+      if (!p.employeeCode) return false;
+      if (userName && (sameNormalizedText(p.name, userName) || normalizePersonNameKey(p.name) === normalizePersonNameKey(userName))) return true;
+      if (account && (sameNormalizedText(account.name, p.name) || sameNormalizedText(account.displayName, p.name))) return true;
+      return false;
+    });
+    if (catalogMatch?.employeeCode) {
+      return String(catalogMatch.employeeCode).trim();
+    }
+
+    return "";
   }
 
   function employeeCodeKey(value) {
@@ -3278,6 +3771,18 @@
   function isDepartmentHeadOnlyAccount(account) {
     return isDepartmentHeadAccount(account)
       && ![FIVE_S_PERIOD_TYPE, SAFETY_PERIOD_TYPE].some((type) => hasOperationalAccountRole(account, type));
+  }
+
+  function isDepartmentHeadDisplayAccount(account) {
+    if (!account || isAdminAccount(account) || isViewerAccount(account)) return false;
+    if (isDepartmentHeadAccount(account) || hasDepartmentHeadRole(account)) return true;
+    const roles = [
+      getAccountRoleForType(account, FIVE_S_PERIOD_TYPE),
+      getAccountRoleForType(account, SAFETY_PERIOD_TYPE),
+      ...(Array.isArray(account.accessRoles) ? account.accessRoles : []),
+      ...Object.values(account.rolesByType || {}),
+    ];
+    return roles.includes(ROLE_DEPARTMENT_HEAD) || Boolean(account.departmentHeadName);
   }
 
   function getAccountPersonIdsForRole(account, type = FIVE_S_PERIOD_TYPE, role = "", periodId = getActivePeriodId(type)) {
@@ -3513,8 +4018,13 @@
   function getAvailableFiveSScoreSources(account = currentUser, periodId = getActivePeriodId(FIVE_S_PERIOD_TYPE), areaId = "") {
     const roles = getAccountRolesForType(account, FIVE_S_PERIOD_TYPE, periodId);
     const sources = [];
-    if (roles.includes(ROLE_ZONE_OWNER)) sources.push(SCORE_SOURCE_SELF);
-    if (roles.includes(ROLE_ASSESSOR_5S)) sources.push(SCORE_SOURCE_ASSESSOR);
+    const hasZoneOwnerRole = roles.includes(ROLE_ZONE_OWNER);
+    const hasAssessorRole = roles.includes(ROLE_ASSESSOR_5S);
+    if (hasZoneOwnerRole) sources.push(SCORE_SOURCE_SELF);
+    if (hasAssessorRole) sources.push(SCORE_SOURCE_ASSESSOR);
+    if (hasZoneOwnerRole || hasAssessorRole) {
+      sources.push(SCORE_SOURCE_ASSESSOR, SCORE_SOURCE_SELF);
+    }
     if (isViewerAccount(account)) sources.push(SCORE_SOURCE_ASSESSOR, SCORE_SOURCE_SELF);
     if (hasDepartmentHeadRole(account, periodId) && !sources.includes(SCORE_SOURCE_ASSESSOR)) {
       sources.push(SCORE_SOURCE_ASSESSOR);
@@ -3523,8 +4033,11 @@
     if (isAdminAccount(account)) return [SCORE_SOURCE_ASSESSOR, SCORE_SOURCE_SELF];
     if (!areaId || isViewerAccount(account)) return uniqueSources;
     if (!getAllowedAreaIds(account, periodId).has(areaId)) return [];
+    const hasScoringAssignment = [SCORE_SOURCE_ASSESSOR, SCORE_SOURCE_SELF]
+      .some((source) => canEditFiveSScoreSource(account, source, areaId, periodId));
     return uniqueSources.filter((source) => canEditFiveSScoreSource(account, source, areaId, periodId)
-      || (source === SCORE_SOURCE_ASSESSOR && hasDepartmentHeadRole(account, periodId)));
+      || (source === SCORE_SOURCE_ASSESSOR && hasDepartmentHeadRole(account, periodId))
+      || (hasScoringAssignment && [SCORE_SOURCE_ASSESSOR, SCORE_SOURCE_SELF].includes(source)));
   }
 
   function getDefaultFiveSScoreSource(account = currentUser, periodId = getActivePeriodId(FIVE_S_PERIOD_TYPE), areaId = "") {
@@ -5545,7 +6058,7 @@
     if (["mobile-5s", "mobile-safety", "mobile-findings"].includes(activeTab)) {
       const initialTab = activeTab === "mobile-findings" ? "findings" : activeTab === "mobile-5s" ? "5s" : "safety";
       if (typeof window.openMobilePrototype === "function") {
-        window.openMobilePrototype(initialTab, createPageContext());
+        window.openMobilePrototype(initialTab, createPageContext(), { force: true });
       }
     } else {
       if (typeof window.closeMobilePrototype === "function") {
@@ -5558,6 +6071,8 @@
   function getAppTitle() {
     if (["five-s-findings", "mobile-findings"].includes(activeTab)) return "Vấn đề 5S";
     if (activeTab === "score-sheets") return "Phiếu 5S theo zone";
+    if (activeTab === "audit-log") return "Lịch sử chỉnh sửa";
+    if (activeTab === "guide-setup") return "Thiết lập hướng dẫn";
     if (activeTab === "safety" || activeTab === "mobile-safety") {
       const report = SAFETY_REPORT_BY_ID[activeSafetyReport];
       if (report?.id === "identification") {
@@ -6076,8 +6591,12 @@
       element.hidden = !currentUser;
     });
 
+    document.querySelectorAll(".header-guide-btn, .guide-view-menu-item").forEach((element) => {
+      element.hidden = !currentUser || isViewer;
+    });
+
     if (isViewer || isDepartmentHead) {
-      document.querySelectorAll("[data-tab='catalog'], [data-tab='accounts'], [data-go-tab='catalog'], [data-go-tab='accounts'], #tab-catalog, #tab-accounts").forEach((element) => {
+      document.querySelectorAll("[data-tab='catalog'], [data-tab='accounts'], [data-tab='audit-log'], [data-tab='guide-setup'], [data-go-tab='catalog'], [data-go-tab='accounts'], [data-go-tab='audit-log'], [data-go-tab='guide-setup'], #tab-catalog, #tab-accounts, #tab-audit-log, #tab-guide-setup").forEach((element) => {
         element.hidden = true;
       });
     }
@@ -6120,6 +6639,8 @@
       return false;
     }
     if (tab === "score-sheets") return isAdminAccount(currentUser);
+    if (tab === "audit-log") return isAdminAccount(currentUser);
+    if (tab === "guide-setup") return isAdminAccount(currentUser);
     if (["assessor", "summary", "mobile-5s"].includes(tab)) {
       const isAdmin = isAdminAccount(currentUser);
       const isViewer = isViewerAccount(currentUser);
@@ -6141,7 +6662,7 @@
     if (tab === "assessor" && isAdminAccount(currentUser)) {
       return false;
     }
-    return ["home", "assessor", "summary", "safety", "issue-stats", "catalog", "accounts", "mobile-5s", "mobile-safety"].includes(tab);
+    return ["home", "assessor", "summary", "safety", "issue-stats", "catalog", "accounts", "audit-log", "guide-setup", "mobile-5s", "mobile-safety"].includes(tab);
   }
 
   function getFallbackTab() {
@@ -6158,6 +6679,22 @@
 
   function setActiveTab(tab, options = {}) {
     const previousTab = activeTab;
+    if (tab !== previousTab && !options.force && window.FormDraftManager?.hasAnyDirty()) {
+      window.FormDraftManager.showUnsavedConfirmModal({
+        title: "Bạn có thay đổi chưa lưu!",
+        message: "Nội dung đang nhập đã được lưu tạm vào bộ nhớ (cache). Bạn có muốn tiếp tục chỉnh sửa hay chuyển trang?",
+        onKeepEditing: () => {},
+        onSaveDraftAndExit: () => {
+          window.FormDraftManager?.flushAllDrafts();
+          setActiveTab(tab, { ...options, force: true });
+        },
+        onDiscardAndExit: () => {
+          window.FormDraftManager?.discardAllDirty();
+          setActiveTab(tab, { ...options, force: true });
+        },
+      });
+      return;
+    }
     activeTab = isTabAllowed(tab) ? tab : getFallbackTab();
     if (activeTab !== previousTab) {
       if (activeTab === "catalog") {
@@ -6311,6 +6848,89 @@
     });
   }
 
+  const FIVE_S_FINDING_AUDIT_FIELDS = Object.freeze({
+    location: "Vị trí",
+    problem: "Vấn đề phát hiện",
+    fiveS: "Hạng mục 5S",
+    shift: "Ca",
+    photoDataUrl: "Ảnh vấn đề",
+    countermeasure: "Đối sách",
+    owner: "Người phụ trách",
+    dueDate: "Hạn hoàn thành",
+    progress: "Tiến độ",
+  });
+
+  function findingRowHasAuditContent(row) {
+    return Object.keys(FIVE_S_FINDING_AUDIT_FIELDS).some((field) => !isAuditValueEmpty(row?.[field]));
+  }
+
+  function getFiveSFindingAuditDetails(previous, next, areaCode) {
+    const zone = `Zone ${areaCode || "?"}`;
+    const details = [];
+    if (!previous) {
+      (next.rows || []).forEach((row, index) => {
+        if (!findingRowHasAuditContent(row)) return;
+        details.push({
+          action: "Thêm",
+          label: "Vấn đề 5S",
+          target: `${zone} · dòng ${index + 1}`,
+          before: "",
+          after: String(row.problem || "").trim(),
+        });
+      });
+      return details.length ? details : [{ action: "Thêm", label: "Phiếu vấn đề 5S", target: zone }];
+    }
+
+    const headerFields = { area: "Zone", inspector: "Người kiểm tra", inspectionDate: "Ngày kiểm tra" };
+    Object.entries(headerFields).forEach(([field, label]) => {
+      const before = previous[field] || "";
+      const after = next[field] || "";
+      if (String(before) === String(after)) return;
+      if (isAuditValueEmpty(before) && isAuditValueEmpty(after)) return;
+      const beforeFormatted = formatAuditValue(before);
+      const afterFormatted = formatAuditValue(after);
+      if (beforeFormatted === afterFormatted) return;
+      details.push({
+        action: isAuditValueEmpty(before) ? "Thêm" : isAuditValueEmpty(after) ? "Xóa" : "Sửa",
+        label,
+        target: zone,
+        before: beforeFormatted,
+        after: afterFormatted,
+      });
+    });
+
+    const previousRows = Array.isArray(previous.rows) ? previous.rows : [];
+    const nextRows = Array.isArray(next.rows) ? next.rows : [];
+    for (let index = 0; index < Math.max(previousRows.length, nextRows.length); index += 1) {
+      const beforeRow = previousRows[index] || null;
+      const afterRow = nextRows[index] || null;
+      const beforeHasContent = findingRowHasAuditContent(beforeRow);
+      const afterHasContent = findingRowHasAuditContent(afterRow);
+      const rowTarget = `${zone} · dòng ${index + 1}`;
+      if (!beforeHasContent && afterHasContent) {
+        details.push({ action: "Thêm", label: "Vấn đề 5S", target: rowTarget, before: "", after: String(afterRow.problem || "").trim() });
+        continue;
+      }
+      if (beforeHasContent && !afterHasContent) {
+        details.push({ action: "Xóa", label: "Vấn đề 5S", target: rowTarget, before: String(beforeRow.problem || "").trim(), after: "" });
+        continue;
+      }
+      if (!beforeHasContent || !afterHasContent) continue;
+      Object.entries(FIVE_S_FINDING_AUDIT_FIELDS).forEach(([field, label]) => {
+        const before = beforeRow?.[field];
+        const after = afterRow?.[field];
+        if (JSON.stringify(before ?? null) === JSON.stringify(after ?? null)) return;
+        if (isAuditValueEmpty(before) && isAuditValueEmpty(after)) return;
+        const beforeFormatted = formatAuditValue(before, field);
+        const afterFormatted = formatAuditValue(after, field);
+        if (beforeFormatted === afterFormatted) return;
+        const action = isAuditValueEmpty(before) ? "Thêm" : isAuditValueEmpty(after) ? "Xóa" : "Sửa";
+        details.push({ action, label, target: rowTarget, before: beforeFormatted, after: afterFormatted });
+      });
+    }
+    return details;
+  }
+
   function createPageContext() {
     return {
       get currentUser() {
@@ -6353,6 +6973,7 @@
       openFormModal,
       closeModal,
       escapeHtml,
+      loadCollectionPage: (filters) => dataStore?.loadCollectionPage?.(filters) || Promise.resolve({ items: [], total: 0, page: 1, pageSize: 0, totalPages: 0 }),
       hydrateAuthenticatedPhotos,
       formatDateDisplay,
       parseDisplayDateToIso,
@@ -6429,7 +7050,7 @@
       deleteSafetyRecordDirect,
       deleteSafetyRecordFromDb,
       showToast,
-      prepareScorePhoto,
+      prepareScorePhoto: (file, existingRecord, removePhoto, periodId, category) => prepareScorePhoto(file, existingRecord, removePhoto, periodId, category),
       deleteUnusedPhotoFiles,
       normalizeSafetyRecord,
       getAreaForPeriod,
@@ -6443,18 +7064,82 @@
       makeId,
       exportFiveSFindings,
       saveFiveSFinding: async (sheet) => {
+        const previous = cloneValue(state.fiveSFindings.find((item) => item.id === sheet.id) || null);
         stampFiveSFindingCountermeasureMetadata(sheet);
         validateFiveSFindingSave(sheet);
+        // Rows already contain the merged annotations; avoid leaving a stale
+        // row-index override after photos are replaced or findings reordered.
+        delete sheet.photoAnnotationsByRow;
         await dbRef(`fiveSFindings/${sheet.id}`).set(sheet);
+        const area = getAreaForPeriod(sheet.periodId, sheet.areaId);
+        const areaCode = area?.code || String(sheet.area || "").replace(/^zone\s*/i, "").trim();
+        const details = getFiveSFindingAuditDetails(previous, sheet, areaCode);
+        if (details.length) {
+          const action = previous ? "Sửa" : "Thêm";
+          await logDetailedHistoryChange({
+            sectionLabel: "Vấn đề 5S",
+            action,
+            target: `Zone ${areaCode || "?"}`,
+            summary: `${action} phiếu vấn đề 5S · Zone ${areaCode || "?"}`,
+            before: previous ? String(previous.inspectionDate || "") : "",
+            after: String(sheet.inspectionDate || ""),
+            scope: FIVE_S_PERIOD_TYPE,
+            periodId: sheet.periodId,
+            areaId: sheet.areaId,
+            areaCode,
+            details,
+          });
+        }
       },
       saveFiveSFindingsBatch: async (sheets) => {
+        const previousById = new Map(sheets.map((sheet) => [sheet.id, cloneValue(state.fiveSFindings.find((item) => item.id === sheet.id) || null)]));
         sheets.forEach(stampFiveSFindingCountermeasureMetadata);
         sheets.forEach(validateFiveSFindingSave);
+        sheets.forEach((sheet) => { delete sheet.photoAnnotationsByRow; });
         await dbRef().update(Object.fromEntries(sheets.map((sheet) => [`fiveSFindings/${sheet.id}`, sheet])));
+        for (const sheet of sheets) {
+          const previous = previousById.get(sheet.id) || null;
+          const area = getAreaForPeriod(sheet.periodId, sheet.areaId);
+          const areaCode = area?.code || String(sheet.area || "").replace(/^zone\s*/i, "").trim();
+          const details = getFiveSFindingAuditDetails(previous, sheet, areaCode);
+          if (!details.length) continue;
+          const action = previous ? "Sửa" : "Thêm";
+          await logDetailedHistoryChange({
+            sectionLabel: "Vấn đề 5S",
+            action,
+            target: `Zone ${areaCode || "?"}`,
+            summary: `${action} phiếu vấn đề 5S · Zone ${areaCode || "?"}`,
+            before: previous ? String(previous.inspectionDate || "") : "",
+            after: String(sheet.inspectionDate || ""),
+            scope: FIVE_S_PERIOD_TYPE,
+            periodId: sheet.periodId,
+            areaId: sheet.areaId,
+            areaCode,
+            details,
+          });
+        }
       },
       deleteFiveSFinding: async (id) => {
-        assertFiveSFindingAccess(state.fiveSFindings.find((item) => item.id === id));
+        const existing = state.fiveSFindings.find((item) => item.id === id);
+        assertFiveSFindingAccess(existing);
         await dbRef(`fiveSFindings/${id}`).remove();
+        if (existing) {
+          const area = getAreaForPeriod(existing.periodId, existing.areaId);
+          const areaCode = area?.code || String(existing.area || "").replace(/^zone\s*/i, "").trim();
+          await logDetailedHistoryChange({
+            sectionLabel: "Vấn đề 5S",
+            action: "Xóa",
+            target: `Zone ${areaCode || "?"}`,
+            summary: `Xóa phiếu vấn đề 5S · Zone ${areaCode || "?"}`,
+            before: String(existing.inspectionDate || ""),
+            after: "Đã xóa",
+            scope: FIVE_S_PERIOD_TYPE,
+            periodId: existing.periodId,
+            areaId: existing.areaId,
+            areaCode,
+            details: [{ action: "Xóa", label: "Phiếu vấn đề 5S", target: `Zone ${areaCode || "?"}`, before: `${(existing.rows || []).filter(findingRowHasAuditContent).length} dòng vấn đề`, after: "Đã xóa" }],
+          });
+        }
       },
       legacyRenderers: {
         accounts: renderAccountsTab,
@@ -6462,6 +7147,8 @@
         catalog: renderCatalogTab,
         data: renderDataTab,
         "score-sheets": renderAdminScoreSheetTab,
+        "audit-log": renderAuditLogTab,
+        "guide-setup": renderGuideSetupTab,
       },
     };
   }
@@ -7406,8 +8093,28 @@
       return;
     }
 
-    activeHistoryScope = normalizeCatalogType(scope);
-    openEditHistoryModal(activeHistoryScope);
+    const nextScope = normalizeCatalogType(scope);
+    if (expandedHistoryScope === nextScope) {
+      expandedHistoryScope = "";
+    } else {
+      expandedHistoryScope = nextScope;
+      activeHistoryScope = nextScope;
+      auditLogPagination.page = 1;
+    }
+
+    if (activeTab === "audit-log") {
+      renderActiveTab();
+      if (expandedHistoryScope) {
+        const tabEl = document.getElementById("tab-audit-log");
+        if (tabEl) {
+          try {
+            tabEl.scrollIntoView({ behavior: "smooth", block: "start" });
+          } catch (_) {}
+        }
+      }
+    } else {
+      goToTab("audit-log");
+    }
   }
 
   function renderCatalogTab() {
@@ -8090,7 +8797,7 @@
     const profile = getCatalogPersonProfiles().find((person) => person.key === profileKey);
     if (!profile) return;
     const roleOptions = getCatalogEmployeeRoleOptions();
-    const rolesHtml = roleOptions.map((option) => {
+    const renderRole = (option) => {
       const isChecked = option.scopes.some((type) => (profile.rolesByType[type] || []).includes(option.role));
       const sharedInputName = `employeeZones-${option.key}`;
       const scopeZonesHtml = option.scopes.length > 1
@@ -8120,7 +8827,19 @@
           ${scopeZonesHtml}
         </div>
       </div>`;
-    }).join("");
+    };
+    const currentRoles = roleOptions.filter((option) =>
+      option.scopes.some((type) => (profile.rolesByType[type] || []).includes(option.role)));
+    const availableRoles = roleOptions.filter((option) => !currentRoles.includes(option));
+    const rolesHtml = `
+      ${currentRoles.length ? `<section class="catalog-employee-role-section">
+        <strong>Quyền đang có</strong>
+        <div class="catalog-employee-role-grid">${currentRoles.map(renderRole).join("")}</div>
+      </section>` : ""}
+      ${availableRoles.length ? `<section class="catalog-employee-role-section">
+        <strong>Quyền chưa có · tích để thêm</strong>
+        <div class="catalog-employee-role-grid">${availableRoles.map(renderRole).join("")}</div>
+      </section>` : ""}`;
 
     openFormModal({
       title: "Sửa thông tin và quyền nhân viên",
@@ -8171,6 +8890,16 @@
         if (zones) zones.hidden = !checkbox.checked;
       });
     });
+  }
+
+  function editCatalogEmployeeForPerson(person) {
+    if (!requireAdminAction()) return;
+    const profile = getCatalogPersonProfiles().find((candidate) => accountMatchesCatalogPerson(candidate, person));
+    if (!profile) {
+      showToast("Không tìm thấy hồ sơ nhân viên trong danh mục.", true);
+      return;
+    }
+    editCatalogEmployee(profile.key);
   }
 
   function getEmployeeAccountRole(roleList, type) {
@@ -8786,7 +9515,7 @@
         .join("") || `<article class="account-card account-empty-card"><div><strong>Chưa có tài khoản người xem</strong><span>Tạo tài khoản người xem để theo dõi toàn bộ bảng biểu.</span></div></article>`;
     }
     if (elements.departmentHeadAccountList) {
-      const departmentHeadAccounts = state.accounts.filter(isDepartmentHeadOnlyAccount);
+      const departmentHeadAccounts = state.accounts.filter(isDepartmentHeadDisplayAccount);
       elements.departmentHeadAccountList.innerHTML = departmentHeadAccounts
         .map(departmentHeadAccountCardHtml)
         .join("") || `<article class="account-card account-empty-card"><div><strong>Chưa có tài khoản trưởng phòng</strong><span>Tạo tài khoản trưởng phòng để thêm, sửa, xóa đánh giá an toàn theo Zone quản lý.</span></div></article>`;
@@ -9705,6 +10434,7 @@
       periodId,
       periodLabel: periodLabel(getPeriod(periodId)),
       userName: getAccountDisplayName(currentUser, FIVE_S_PERIOD_TYPE, periodId),
+      employeeCode: getHistoryEmployeeCode(currentUser, FIVE_S_PERIOD_TYPE, periodId),
       username: currentUser?.username || "",
       areaId: area.id,
       areaCode: area.code,
@@ -9718,6 +10448,20 @@
       note: "Admin xóa điểm",
       scoreSource: normalizeScoreSource(record.scoreSource),
       scope: FIVE_S_PERIOD_TYPE,
+      subjectLabel: "Chấm điểm 5S",
+      sectionLabel: "Chấm điểm 5S",
+      action: "Xóa",
+      auditTarget: `Zone ${area.code} · ${item.code} - ${criterion.label}`,
+      auditChanges: [{
+        section: "Chấm điểm 5S",
+        action: "Xóa",
+        label: "Điểm chấm",
+        target: `Zone ${area.code} · ${item.code} - ${criterion.label}`,
+        before: formatScoreRecord(record),
+        after: "Đã xóa",
+        scope: FIVE_S_PERIOD_TYPE,
+        periodId,
+      }],
     };
     state.history.unshift(historyEntry);
     const result = await deleteScoreFromDb(record.id, {
@@ -9785,6 +10529,7 @@
       periodId,
       periodLabel: periodLabel(getPeriod(periodId)),
       userName: getAccountDisplayName(currentUser, FIVE_S_PERIOD_TYPE, periodId),
+      employeeCode: getHistoryEmployeeCode(currentUser, FIVE_S_PERIOD_TYPE, periodId),
       username: currentUser?.username || "",
       areaId: area.id,
       areaCode: area.code,
@@ -9798,6 +10543,43 @@
       afterLabel,
       note: note !== undefined ? note : (existing?.note || ""),
       scope: FIVE_S_PERIOD_TYPE,
+      subjectLabel: "Chấm điểm 5S",
+      sectionLabel: "Chấm điểm 5S",
+      action: score === null && !status && existing ? "Xóa" : existing ? "Sửa" : "Thêm",
+      auditTarget: `Zone ${area.code} · ${item.code} - ${criterion.label}`,
+      auditChanges: [
+        ...(beforeLabel !== afterLabel ? [{
+          section: "Chấm điểm 5S",
+          action: score === null && !status && existing ? "Xóa" : existing ? "Sửa" : "Thêm",
+          label: "Điểm chấm",
+          target: `Zone ${area.code} · ${item.code} - ${criterion.label}`,
+          before: beforeLabel || "Chưa chấm",
+          after: score === null && !status ? "Đã xóa" : afterLabel || "Chưa chấm",
+          scope: FIVE_S_PERIOD_TYPE,
+          periodId,
+        }] : []),
+        ...(noteChanged ? [{
+          section: "Chấm điểm 5S",
+          action: isAuditValueEmpty(existing?.note) ? "Thêm" : isAuditValueEmpty(note) ? "Xóa" : "Sửa",
+          label: "Ghi chú",
+          target: `Zone ${area.code} · ${item.code} - ${criterion.label}`,
+          before: formatAuditValue(existing?.note),
+          after: formatAuditValue(note),
+          scope: FIVE_S_PERIOD_TYPE,
+          periodId,
+        }] : []),
+        ...(photoChanged ? [{
+          section: "Chấm điểm 5S",
+          action: photoDataUrl ? "Thêm" : "Xóa",
+          label: "Ảnh minh họa",
+          target: `Zone ${area.code} · ${item.code} - ${criterion.label}`,
+          before: existing?.photoDataUrl ? "Có ảnh" : "Không có ảnh",
+          after: photoDataUrl ? "Có ảnh" : "Không có ảnh",
+          scope: FIVE_S_PERIOD_TYPE,
+          periodId,
+        }] : []),
+      ],
+      changeLabel: `${score === null && !status && existing ? "Xóa" : existing ? "Sửa" : "Thêm"} điểm 5S · Zone ${area.code} · ${item.code} (${criterion.label})`,
     };
     state.history.unshift(historyEntry);
 
@@ -9880,23 +10662,30 @@
       afterLabel: afterLabel || "Chưa chấm",
     });
 
-    if (navigator.onLine && dbWrites.length) suppressNextDataWatchRender += 1;
     scheduleScoreUiRefresh();
     try {
       const results = await Promise.all(dbWrites);
-      if (results[0]?.status === "server-kept" && navigator.onLine) {
-        suppressNextDataWatchRender = Math.max(0, suppressNextDataWatchRender - 1);
-      }
       return results[0];
     } catch (error) {
-      if (navigator.onLine && dbWrites.length) {
-        suppressNextDataWatchRender = Math.max(0, suppressNextDataWatchRender - 1);
-      }
       throw error;
     }
   }
 
-  function createAdminChangeEntry({ subjectLabel, beforeLabel = "", afterLabel = "", changeLabel = "", areaCode = "", note = "", scope = "", periodId = "" }) {
+  function createAdminChangeEntry({
+    subjectLabel,
+    sectionLabel = "",
+    action = "",
+    auditTarget = "",
+    auditChanges = [],
+    beforeLabel = "",
+    afterLabel = "",
+    changeLabel = "",
+    areaCode = "",
+    areaId = "",
+    note = "",
+    scope = "",
+    periodId = "",
+  }) {
     const normalizedScope = scope ? normalizeCatalogType(scope) : "";
     const period = getPeriod(periodId || (normalizedScope ? getActivePeriodId(normalizedScope) : undefined));
     const historyScope = normalizedScope || (period?.id ? getCatalogTypeForPeriod(period.id) : "");
@@ -9906,9 +10695,16 @@
       periodId: period?.id || "",
       periodLabel: periodLabel(period),
       userName: getAccountDisplayName(currentUser, historyScope, period?.id || ""),
+      employeeCode: getHistoryEmployeeCode(currentUser, historyScope, period?.id || ""),
+      accountId: currentUser?.id || "",
       username: currentUser?.username || "",
+      areaId,
       areaCode,
       subjectLabel,
+      sectionLabel: sectionLabel || subjectLabel,
+      action: ["Thêm", "Sửa", "Xóa"].includes(action) ? action : "",
+      auditTarget,
+      auditChanges: Array.isArray(auditChanges) ? auditChanges : [],
       beforeLabel,
       afterLabel,
       changeLabel: changeLabel || `${beforeLabel || "-"} → ${afterLabel || "-"}`,
@@ -9940,6 +10736,45 @@
     const historyEntry = createAdminChangeEntry(change);
     state.history.unshift(historyEntry);
     await saveHistoryEntry(historyEntry);
+  }
+
+  async function logDetailedHistoryChange({
+    sectionLabel,
+    action,
+    target = "",
+    summary,
+    before = "",
+    after = "",
+    scope = "",
+    periodId = "",
+    areaId = "",
+    areaCode = "",
+    details = [],
+  }) {
+    const auditChanges = (details.length ? details : [{ action, label: summary, before, after }]).map((detail) => ({
+      section: detail.section || sectionLabel,
+      action: detail.action || action,
+      label: detail.label || summary,
+      target: detail.target || target,
+      before: detail.before ?? before,
+      after: detail.after ?? after,
+      scope: detail.scope || scope,
+      periodId: detail.periodId || periodId,
+    }));
+    await logAdminChange({
+      subjectLabel: sectionLabel,
+      sectionLabel,
+      action,
+      auditTarget: target,
+      auditChanges,
+      beforeLabel: before,
+      afterLabel: after,
+      changeLabel: summary,
+      scope,
+      periodId,
+      areaId,
+      areaCode,
+    });
   }
 
   // ─── Undo / Redo Manager ────────────────────────────────────────────────────
@@ -10205,18 +11040,19 @@
         const existingIndex = state.safetyRecords.findIndex((r) => r.id === targetId);
         if (!before) {
           if (existingIndex >= 0) {
+            const removedRecord = cloneValue(state.safetyRecords[existingIndex]);
+            await deleteSafetyRecordFromDb(targetId, removedRecord);
             state.safetyRecords.splice(existingIndex, 1);
-            await deleteSafetyRecordFromDb(targetId);
           }
         } else {
           const beforeCopy = cloneValue(before);
           state.deletedSafetyRecords = (state.deletedSafetyRecords || []).filter((item) => item.id !== beforeCopy.id);
+          await saveSafetyRecord(beforeCopy);
           if (existingIndex >= 0) {
             state.safetyRecords[existingIndex] = beforeCopy;
           } else {
             state.safetyRecords.push(beforeCopy);
           }
-          await saveSafetyRecord(beforeCopy);
           await tryUnmarkSafetyRecordDeleted(beforeCopy.id);
         }
         redoStack.push(action);
@@ -10335,16 +11171,16 @@
             state.deletedSafetyRecords = (state.deletedSafetyRecords || []).filter((item) => item.id !== deletedMarker.id);
             await tryUnmarkSafetyRecordDeleted(deletedMarker.id);
           }
-          await deleteSafetyRecordFromDb(targetId);
+          await deleteSafetyRecordFromDb(targetId, deletedSource);
         } else {
           const afterCopy = cloneValue(after);
           state.deletedSafetyRecords = (state.deletedSafetyRecords || []).filter((item) => item.id !== afterCopy.id);
+          await saveSafetyRecord(afterCopy);
           if (existingIndex >= 0) {
             state.safetyRecords[existingIndex] = afterCopy;
           } else {
             state.safetyRecords.push(afterCopy);
           }
-          await saveSafetyRecord(afterCopy);
           await tryUnmarkSafetyRecordDeleted(afterCopy.id);
         }
         undoStack.push(action);
@@ -10385,7 +11221,7 @@
     }
   }
 
-  function openFormModal({ title, html, submitText = "Lưu", submitClass = "primary-button", extraActions = "", extraRightActions = "", modalClass = "", onSubmit, onError = null, onCancel = null }) {
+  function openFormModal({ title, html, submitText = "Lưu", submitClass = "primary-button", extraActions = "", extraRightActions = "", modalClass = "", onSubmit, onError = null, onCancel = null, draftKey = null, getDraftSnapshot = null, isDraftDirty = null }) {
     modalPreviewDirty = false;
     modalSubmitSucceeded = false;
     modalCancelHandler = typeof onCancel === "function" ? onCancel : null;
@@ -10409,14 +11245,101 @@
     `;
 
     const form = document.getElementById("modal-form");
+    const serializeGenericModalForm = (f) => {
+      if (!f) return "";
+      const entries = [];
+      for (const el of f.querySelectorAll("input, select, textarea")) {
+        if (!el.name || el.type === "file") continue;
+        if (el.type === "checkbox" || el.type === "radio") {
+          entries.push(`${el.name}:${el.value}=${el.checked ? "1" : "0"}`);
+        } else {
+          entries.push(`${el.name}=${String(el.value || "").trim()}`);
+        }
+      }
+      return entries.join("|");
+    };
+    const hasEditableInputs = Boolean(
+      !isTableFullscreen &&
+      modalClass !== "report-image-modal" &&
+      form?.querySelector('input:not([type="hidden"]):not([disabled]), select:not([disabled]), textarea:not([disabled])')
+    );
+    const initialGenericState = hasEditableInputs ? serializeGenericModalForm(form) : "";
+    let initialSnapshotSerialized = null;
+    if (typeof getDraftSnapshot === "function") {
+      try {
+        initialSnapshotSerialized = JSON.stringify(getDraftSnapshot());
+      } catch (_) {}
+    }
+
+    currentModalDraftKey = draftKey || (hasEditableInputs ? "__generic_modal_form__" : null);
+    currentModalDraftSnapshotGetter = typeof getDraftSnapshot === "function" ? getDraftSnapshot : null;
+
+    const evaluateModalDirty = () => {
+      if (!form || !form.isConnected || elements.modalBackdrop.hidden) return false;
+      if (typeof isDraftDirty === "function") {
+        try {
+          return Boolean(isDraftDirty());
+        } catch (_) {
+          return false;
+        }
+      }
+      if (typeof currentModalDraftSnapshotGetter === "function" && initialSnapshotSerialized !== null) {
+        try {
+          return JSON.stringify(currentModalDraftSnapshotGetter()) !== initialSnapshotSerialized;
+        } catch (_) {
+          return Boolean(modalPreviewDirty);
+        }
+      }
+      if (hasEditableInputs) {
+        return serializeGenericModalForm(form) !== initialGenericState;
+      }
+      return false;
+    };
+
+    if (currentModalDraftKey) {
+      window.FormDraftManager?.registerDirtyForm(currentModalDraftKey, {
+        isDirty: evaluateModalDirty,
+        getSnapshot: () => (typeof currentModalDraftSnapshotGetter === "function" ? currentModalDraftSnapshotGetter() : null),
+        onDiscard: () => {
+          if (currentModalDraftKey !== "__generic_modal_form__") {
+            window.FormDraftManager?.clearDraft(currentModalDraftKey);
+          }
+        },
+      });
+    }
+
+    const markModalDirty = () => {
+      const dirty = evaluateModalDirty();
+      modalPreviewDirty = dirty;
+      if (currentModalDraftKey && currentModalDraftKey !== "__generic_modal_form__" && typeof currentModalDraftSnapshotGetter === "function") {
+        try {
+          if (dirty) {
+            const snapshot = currentModalDraftSnapshotGetter();
+            if (snapshot != null) {
+              window.FormDraftManager?.saveDraft(currentModalDraftKey, snapshot);
+            }
+          } else {
+            window.FormDraftManager?.clearDraft(currentModalDraftKey);
+          }
+        } catch (_) {}
+      }
+    };
+    form?.addEventListener("input", markModalDirty);
+    form?.addEventListener("change", markModalDirty);
     form.addEventListener("submit", async (event) => {
       event.preventDefault();
       try {
         const shouldClose = await onSubmit(new FormData(form), form);
         if (shouldClose !== false && document.getElementById("modal-form") === form) {
           modalSubmitSucceeded = true;
+          if (currentModalDraftKey) {
+            window.FormDraftManager?.clearDraft(currentModalDraftKey);
+            window.FormDraftManager?.unregisterDirtyForm(currentModalDraftKey);
+            currentModalDraftKey = null;
+            currentModalDraftSnapshotGetter = null;
+          }
           modalCancelHandler = null;
-          closeModal();
+          closeModal({ force: true });
         }
       } catch (error) {
         if (typeof onError === "function") onError(error);
@@ -10448,13 +11371,17 @@
   }
 
   function openImageFullscreenModal(image) {
-    const src = image?.currentSrc || image?.src || image?.dataset?.photoSrc || "";
+    const src = image?.dataset?.previewImg || image?.dataset?.photoSrc || image?.currentSrc || image?.src || "";
     if (!src) {
       return;
     }
 
+    fullscreenImageResizeCleanup?.();
+    fullscreenImageResizeCleanup = null;
+
     const isFindingPhoto = Boolean(image.matches?.(".findings-photo-thumb, .findings-record-thumb"));
-    const isSafetyPhoto = Boolean(!isFindingPhoto && (image.matches?.(".safety-thumb") || image.closest?.(".safety-record-entry-table, .safety-record-modal")));
+    const isGuideEditorPhoto = Boolean(image.matches?.("[data-guide-image-preview], .guide-editor-image-preview"));
+    const isSafetyPhoto = Boolean(!isFindingPhoto && !isGuideEditorPhoto && (image.matches?.(".safety-thumb") || image.closest?.(".safety-record-entry-table, .safety-record-modal")));
     modalPreviewDirty = false;
     modalSubmitSucceeded = true;
     modalCancelHandler = null;
@@ -10469,7 +11396,32 @@
     elements.modalBody.innerHTML = '<div class="image-fullscreen-view"><div class="image-fullscreen-stage"><img src="' + escapeHtml(src) + '" alt="' + escapeHtml(image?.alt || "Ảnh phóng to") + '"></div></div>' +
       '<button type="button" class="image-fullscreen-close" aria-label="Đóng ảnh" title="Đóng"><i class="fa-solid fa-xmark"></i></button>';
     elements.modalActions.innerHTML = "";
-    elements.modalBody.querySelector(".image-fullscreen-view")?.addEventListener("click", (event) => {
+    const fullscreenView = elements.modalBody.querySelector(".image-fullscreen-view");
+    const fullscreenStage = elements.modalBody.querySelector(".image-fullscreen-stage");
+    const fullscreenImage = fullscreenStage?.querySelector("img");
+    let viewerInteractions = null;
+    const fitFullscreenImage = () => {
+      if (!fullscreenStage || !fullscreenImage?.naturalWidth || !fullscreenImage?.naturalHeight) return;
+      const maxWidth = Math.max(1, window.innerWidth * 0.96);
+      const maxHeight = Math.max(1, window.innerHeight * 0.92);
+      const scale = Math.min(maxWidth / fullscreenImage.naturalWidth, maxHeight / fullscreenImage.naturalHeight);
+      const width = Math.max(1, Math.round(fullscreenImage.naturalWidth * scale));
+      const height = Math.max(1, Math.round(fullscreenImage.naturalHeight * scale));
+      fullscreenStage.style.width = `${width}px`;
+      fullscreenStage.style.height = `${height}px`;
+      fullscreenImage.style.width = `${width}px`;
+      fullscreenImage.style.height = `${height}px`;
+      viewerInteractions?.reset();
+    };
+    fullscreenImage?.addEventListener("load", fitFullscreenImage, { once: true });
+    viewerInteractions = window.mountImageViewerInteractions?.(fullscreenView, fullscreenStage) || null;
+    if (fullscreenImage?.complete && fullscreenImage.naturalWidth) fitFullscreenImage();
+    window.addEventListener("resize", fitFullscreenImage);
+    fullscreenImageResizeCleanup = () => {
+      window.removeEventListener("resize", fitFullscreenImage);
+      viewerInteractions?.destroy();
+    };
+    fullscreenView?.addEventListener("click", (event) => {
       if (event.target === event.currentTarget) closeModal();
     });
     elements.modalBody.querySelector(".image-fullscreen-close")?.addEventListener("click", closeModal);
@@ -10536,11 +11488,72 @@
           onError: (error) => showToast(error?.message || "Không lưu được nét khoanh.", true),
         },
       ) || null;
+    } else if (isGuideEditorPhoto) {
+      const card = image.closest?.("[data-guide-step-card]");
+      const initialCircles = (() => {
+        try { return JSON.parse(card?.dataset?.annotations || image.dataset.safetyAnnotations || "[]"); } catch (_) { return []; }
+      })();
+      imageAnnotatorCleanup = window.mountImageCircleAnnotator?.(
+        elements.modalBody.querySelector(".image-fullscreen-stage"),
+        elements.modalBody,
+        {
+          initialCircles,
+          editable: true,
+          onSave: async (annotations) => {
+            const serialized = JSON.stringify(annotations);
+            if (card) card.dataset.annotations = serialized;
+            image.dataset.safetyAnnotations = serialized;
+            window.refreshSafetyPhotoAnnotationThumbnail?.(image, annotations);
+            return true;
+          },
+          onError: (error) => showToast(error?.message || "Không lưu được nét vẽ.", true),
+        },
+      ) || null;
     }
     elements.modalBackdrop.hidden = false;
   }
 
-  function closeModal() {
+  function closeModal(options = {}) {
+    const force = options?.force === true;
+    if (!force && !modalSubmitSucceeded && currentModalDraftKey && window.FormDraftManager?.isFormDirty(currentModalDraftKey)) {
+      const activeDraftKey = currentModalDraftKey;
+      const snapshotGetter = currentModalDraftSnapshotGetter;
+      window.FormDraftManager.showUnsavedConfirmModal({
+        title: "Bạn có thay đổi chưa lưu!",
+        message: "Nội dung đang nhập đã được lưu tạm vào bộ nhớ (cache). Bạn có muốn tiếp tục chỉnh sửa hay thoát?",
+        onKeepEditing: () => {},
+        onSaveDraftAndExit: () => {
+          try {
+            const snapshot = typeof snapshotGetter === "function" ? snapshotGetter() : null;
+            if (snapshot != null) {
+              window.FormDraftManager?.saveDraft(activeDraftKey, snapshot);
+            }
+          } catch (_) {}
+          window.FormDraftManager?.unregisterDirtyForm(activeDraftKey);
+          currentModalDraftKey = null;
+          currentModalDraftSnapshotGetter = null;
+          closeModal({ force: true });
+        },
+        onDiscardAndExit: () => {
+          window.FormDraftManager?.clearDraft(activeDraftKey);
+          window.FormDraftManager?.unregisterDirtyForm(activeDraftKey);
+          currentModalDraftKey = null;
+          currentModalDraftSnapshotGetter = null;
+          closeModal({ force: true });
+        },
+      });
+      return;
+    }
+
+    if (currentModalDraftKey) {
+      if (modalSubmitSucceeded) {
+        window.FormDraftManager?.clearDraft(currentModalDraftKey);
+      }
+      window.FormDraftManager?.unregisterDirtyForm(currentModalDraftKey);
+      currentModalDraftKey = null;
+      currentModalDraftSnapshotGetter = null;
+    }
+
     if (imageAnnotatorCleanup) {
       if (imageAnnotatorClosing) return;
       imageAnnotatorClosing = true;
@@ -10559,6 +11572,8 @@
   }
 
   function finishModalClose() {
+    fullscreenImageResizeCleanup?.();
+    fullscreenImageResizeCleanup = null;
     const shouldRefreshPreview = modalPreviewDirty && !modalSubmitSucceeded && currentUser && state;
     const onCancel = modalCancelHandler;
     modalCancelHandler = null;
@@ -10590,7 +11605,7 @@
     }
   }
 
-  async function prepareScorePhoto(file, existingRecord, removePhoto, periodId) {
+  async function prepareScorePhoto(file, existingRecord, removePhoto, periodId, category = "") {
     if (removePhoto) {
       return { photoDataUrl: "", photoName: "" };
     }
@@ -10603,20 +11618,22 @@
     }
 
     const compressedDataUrl = await resizeImageFile(file, PHOTO_MAX_SIZE, PHOTO_JPEG_QUALITY);
-    return savePhotoFile(compressedDataUrl, file.name || "anh-minh-hoa.jpg", periodId);
+    return savePhotoFile(compressedDataUrl, file.name || "anh-minh-hoa.jpg", periodId, category);
   }
 
-  async function savePhotoFile(dataUrl, fileName, periodId) {
+  async function savePhotoFile(dataUrl, fileName, periodId, category = "") {
     if (!dataStore?.savePhoto) {
       throw new Error("Ứng dụng cần chạy bằng npm start để lưu ảnh vào thư mục data/photos.");
     }
 
     const period = getPeriod(periodId);
+    const resolvedCategory = category || (period?.type === "safety" ? "an-toan" : "van-de-5s");
     const savedPhoto = await dataStore.savePhoto({
       dataUrl,
       fileName,
       month: period?.month,
       year: period?.year,
+      category: resolvedCategory,
     });
 
     return {
@@ -10637,7 +11654,9 @@
       (sheet?.rows || []).some((row) => row?.photoDataUrl === url)
     ));
     const isGuidePhoto = Object.values(state.userGuides || {}).some((guide) => (
-      (guide?.steps || []).some((step) => step?.imageUrl === url)
+      (guide?.steps || []).some((step) => (
+        step?.imageUrl === url || (step?.images || []).some((img) => img?.imageUrl === url)
+      ))
     ));
     return isRecordPhoto || isFindingPhoto || isGuidePhoto;
   }
@@ -10718,6 +11737,9 @@
     return promise;
   }
 
+  window.getAuthenticatedPhotoObjectUrl = getAuthenticatedPhotoObjectUrl;
+  window.isInternalPhotoUrl = isInternalPhotoUrl;
+
   function hydrateAuthenticatedPhotos(root = document) {
     root.querySelectorAll?.("img").forEach((image) => {
       const originalUrl = image.dataset.photoSrc || image.getAttribute("src") || "";
@@ -10729,6 +11751,7 @@
       getAuthenticatedPhotoObjectUrl(originalUrl).then((objectUrl) => {
         if (image.isConnected && image.dataset.photoSrc === originalUrl && objectUrl) {
           image.src = objectUrl;
+          window.refreshSafetyPhotoAnnotationThumbnail?.(image);
         }
       });
     });
@@ -10755,6 +11778,58 @@
         image.src = String(reader.result || "");
       };
       reader.readAsDataURL(file);
+    });
+
+    let draggedCard = null;
+
+    form.addEventListener("dragstart", (event) => {
+      const handle = event.target.closest(".guide-step-drag-handle");
+      const card = event.target.closest("[data-guide-step-card]");
+      const targetCard = handle ? handle.closest("[data-guide-step-card]") : (card?.draggable ? card : null);
+      if (!targetCard) return;
+      draggedCard = targetCard;
+      draggedCard.classList.add("is-moving");
+      if (event.dataTransfer) {
+        event.dataTransfer.effectAllowed = "move";
+        event.dataTransfer.setData("text/plain", targetCard.dataset.stepId || "");
+      }
+    });
+
+    form.addEventListener("dragover", (event) => {
+      if (!draggedCard) return;
+      const targetCard = event.target.closest("[data-guide-step-card]");
+      if (targetCard && targetCard !== draggedCard && targetCard.parentElement === draggedCard.parentElement) {
+        event.preventDefault();
+        if (event.dataTransfer) {
+          event.dataTransfer.dropEffect = "move";
+        }
+        const rect = targetCard.getBoundingClientRect();
+        const next = (event.clientY - rect.top) / (rect.bottom - rect.top) > 0.5;
+        targetCard.parentElement.insertBefore(draggedCard, next ? targetCard.nextSibling : targetCard);
+      }
+    });
+
+    form.addEventListener("dragend", () => {
+      if (draggedCard) {
+        draggedCard.classList.remove("is-moving");
+        const panel = draggedCard.closest("[data-guide-panel]");
+        if (panel) updateUserGuideStepNumbers(panel);
+        draggedCard = null;
+      }
+    });
+
+    form.addEventListener("drop", (event) => {
+      if (draggedCard) {
+        event.preventDefault();
+        draggedCard.classList.remove("is-moving");
+        const panel = draggedCard.closest("[data-guide-panel]");
+        if (panel) updateUserGuideStepNumbers(panel);
+        draggedCard = null;
+      }
+    });
+
+    form.querySelectorAll("[data-guide-panel]").forEach((panel) => {
+      updateUserGuideStepNumbers(panel);
     });
   }
 
@@ -11132,230 +12207,13 @@
   }
 
   function editCatalogDepartmentHead(identity) {
-    if (!requireAdminAction()) {
-      return;
-    }
-
-    const catalogType = normalizeCatalogType(activeCatalogScope);
-    const periodId = getActivePeriodId(catalogType);
+    if (!requireAdminAction()) return;
+    const periodId = getActivePeriodId(activeCatalogScope);
     const current = getDepartmentHeadRows(periodId)
       .find((row) => (employeeCodeKey(row.employeeCode) && employeeCodeKey(row.employeeCode) === employeeCodeKey(identity))
         || departmentHeadKey(row.name) === departmentHeadKey(identity));
-    if (!current) {
-      return;
-    }
-
-    const currentAreaIds = getAreasForPeriod(periodId)
-      .filter((area) => (catalogType !== SAFETY_PERIOD_TYPE || isReportableSafetyArea(area))
-        && (current.employeeCode && area.departmentHeadEmployeeCode
-          ? sameEmployeeCode(area.departmentHeadEmployeeCode, current.employeeCode)
-          : departmentHeadKey(area.departmentHead) === departmentHeadKey(current.name)))
-      .map((area) => area.id);
-
-    openFormModal({
-      title: "Sửa trưởng phòng",
-      html: `${catalogPersonContextHtml(current.name, current.employeeCode)}
-        <label>
-          <span>Mã nhân viên</span>
-          <input name="employeeCode" type="text" value="${escapeHtml(current.employeeCode || "")}" required>
-        </label>
-        <label>
-          <span>Tên trưởng phòng</span>
-          <input name="name" type="text" value="${escapeHtml(current.name)}" required>
-        </label>
-        <div class="form-field">
-          <span>Zone trưởng phòng quản lý</span>
-          <div class="zone-check-list" style="max-height: 240px; overflow-y: auto;">
-            ${areaCheckboxListHtml(currentAreaIds, catalogType, periodId, null, null, { name: current.name, employeeCode: current.employeeCode })}
-          </div>
-          <small class="field-hint">Bỏ chọn zone để gỡ phân công; chỉ có thể thêm zone chưa có trưởng phòng.</small>
-        </div>`,
-      async onSubmit(formData, form) {
-        const nextName = normalizeDepartmentHeadName(formData.get("name"));
-        const nextEmployeeCode = String(formData.get("employeeCode") || "").trim();
-        if (!nextName || !nextEmployeeCode) {
-          showToast("Vui lòng nhập mã nhân viên và tên trưởng phòng.", true);
-          return false;
-        }
-
-        const selectedAreaIds = getCheckedAreaIds(form);
-        const eligibleAreaIds = new Set(getAreasForPeriod(periodId)
-          .filter((area) => {
-            if (catalogType === SAFETY_PERIOD_TYPE && !isReportableSafetyArea(area)) return false;
-            const assignedHead = departmentHeadKey(area.departmentHead);
-            const isCurrent = current.employeeCode && area.departmentHeadEmployeeCode
-              ? sameEmployeeCode(current.employeeCode, area.departmentHeadEmployeeCode)
-              : assignedHead === departmentHeadKey(current.name);
-            return !assignedHead || isCurrent;
-          })
-          .map((area) => area.id));
-        if (selectedAreaIds.some((areaId) => !eligibleAreaIds.has(areaId))) {
-          showToast("Một hoặc nhiều zone đã được phân công cho trưởng phòng khác. Vui lòng tải lại danh sách.", true);
-          return false;
-        }
-
-        const duplicate = getDepartmentHeadRows(periodId).some((row) => row.employeeCode
-          && employeeCodeKey(row.employeeCode) === employeeCodeKey(nextEmployeeCode)
-          && employeeCodeKey(row.employeeCode) !== employeeCodeKey(current.employeeCode));
-        if (duplicate) {
-          showToast("Mã nhân viên này đã có trong danh mục kỳ đang mở.", true);
-          return false;
-        }
-        const currentAreaIdSet = new Set(currentAreaIds);
-        const selectedAreaIdSet = new Set(selectedAreaIds);
-        const areasUnchanged = currentAreaIdSet.size === selectedAreaIdSet.size
-          && [...currentAreaIdSet].every((areaId) => selectedAreaIdSet.has(areaId));
-        if (nextName === current.name && nextEmployeeCode === current.employeeCode && areasUnchanged) {
-          showToast("Không có thay đổi mới.");
-          return true;
-        }
-
-        const activePeriod = getPeriod(periodId);
-        if (activePeriod && !activePeriod.settingsSnapshot) {
-          ensurePeriodSnapshotLocal(periodId);
-        }
-        const beforeSnapshot = capturePeriodSnapshot(periodId);
-        const beforeCatalog = captureCatalogState(catalogType);
-        const beforeHistory = cloneValue(state.history);
-        const beforePeriodSnapshots = (state.periods || [])
-          .filter((period) => normalizeCatalogType(period.type) === catalogType)
-          .map((period) => ({
-            id: period.id,
-            hadSnapshot: Boolean(period.settingsSnapshot),
-            snapshot: period.settingsSnapshot ? cloneValue(period.settingsSnapshot) : null,
-          }));
-        const affectedAccounts = state.accounts.filter((account) => accountMatchesCatalogPerson(account, current));
-        const beforeAccounts = affectedAccounts.map((account) => cloneValue(account));
-
-        const previousName = current.name;
-        const previousKey = departmentHeadKey(previousName);
-        const selectedAreas = new Set(selectedAreaIds);
-        const updateDepartmentHeadAreas = (areas) => areas.forEach((area) => {
-          if (!eligibleAreaIds.has(area.id)) return;
-          const wasManaged = current.employeeCode && area.departmentHeadEmployeeCode
-            ? sameEmployeeCode(area.departmentHeadEmployeeCode, current.employeeCode)
-            : departmentHeadKey(area.departmentHead) === previousKey;
-          const isSelected = selectedAreas.has(area.id);
-          if (!wasManaged && !isSelected) return;
-
-          if (isSelected) {
-            area.departmentHead = nextName;
-            area.departmentHeadEmployeeCode = nextEmployeeCode;
-            if (wasManaged && departmentHeadKey(area.summaryGroup) === previousKey) {
-              area.summaryGroup = nextName;
-            }
-            return;
-          }
-
-          area.departmentHead = "";
-          area.departmentHeadEmployeeCode = "";
-        });
-
-        const periodAreas = getMutablePeriodAreas(catalogType, periodId);
-        const periodContacts = getMutableDepartmentHeadContactsForPeriod(catalogType, periodId);
-        const rootAreas = getMutableAreas(catalogType);
-        const rootContacts = getDepartmentHeadContacts(catalogType);
-        updateDepartmentHeadAreas(periodAreas);
-        updateDepartmentHeadAreas(rootAreas);
-        const updateContactIdentity = (contacts) => {
-          let contact = findCatalogPersonByIdentity(contacts, previousName, current.employeeCode);
-          if (!contact) {
-            contact = { id: makeId("department-head"), name: previousName, emails: [], createdAt: new Date().toISOString() };
-            contacts.push(contact);
-          }
-          contact.name = nextName;
-          contact.employeeCode = nextEmployeeCode;
-        };
-        updateContactIdentity(periodContacts);
-        updateContactIdentity(rootContacts);
-        affectedAccounts.forEach((account) => {
-          account.name = nextName;
-          account.departmentHeadName = nextName;
-          account.employeeCode = nextEmployeeCode;
-        });
-
-        const updates = {};
-        const affectedRootAreaIds = new Set([
-          ...beforeCatalog.areas
-            .filter((area) => current.employeeCode && area.departmentHeadEmployeeCode
-              ? sameEmployeeCode(area.departmentHeadEmployeeCode, current.employeeCode)
-              : departmentHeadKey(area.departmentHead) === previousKey)
-            .map((area) => area.id),
-          ...selectedAreaIds,
-        ]);
-        rootAreas
-          .filter((area) => affectedRootAreaIds.has(area.id))
-          .forEach((area) => {
-            updates[`${catalogDbPath(catalogType, "areas")}/${area.id}`] = area;
-          });
-
-        const currentRootContacts = getDepartmentHeadContacts(catalogType);
-        const rootContactsById = new Map(currentRootContacts.map((contact) => [contact.id, contact]));
-        const allRootContactIds = new Set([
-          ...beforeCatalog.departmentHeadContacts.map((contact) => contact.id),
-          ...currentRootContacts.map((contact) => contact.id),
-        ]);
-        allRootContactIds.forEach((contactId) => {
-          updates[`${catalogDbPath(catalogType, "departmentHeadContacts")}/${contactId}`] = rootContactsById.get(contactId) || null;
-        });
-        affectedAccounts.forEach((account) => {
-          updates[`accounts/${account.id}`] = account;
-        });
-        if (activePeriod?.settingsSnapshot) {
-          updates[`periods/${periodId}/settingsSnapshot`] = activePeriod.settingsSnapshot;
-        }
-        addAdminChangeToUpdates({
-          subjectLabel: "Trưởng phòng",
-          beforeLabel: previousName,
-          afterLabel: nextName,
-          changeLabel: `Sửa trưởng phòng ${previousName}`,
-          note: `Zone: ${periodAreas.filter((area) => selectedAreas.has(area.id)).map((area) => area.code).join(", ") || "chưa gán zone"}`,
-          scope: catalogType,
-          periodId,
-        }, updates);
-
-        try {
-          await updateRootWithOptionalRenderSuppression(updates, { suppressRender: true });
-          await updateCatalogPersonIdentity(current, nextName, nextEmployeeCode);
-        } catch (error) {
-          if (catalogType === SAFETY_PERIOD_TYPE) {
-            state.safetyAreas = cloneValue(beforeCatalog.areas);
-            state.safetyDepartmentHeadContacts = cloneValue(beforeCatalog.departmentHeadContacts);
-          } else {
-            state.areas = cloneValue(beforeCatalog.areas);
-            state.departmentHeadContacts = cloneValue(beforeCatalog.departmentHeadContacts);
-          }
-          beforePeriodSnapshots.forEach((entry) => {
-            const period = getPeriod(entry.id);
-            if (!period) return;
-            if (entry.hadSnapshot) period.settingsSnapshot = cloneValue(entry.snapshot);
-            else delete period.settingsSnapshot;
-          });
-          state.history = beforeHistory;
-          const accountById = new Map(beforeAccounts.map((account) => [account.id, account]));
-          state.accounts = state.accounts.map((account) => accountById.get(account.id) || account);
-          renderAll();
-          showToast(error?.message || "Không lưu được thay đổi trưởng phòng. Vui lòng thử lại.", true);
-          return false;
-        }
-
-        pushUndoAction({
-          type: "catalogOrSettings",
-          description: `Sửa trưởng phòng: ${previousName} → ${nextName}`,
-          targetPeriodId: periodId,
-          catalogType,
-          beforeSnapshot,
-          afterSnapshot: capturePeriodSnapshot(periodId),
-          beforeCatalog,
-          afterCatalog: captureCatalogState(catalogType),
-        });
-        showToast("Đã cập nhật trưởng phòng.");
-        renderAll();
-        return true;
-      },
-    });
+    if (current) editCatalogEmployeeForPerson(current);
   }
-
   function deleteCatalogDepartmentHead(name) {
     if (!requireAdminAction()) {
       return;
@@ -12252,78 +13110,11 @@
   }
 
   function editScorer(id) {
-    if (!requireAdminAction()) {
-      return;
-    }
-
-    const catalogType = activeCatalogScope;
-    const periodId = getActivePeriodId(catalogType);
-    const manager = getMutablePeriodManagers(catalogType, periodId).find((item) => item.id === id) || null;
-    if (!manager) {
-      return;
-    }
-
-    openFormModal({
-      title: "Sửa người phụ trách zone",
-      html: catalogPersonContextHtml(manager.name, manager.employeeCode) +
-      "<label>" +
-        "<span>Mã nhân viên</span>" +
-        "<input name=\"employeeCode\" type=\"text\" value=\"" + escapeHtml(manager.employeeCode || "") + "\" required>" +
-      "</label>" +
-      "<label>" +
-        "<span>Tên người phụ trách zone</span>" +
-        "<input name=\"name\" type=\"text\" value=\"" + escapeHtml(manager.name) + "\" required>" +
-      "</label>" +
-      '<div class="form-field"><span>Zone quản lý và tự chấm điểm</span><div class="zone-check-list">' + areaCheckboxListHtml(getManagerAreaIds(id, periodId), catalogType, periodId, { managerId: id }) + '</div></div>',
-      async onSubmit(formData) {
-        const name = String(formData.get("name") || "").trim();
-        const employeeCode = String(formData.get("employeeCode") || "").trim();
-        if (!name || !employeeCode) {
-          showToast("Mã nhân viên và tên người phụ trách zone không được để trống.", true);
-          return false;
-        }
-
-        const beforeSnapshot = capturePeriodSnapshot(periodId);
-        const beforeName = manager.name;
-        if (getPeriodCatalogManagers(catalogType, periodId).some((item) => item.id !== id
-          && employeeCodeKey(item.employeeCode) === employeeCodeKey(employeeCode))) {
-          showToast("Mã nhân viên này đã có trong danh sách quản lý zone.", true);
-          return false;
-        }
-        try {
-          await saveManagerWithAreas({ ...manager, employeeCode, name }, formData.getAll("areaIds"), catalogType, periodId, { periodOnly: true });
-          await updateCatalogPersonIdentity(manager, name, employeeCode);
-        } catch (error) {
-          showToast("Không lưu được phân công Zone. Vui lòng thử lại.", true);
-          return false;
-        }
-        await Promise.all([
-          saveCatalogPeriodSnapshot(catalogType, periodId),
-          logAdminChange({
-            subjectLabel: "Người phụ trách zone",
-            beforeLabel: beforeName,
-            afterLabel: name,
-            changeLabel: "Sửa người phụ trách zone " + beforeName,
-            scope: catalogType,
-            periodId,
-          }),
-        ]);
-        const afterSnapshot = capturePeriodSnapshot(periodId);
-        pushUndoAction({
-          type: "catalogOrSettings",
-          description: `Sửa người phụ trách: ${beforeName} → ${name}`,
-          targetPeriodId: periodId,
-          catalogType,
-          beforeSnapshot,
-          afterSnapshot,
-        });
-        showToast("Đã cập nhật người phụ trách zone.");
-        renderAll();
-        return true;
-      },
-    });
+    if (!requireAdminAction()) return;
+    const manager = getMutablePeriodManagers(activeCatalogScope, getActivePeriodId(activeCatalogScope))
+      .find((item) => item.id === id) || null;
+    if (manager) editCatalogEmployeeForPerson(manager);
   }
-
   function editDepartmentHeadEmail(name) {
     if (!requireAdminAction()) {
       return;
@@ -12457,138 +13248,11 @@
   }
 
   function editAssessor(id) {
-    if (!requireAdminAction()) {
-      return;
-    }
-
-    const catalogType = activeCatalogScope;
-    const periodId = getActivePeriodId(catalogType);
-    const assessor = getMutablePeriodAssessors(catalogType, periodId).find((item) => item.id === id) || null;
-    if (!assessor) {
-      return;
-    }
-
-    const currentAssignedAreaIds = getAssessorAreaIds(assessor.id, catalogType, periodId);
-
-    openFormModal({
-      title: "Sửa assessor",
-      html: `
-        ${catalogPersonContextHtml(assessor.name, assessor.employeeCode)}
-        <label>
-          <span>Mã nhân viên</span>
-          <input name="employeeCode" type="text" value="${escapeHtml(assessor.employeeCode || "")}" required>
-        </label>
-        <label>
-          <span>Tên assessor</span>
-          <input name="name" type="text" value="${escapeHtml(assessor.name)}" required>
-        </label>
-        <div class="form-field">
-          <span style="font-weight: 600;">Zone ${escapeHtml(getAccountScopeLabel(catalogType))} được chấm</span>
-          <div class="zone-check-list" style="max-height: 200px; overflow-y: auto;">
-            ${areaCheckboxListHtml(currentAssignedAreaIds, catalogType, periodId, null, { assessorId: assessor.id })}
-          </div>
-        </div>
-      `,
-      async onSubmit(formData, form) {
-        const name = String(formData.get("name") || "").trim();
-        const employeeCode = String(formData.get("employeeCode") || "").trim();
-        if (!name || !employeeCode) {
-          showToast("Mã nhân viên và tên assessor không được để trống.", true);
-          return false;
-        }
-
-        if (getPeriodCatalogAssessors(catalogType, periodId).some((item) => item.id !== id
-          && employeeCodeKey(item.employeeCode) === employeeCodeKey(employeeCode))) {
-          showToast("Mã nhân viên này đã có trong danh sách assessor.", true);
-          return false;
-        }
-
-        const checkedAreaIds = getCheckedAreaIds(form);
-        const beforeSnapshot = capturePeriodSnapshot(periodId);
-        const beforeCatalog = captureCatalogState(catalogType);
-        const beforeName = assessor.name;
-        const rootAssessors = getMutableAssessors(catalogType);
-        const rootAssessor = rootAssessors.find((item) => item.id === id);
-        const affectedAccounts = state.accounts.filter((account) => hasAccountAccessType(account, catalogType) && accountMatchesCatalogPerson(account, assessor));
-        const beforeAccounts = affectedAccounts.map((account) => cloneValue(account));
-        const beforePeriodSnapshots = (state.periods || [])
-          .filter((period) => normalizeCatalogType(period.type) === catalogType)
-          .map((period) => ({
-            id: period.id,
-            hadSnapshot: Boolean(period.settingsSnapshot),
-            snapshot: period.settingsSnapshot ? cloneValue(period.settingsSnapshot) : null,
-          }));
-        const beforeHistory = cloneValue(state.history);
-
-        assessor.name = name;
-        assessor.employeeCode = employeeCode;
-        if (rootAssessor) {
-          rootAssessor.name = name;
-          rootAssessor.employeeCode = employeeCode;
-        }
-        affectedAccounts.forEach((account) => {
-          account.name = name;
-          account.employeeCode = employeeCode;
-        });
-
-        const updates = setAssessorAreaIds(assessor.id, checkedAreaIds, catalogType, periodId);
-        if (getPeriod(periodId)?.settingsSnapshot) {
-          updates[`periods/${periodId}/settingsSnapshot`] = getPeriod(periodId).settingsSnapshot;
-        }
-        if (rootAssessor) updates[`${catalogDbPath(catalogType, "assessors")}/${id}`] = rootAssessor;
-        addAdminChangeToUpdates({
-          subjectLabel: "Assessor",
-          beforeLabel: beforeName,
-          afterLabel: name,
-          changeLabel: `Sửa assessor ${beforeName}`,
-          scope: catalogType,
-          periodId,
-        }, updates);
-
-        try {
-          await updateRootWithOptionalRenderSuppression(updates, { suppressRender: true });
-          await updateCatalogPersonIdentity(assessor, name, employeeCode);
-        } catch (error) {
-          const isSafety = catalogType === SAFETY_PERIOD_TYPE;
-          if (isSafety) {
-            state.safetyAreas = cloneValue(beforeCatalog.areas);
-            state.safetyAssessors = cloneValue(beforeCatalog.assessors);
-          } else {
-            state.areas = cloneValue(beforeCatalog.areas);
-            state.assessors = cloneValue(beforeCatalog.assessors);
-          }
-          beforePeriodSnapshots.forEach((entry) => {
-            const period = getPeriod(entry.id);
-            if (!period) return;
-            if (entry.hadSnapshot) period.settingsSnapshot = cloneValue(entry.snapshot);
-            else delete period.settingsSnapshot;
-          });
-          const accountById = new Map(beforeAccounts.map((account) => [account.id, account]));
-          state.accounts = state.accounts.map((account) => accountById.get(account.id) || account);
-          state.history = beforeHistory;
-          renderAll();
-          showToast(error?.message || "Không lưu được phân công Zone. Vui lòng thử lại.", true);
-          return false;
-        }
-        const afterSnapshot = capturePeriodSnapshot(periodId);
-        const afterCatalog = captureCatalogState(catalogType);
-        pushUndoAction({
-          type: "catalogOrSettings",
-          description: `Sửa assessor: ${beforeName} → ${name}`,
-          targetPeriodId: periodId,
-          catalogType,
-          beforeSnapshot,
-          afterSnapshot,
-          beforeCatalog,
-          afterCatalog,
-        });
-        showToast("Đã cập nhật assessor.");
-        renderAll();
-        return true;
-      },
-    });
+    if (!requireAdminAction()) return;
+    const assessor = getMutablePeriodAssessors(activeCatalogScope, getActivePeriodId(activeCatalogScope))
+      .find((item) => item.id === id) || null;
+    if (assessor) editCatalogEmployeeForPerson(assessor);
   }
-
   function deleteAssessor(id) {
     if (!requireAdminAction()) {
       return;
@@ -13674,12 +14338,14 @@
 
     const catalogType = targetPeriodId ? getCatalogTypeForPeriod(targetPeriodId) : activeCatalogScope;
     const isSnapshotEdit = shouldEditPeriodSnapshot(targetPeriodId);
-    const useCatalogSelectors = !periodId;
     const period = getPeriod(targetPeriodId);
     const area = isSnapshotEdit ? getAreaForPeriod(targetPeriodId, id) : getArea(id, catalogType);
     if (!area) {
       return;
     }
+    const periodAssessors = getPeriodCatalogAssessors(catalogType, targetPeriodId);
+    const selectedAssessor = periodAssessors.find((assessor) => assessor.id === area.assessorId)
+      || periodAssessors.find((assessor) => sameNormalizedText(assessor.name, getAreaConfiguredAssessorNameForPeriod(targetPeriodId, area)));
 
     openFormModal({
       title: `Sửa assessor Zone ${area.code}`,
@@ -13687,27 +14353,21 @@
         ${isSnapshotEdit ? `<div class="modal-context"><span>Chỉ áp dụng cho ${escapeHtml(periodLabel(period))}; kỳ khác không bị đổi.</span></div>` : ""}
         <label>
           <span>Assessor hiển thị ở dòng cuối</span>
-          ${
-            isSnapshotEdit && !useCatalogSelectors
-              ? `<input name="assessorName" type="text" value="${escapeHtml(getAreaConfiguredAssessorNameForPeriod(targetPeriodId, area))}">`
-              : `<select name="assessorId">${assessorOptions(area.assessorId, true, catalogType, targetPeriodId)}</select>`
-          }
+          <select name="assessorId">${assessorOptions(selectedAssessor?.id || "", true, catalogType, targetPeriodId)}</select>
         </label>
       `,
       async onSubmit(formData) {
         const beforeSnapshot = capturePeriodSnapshot(targetPeriodId);
         const beforeCatalog = captureCatalogState(catalogType);
         const beforeLabel = getAreaConfiguredAssessorNameForPeriod(targetPeriodId, area) || "Chưa có";
-        if (isSnapshotEdit && !useCatalogSelectors) {
-          area.assessorName = String(formData.get("assessorName") || "").trim();
-          await savePeriodSnapshot(getPeriod(targetPeriodId));
-        } else if (isSnapshotEdit) {
-          area.assessorId = String(formData.get("assessorId") || "");
-          area.assessorName = getPeriodCatalogAssessor(targetPeriodId, area.assessorId)?.name || "";
+        area.assessorId = String(formData.get("assessorId") || "");
+        const assessor = isSnapshotEdit
+          ? getPeriodCatalogAssessor(targetPeriodId, area.assessorId)
+          : getAssessor(area.assessorId, catalogType);
+        area.assessorName = assessor?.name || "";
+        if (isSnapshotEdit) {
           await savePeriodSnapshot(getPeriod(targetPeriodId));
         } else {
-          area.assessorId = String(formData.get("assessorId") || "");
-          area.assessorName = getAssessor(area.assessorId, catalogType)?.name || "";
           await Promise.all([
             dbRef(`${catalogDbPath(catalogType, "areas")}/${area.id}`).set(area),
             refreshLatestPeriodSnapshot(catalogType),
@@ -13946,7 +14606,7 @@
       return;
     }
 
-    const account = state.accounts.find((item) => item.id === id && isDepartmentHeadAccount(item));
+    const account = state.accounts.find((item) => item.id === id && isDepartmentHeadDisplayAccount(item));
     if (!account) {
       return;
     }
@@ -14370,11 +15030,11 @@
       return;
     }
 
-    record.issueStatus = isIssueOpen(record) ? "closed" : "open";
-    record.updatedAt = new Date().toISOString();
-    saveSafetyRecord(record)
+    const updatedRecord = { ...record, issueStatus: isIssueOpen(record) ? "closed" : "open", updatedAt: new Date().toISOString() };
+    saveSafetyRecord(updatedRecord)
       .then(() => {
-        showToast(record.issueStatus === "closed" ? "Đã đóng vấn đề." : "Đã mở lại vấn đề.");
+        state.safetyRecords = state.safetyRecords.map((item) => item.id === updatedRecord.id ? updatedRecord : item);
+        showToast(updatedRecord.issueStatus === "closed" ? "Đã đóng vấn đề." : "Đã mở lại vấn đề.");
         renderAll();
       })
       .catch(() => showToast("Lỗi khi cập nhật trạng thái.", true));
@@ -14551,17 +15211,6 @@
         const recordCopy = cloneValue(record);
         const deletedMarker = getDeletedSafetyRecordMarker(record);
         await deleteSafetyRecordDirect(record.id);
-        await Promise.all([
-          tryLogAdminChange({
-            subjectLabel: "Đánh giá an toàn",
-            areaCode: area?.code || "",
-            beforeLabel: (record.issueLocation || "") + " · " + (record.note || ""),
-            afterLabel: "Đã xóa",
-            changeLabel: "Xóa báo cáo AT" + (area?.code ? " Zone " + area.code : ""),
-            scope: SAFETY_PERIOD_TYPE,
-            periodId: record.periodId,
-          }),
-        ]);
         await deleteUnusedPhotoFiles(collectPhotoUrls([recordCopy]));
         pushUndoAction({
           type: "safetyRecord",
@@ -14618,20 +15267,241 @@
     const row = { score: record || {}, area: selectedArea, item: getItem(record?.itemId) };
     const safetyPhotoAnnotationAttrs = (field, editable) =>
       "data-safety-record-id=\"" + escapeHtml(record?.id || "") + "\" data-safety-photo-field=\"" + field + "\" data-safety-annotations=\"" +
-      escapeHtml(JSON.stringify(record?.[field] || [])) + "\" data-safety-annotation-editable=\"" + (editable ? "true" : "false") + "\"";
-    const afterPhotoPreview = record?.afterPhotoDataUrl
-      ? "<div class=\"photo-preview\"><img src=\"" + record.afterPhotoDataUrl + "\" alt=\"Ảnh sau cải tiến hiện tại\" " + safetyPhotoAnnotationAttrs("afterPhotoAnnotations", canManageSafetyCountermeasure(record)) + "><label class=\"check-line\"><input name=\"removeAfterPhoto\" type=\"checkbox\"><span>Xóa ảnh sau cải tiến hiện tại</span></label></div>"
-      : "";
+      escapeHtml(JSON.stringify(record?.[field] || [])) + "\" data-safety-annotation-editable=\"" + (editable ? "true" : "false") + "\" data-safety-source-pending=\"false\"";
+    const safetyPhotoEditorHtml = (inputName, removeName, photoUrl, alt, annotationField, editable, badge) => {
+      const hasPhoto = Boolean(photoUrl);
+      return "<div class=\"photo-upload-box photo-edit-widget safety-photo-editor " + (hasPhoto ? "has-photo" : "") + "\" data-safety-photo-editor>" +
+        "<input class=\"photo-file-input safety-photo-file-input " + (hasPhoto ? "is-hidden" : "") + "\" name=\"" + inputName + "\" type=\"file\" accept=\"image/*\" capture=\"environment\">" +
+        "<div class=\"photo-placeholder photo-editor-empty " + (hasPhoto ? "is-hidden" : "") + "\"><div class=\"photo-icon-circle\"><i class=\"fa-solid fa-camera\"></i></div>" +
+          "<p class=\"photo-primary-prompt\">" + escapeHtml(alt) + "</p><p class=\"photo-sub-prompt\">Chụp ảnh hoặc tải ảnh minh họa</p>" +
+          "<button type=\"button\" class=\"photo-action-chip\" data-photo-add><i class=\"fa-solid fa-plus\"></i> Thêm ảnh</button></div>" +
+        "<div class=\"photo-preview-wrap " + (hasPhoto ? "" : "is-hidden") + "\"><img class=\"photo-preview-img safety-thumb\" src=\"" + (hasPhoto ? escapeHtml(photoUrl) : "") + "\" alt=\"" + escapeHtml(alt) + "\" " +
+          (hasPhoto ? safetyPhotoAnnotationAttrs(annotationField, editable) : "") + (hasPhoto ? "" : " hidden") + " title=\"Chạm để phóng to ảnh\">" +
+          "<div class=\"photo-preview-actions\"><button type=\"button\" class=\"photo-btn annotate-btn\" data-photo-annotate title=\"Vẽ nét & chú thích ảnh\" aria-label=\"Vẽ nét & chú thích ảnh\" " + (hasPhoto ? "" : "hidden") + "><i class=\"fa-solid fa-pen-to-square\"></i></button>" +
+            "<button type=\"button\" class=\"photo-btn open-btn\" data-photo-open title=\"Mở ảnh lớn\" aria-label=\"Mở ảnh lớn\" " + (hasPhoto ? "" : "hidden") + "><i class=\"fa-solid fa-expand\"></i></button>" +
+            "<button type=\"button\" class=\"photo-btn retake-btn\" data-photo-change title=\"Đổi ảnh\" aria-label=\"Đổi ảnh\" " + (hasPhoto ? "" : "hidden") + "><i class=\"fa-solid fa-arrows-rotate\"></i></button>" +
+            "<button type=\"button\" class=\"photo-btn delete-btn\" data-photo-delete title=\"Xóa ảnh\" aria-label=\"Xóa ảnh\" " + (hasPhoto ? "" : "hidden") + "><i class=\"fa-solid fa-trash-can\"></i></button></div>" +
+          "<div class=\"photo-attached-badge\"><i class=\"fa-solid fa-circle-check\"></i> " + escapeHtml(badge) + "</div></div>" +
+        "<input type=\"checkbox\" name=\"" + removeName + "\" hidden aria-hidden=\"true\"></div>";
+    };
+    const afterPhotoEditor = safetyPhotoEditorHtml(
+      "afterPhoto", "removeAfterPhoto", record?.afterPhotoDataUrl, "Ảnh sau cải tiến, xử lý",
+      "afterPhotoAnnotations", canManageSafetyCountermeasure(record), "Đã đính kèm ảnh sau cải tiến",
+    );
+    const bindSafetyPhotoEditors = (root) => {
+      root?.querySelectorAll?.("[data-safety-photo-editor]").forEach((editor) => {
+        const input = editor.querySelector('input[type="file"]');
+        const remove = editor.querySelector('input[type="checkbox"]');
+        const preview = editor.querySelector("img.safety-thumb");
+        const previewWrap = editor.querySelector(".photo-preview-wrap");
+        const placeholder = editor.querySelector(".photo-editor-empty");
+        const annotateButton = editor.querySelector("[data-photo-annotate]");
+        const openButton = editor.querySelector("[data-photo-open]");
+        const changeButton = editor.querySelector("[data-photo-change]");
+        const deleteButton = editor.querySelector("[data-photo-delete]");
+        const choosePhoto = () => {
+          input?.click();
+        };
+        const openPreview = () => {
+          const src = preview?.currentSrc || preview?.src || "";
+          if (!src) return;
+          let annotations = [];
+          try { annotations = JSON.parse(preview.dataset.safetyAnnotations || "[]"); } catch (_) {}
+          const recordId = preview.dataset.safetyRecordId || "";
+          const photoField = preview.dataset.safetyPhotoField || "";
+          const isPending = preview.dataset.safetySourcePending === "true";
+          const target = state?.safetyRecords?.find((item) => item.id === recordId);
+          const canAnnotate = !isPending && Boolean(target) && (photoField === "afterPhotoAnnotations"
+            ? canManageSafetyCountermeasure(target, currentUser)
+            : canManageSafetyRecord(target, currentUser));
+          if (typeof window.openMobileImageModal === "function") {
+            window.openMobileImageModal(src, {
+              initialCircles: annotations,
+              editable: canAnnotate,
+              onSave: canAnnotate ? async (nextAnnotations) => {
+                await saveSafetyPhotoAnnotations(recordId, photoField, nextAnnotations);
+                preview.dataset.safetyAnnotations = JSON.stringify(nextAnnotations);
+                window.refreshSafetyPhotoAnnotationThumbnail?.(preview, nextAnnotations);
+                return true;
+              } : undefined,
+              onError: (error) => showToast(error?.message || "Không lưu được nét khoanh.", true),
+            });
+            return;
+          }
+          openImageFullscreenModal(preview);
+        };
+        editor.querySelector("[data-photo-add]")?.addEventListener("click", (event) => { event.preventDefault(); event.stopPropagation(); choosePhoto(); });
+        annotateButton?.addEventListener("click", (event) => { event.preventDefault(); event.stopPropagation(); openPreview(); });
+        openButton?.addEventListener("click", (event) => { event.preventDefault(); event.stopPropagation(); openPreview(); });
+        changeButton?.addEventListener("click", (event) => { event.preventDefault(); event.stopPropagation(); choosePhoto(); });
+        deleteButton?.addEventListener("click", (event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          if (remove) remove.checked = true;
+          if (input) input.value = "";
+          if (preview) {
+            preview.removeAttribute("src");
+            preview.dataset.previewImg = "";
+            preview.dataset.photoSrc = "";
+            preview.dataset.safetyAnnotations = "[]";
+            preview.hidden = true;
+          }
+          previewWrap?.classList.add("is-hidden");
+          placeholder?.classList.remove("is-hidden");
+          editor.classList.remove("has-photo");
+          input?.classList.remove("is-hidden");
+          editor.closest("form")?.dispatchEvent(new Event("change", { bubbles: true }));
+        });
+        preview?.addEventListener("click", openPreview);
+        input?.addEventListener("change", () => {
+          const file = input.files?.[0];
+          if (!file || !preview) return;
+          const reader = new FileReader();
+          reader.onload = () => {
+            if (remove) remove.checked = false;
+            preview.src = String(reader.result || "");
+            preview.dataset.safetySourcePending = "true";
+            preview.dataset.safetyAnnotations = "[]";
+            preview.hidden = false;
+            previewWrap?.classList.remove("is-hidden");
+            placeholder?.classList.add("is-hidden");
+            editor.classList.add("has-photo");
+            input.classList.add("is-hidden");
+            [annotateButton, openButton, changeButton, deleteButton].forEach((button) => { if (button) button.hidden = false; });
+            window.refreshSafetyPhotoAnnotationThumbnail?.(preview, []);
+            editor.closest("form")?.dispatchEvent(new Event("change", { bubbles: true }));
+          };
+          reader.readAsDataURL(file);
+        });
+      });
+    };
     const defaultCompletionDate = toIsoDate(record?.completionDate) || "";
     const actualDateFields = "";
+
+    const cleanSafetyDraftPhotoUrl = (url) => {
+      const val = String(url || "").trim();
+      if (!val || val.startsWith("blob:") || val === window.location.href || val === window.location.origin + "/") return "";
+      if (val.startsWith("data:image/") || val.startsWith("/api/photos/") || val.includes("/api/photos/")) return val;
+      return "";
+    };
+    const readModalSafetyPhotoUrl = (img) => {
+      if (!img || img.hidden || img.closest(".photo-preview-wrap")?.classList.contains("is-hidden")) return "";
+      return cleanSafetyDraftPhotoUrl(img.dataset?.photoSrc || img.dataset?.previewImg || img.getAttribute("src") || "");
+    };
+    const hasMeaningfulNewSafetyDraft = (d) => Boolean(
+      d && (
+        String(d.note || "").trim() ||
+        String(d.improvementContent || "").trim() ||
+        String(d.actionOwner || "").trim() ||
+        String(d.actionPlan || "").trim() ||
+        String(d.employeeCode || "").trim() ||
+        String(d.issueType || "").trim() ||
+        String(d.issueLevel || "").trim() ||
+        String(d.completionDate || "").trim() ||
+        String(d.issueCount || "1").trim() !== "1" ||
+        cleanSafetyDraftPhotoUrl(d.photoDataUrl) ||
+        cleanSafetyDraftPhotoUrl(d.afterPhotoDataUrl)
+      )
+    );
+
+    const safetyDraftKey = isNew ? `safety_new_${periodId}` : `safety_edit_${record.id}`;
+    const rawSafetyDraft = window.FormDraftManager?.getDraft(safetyDraftKey);
+    if (rawSafetyDraft && typeof rawSafetyDraft === "object") {
+      rawSafetyDraft.photoDataUrl = cleanSafetyDraftPhotoUrl(rawSafetyDraft.photoDataUrl);
+      rawSafetyDraft.afterPhotoDataUrl = cleanSafetyDraftPhotoUrl(rawSafetyDraft.afterPhotoDataUrl);
+    }
+    if (isNew && rawSafetyDraft && !hasMeaningfulNewSafetyDraft(rawSafetyDraft)) {
+      window.FormDraftManager?.clearDraft(safetyDraftKey);
+    }
+    const safetyDraft = (isNew && !hasMeaningfulNewSafetyDraft(rawSafetyDraft)) ? null : rawSafetyDraft;
+
+    const captureSafetySnapshot = () => {
+      const modalForm = elements.modalBody?.querySelector("form");
+      if (!modalForm) return null;
+      const photoImg = modalForm.querySelector('[data-safety-photo-field="photoAnnotations"], img.safety-thumb');
+      const afterPhotoImg = modalForm.querySelector('[data-safety-photo-field="afterPhotoAnnotations"]');
+      let photoAnn = [];
+      try { photoAnn = JSON.parse(photoImg?.dataset?.safetyAnnotations || "[]"); } catch (_) {}
+      let afterPhotoAnn = [];
+      try { afterPhotoAnn = JSON.parse(afterPhotoImg?.dataset?.safetyAnnotations || "[]"); } catch (_) {}
+      return {
+        areaId: modalForm.elements.areaId?.value || "",
+        issueDate: parseDisplayDateToIso(modalForm.elements.issueDate?.value || "") || modalForm.elements.issueDate?.value || "",
+        note: modalForm.elements.note?.value || "",
+        issueCount: modalForm.elements.issueCount?.value || "1",
+        issueType: modalForm.elements.issueType?.value || "",
+        issueLevel: modalForm.elements.issueLevel?.value || "",
+        foundChannel: modalForm.elements.foundChannel?.value || "",
+        issueStatus: modalForm.elements.issueStatus?.value || "",
+        issueFoundBy: modalForm.elements.issueFoundBy?.value || "",
+        employeeCode: modalForm.elements.employeeCode?.value || "",
+        issueItemLabel: modalForm.elements.issueItemLabel?.value || "",
+        improvementContent: modalForm.elements.improvementContent?.value || "",
+        actionOwner: modalForm.elements.actionOwner?.value || "",
+        actionPlan: modalForm.elements.actionPlan?.value || "",
+        completionDate: modalForm.elements.completionDate?.value || "",
+        photoDataUrl: readModalSafetyPhotoUrl(photoImg),
+        photoAnnotations: photoAnn,
+        afterPhotoDataUrl: readModalSafetyPhotoUrl(afterPhotoImg),
+        afterPhotoAnnotations: afterPhotoAnn,
+      };
+    };
+
+    const isSafetyDraftDirty = () => {
+      const cur = captureSafetySnapshot();
+      if (!cur) return false;
+      if (countermeasureOnly) {
+        return Boolean(
+          String(cur.improvementContent || "").trim() !== String(record?.improvementContent || "").trim() ||
+          String(cur.actionOwner || "").trim() !== String(record?.actionOwner || "").trim() ||
+          String(cur.actionPlan || "").trim() !== String(record?.actionPlan || "").trim() ||
+          String(cur.completionDate || "").trim() !== String(defaultCompletionDate || "").trim() ||
+          cleanSafetyDraftPhotoUrl(cur.afterPhotoDataUrl) !== cleanSafetyDraftPhotoUrl(record?.afterPhotoDataUrl) ||
+          JSON.stringify(cur.afterPhotoAnnotations || []) !== JSON.stringify(record?.afterPhotoAnnotations || [])
+        );
+      }
+      if (isNew) {
+        return hasMeaningfulNewSafetyDraft(cur);
+      }
+      const origIssueDate = getSafetyRecordIssueDate(record, period);
+      const origIssueCount = String(record ? getIssueCount(row) : 1).trim();
+      const origFoundChannel = normalizeFoundChannel(record?.foundChannel || (record ? (getIssueFoundBy(row) ? "worker" : "") : "worker"));
+      const origIssueStatus = normalizeIssueStatus(record?.issueStatus || "open");
+      const origIssueFoundBy = String(record ? getIssueFoundBy(row) : getAccountDisplayName(currentUser, SAFETY_PERIOD_TYPE, periodId)).trim();
+      const origEmployeeCode = String(record ? getIssueEmployeeCode(row) : "").trim();
+      const origIssueItemLabel = String(record ? getIssueItemLabel(row) : "Nhận diện nguy cơ mất an toàn").trim();
+      return Boolean(
+        String(cur.areaId || "") !== String(selectedArea.id || "") ||
+        String(cur.issueDate || "") !== String(origIssueDate || "") ||
+        String(cur.note || "").trim() !== String(record?.note || "").trim() ||
+        String(cur.issueCount || "1").trim() !== origIssueCount ||
+        String(cur.issueType || "") !== String(record?.issueType || "") ||
+        String(cur.issueLevel || "") !== String(record?.issueLevel || "") ||
+        String(cur.foundChannel || "") !== origFoundChannel ||
+        String(cur.issueStatus || "") !== origIssueStatus ||
+        String(cur.issueFoundBy || "").trim() !== origIssueFoundBy ||
+        String(cur.employeeCode || "").trim() !== origEmployeeCode ||
+        String(cur.issueItemLabel || "").trim() !== origIssueItemLabel ||
+        String(cur.improvementContent || "").trim() !== String(record?.improvementContent || "").trim() ||
+        String(cur.actionOwner || "").trim() !== String(record?.actionOwner || "").trim() ||
+        String(cur.actionPlan || "").trim() !== String(record?.actionPlan || "").trim() ||
+        String(cur.completionDate || "").trim() !== String(defaultCompletionDate || "").trim() ||
+        cleanSafetyDraftPhotoUrl(cur.photoDataUrl) !== cleanSafetyDraftPhotoUrl(record?.photoDataUrl) ||
+        JSON.stringify(cur.photoAnnotations || []) !== JSON.stringify(record?.photoAnnotations || []) ||
+        cleanSafetyDraftPhotoUrl(cur.afterPhotoDataUrl) !== cleanSafetyDraftPhotoUrl(record?.afterPhotoDataUrl) ||
+        JSON.stringify(cur.afterPhotoAnnotations || []) !== JSON.stringify(record?.afterPhotoAnnotations || [])
+      );
+    };
 
     if (countermeasureOnly) {
       openFormModal({
         title: "Cập nhật cải tiến / xử lý",
         submitText: "Lưu xử lý",
         modalClass: "safety-record-modal",
+        draftKey: safetyDraftKey,
+        getDraftSnapshot: captureSafetySnapshot,
+        isDraftDirty: isSafetyDraftDirty,
         onError(error) {
-          console.error("Không lưu được phần cải tiến/xử lý an toàn:", error);
           showToast(error?.message || "Không lưu được phần cải tiến/xử lý. Vui lòng thử lại.", true);
         },
         html: "<div class=\"modal-context\">" +
@@ -14640,7 +15510,7 @@
             "<span><strong>Mối nguy:</strong> " + escapeHtml(record?.note || "") + "</span>" +
           "</div>" +
           "<label><span>Nội dung cải tiến, xử lý</span><textarea name=\"improvementContent\">" + escapeHtml(record?.improvementContent || "") + "</textarea></label>" +
-          "<label><span>Ảnh sau cải tiến, xử lý</span><input name=\"afterPhoto\" type=\"file\" accept=\"image/*\">" + afterPhotoPreview + "</label>" +
+          "<div class=\"safety-photo-field\"><span>Ảnh sau cải tiến, xử lý</span>" + afterPhotoEditor + "</div>" +
           "<label><span>Đảm nhiệm</span><input name=\"actionOwner\" type=\"text\" value=\"" + escapeHtml(record?.actionOwner || "") + "\"></label>" +
           "<label><span>Kế hoạch</span><input name=\"actionPlan\" type=\"text\" value=\"" + escapeHtml(record?.actionPlan || "") + "\"></label>" +
           "<label><span>Ngày dự kiến hoàn thành</span><input name=\"completionDate\" type=\"date\" value=\"" + escapeHtml(defaultCompletionDate) + "\"></label>" + actualDateFields,
@@ -14658,12 +15528,14 @@
             { photoDataUrl: record?.afterPhotoDataUrl, photoName: record?.afterPhotoName },
             formData.get("removeAfterPhoto") === "on",
             periodId,
+            "an-toan",
           );
           const payload = normalizeSafetyRecord({
             ...record,
             improvementContent: String(formData.get("improvementContent") || "").trim(),
             afterPhotoDataUrl: nextAfterPhoto.photoDataUrl,
             afterPhotoName: nextAfterPhoto.photoName,
+            afterPhotoAnnotations: nextAfterPhoto.photoDataUrl !== (record?.afterPhotoDataUrl || "") ? [] : (record?.afterPhotoAnnotations || []),
             actionOwner: String(formData.get("actionOwner") || "").trim(),
             actionPlan: String(formData.get("actionPlan") || "").trim(),
             completionDate: String(formData.get("completionDate") || "").trim() || defaultCompletionDate,
@@ -14683,23 +15555,74 @@
           await deleteUnusedPhotoFiles([
             existingRecordCopy?.afterPhotoDataUrl && existingRecordCopy.afterPhotoDataUrl !== payload.afterPhotoDataUrl ? existingRecordCopy.afterPhotoDataUrl : "",
           ]);
+          window.FormDraftManager?.clearDraft(safetyDraftKey);
           showToast("Đã cập nhật phần cải tiến/xử lý.");
           renderAll();
           return true;
         },
       });
+      bindSafetyPhotoEditors(elements.modalBody);
+    if (safetyDraft?.photoDataUrl) {
+      const pImg = elements.modalBody.querySelector('[data-safety-photo-field="photoAnnotations"], img.safety-thumb');
+      if (pImg) {
+        pImg.src = safetyDraft.photoDataUrl;
+        pImg.dataset.previewImg = safetyDraft.photoDataUrl;
+        pImg.dataset.safetyAnnotations = JSON.stringify(safetyDraft.photoAnnotations || []);
+        pImg.hidden = false;
+        pImg.closest(".photo-upload-box")?.classList.add("has-photo");
+        pImg.closest(".photo-upload-box")?.querySelector(".photo-preview-wrap")?.classList.remove("is-hidden");
+        pImg.closest(".photo-upload-box")?.querySelector(".photo-editor-empty")?.classList.add("is-hidden");
+        pImg.closest(".photo-upload-box")?.querySelectorAll("[data-photo-open], [data-photo-change], [data-photo-delete]").forEach((btn) => { btn.hidden = false; });
+        window.refreshSafetyPhotoAnnotationThumbnail?.(pImg, safetyDraft.photoAnnotations || []);
+      }
+    }
+    if (safetyDraft?.afterPhotoDataUrl) {
+      const apImg = elements.modalBody.querySelector('[data-safety-photo-field="afterPhotoAnnotations"]');
+      if (apImg) {
+        apImg.src = safetyDraft.afterPhotoDataUrl;
+        apImg.dataset.previewImg = safetyDraft.afterPhotoDataUrl;
+        apImg.dataset.safetyAnnotations = JSON.stringify(safetyDraft.afterPhotoAnnotations || []);
+        apImg.hidden = false;
+        apImg.closest(".photo-upload-box")?.classList.add("has-photo");
+        apImg.closest(".photo-upload-box")?.querySelector(".photo-preview-wrap")?.classList.remove("is-hidden");
+        apImg.closest(".photo-upload-box")?.querySelector(".photo-editor-empty")?.classList.add("is-hidden");
+        apImg.closest(".photo-upload-box")?.querySelectorAll("[data-photo-open], [data-photo-change], [data-photo-delete]").forEach((btn) => { btn.hidden = false; });
+        window.refreshSafetyPhotoAnnotationThumbnail?.(apImg, safetyDraft.afterPhotoAnnotations || []);
+      }
+    }
       return;
     }
 
     const issueDate = getSafetyRecordIssueDate(record, period);
     const displayIssueDate = formatDateDisplay(issueDate);
-    const photoPreview = record?.photoDataUrl
-      ? "<div class=\"photo-preview\"><img src=\"" + record.photoDataUrl + "\" alt=\"Ảnh minh họa hiện tại\" " + safetyPhotoAnnotationAttrs("photoAnnotations", canManageSafetyRecord(record)) + "><label class=\"check-line\"><input name=\"removePhoto\" type=\"checkbox\"><span>Xóa ảnh hiện tại</span></label></div>"
-      : "";
+    const photoEditor = safetyPhotoEditorHtml(
+      "photo", "removePhoto", record?.photoDataUrl, "Ảnh hiện trường",
+      "photoAnnotations", canManageSafetyRecord(record), "Đã đính kèm ảnh hiện trường",
+    );
+
+    const effectiveAreaId = safetyDraft?.areaId || selectedArea.id;
+    const effectiveIssueDate = safetyDraft?.issueDate || issueDate;
+    const effectiveDisplayIssueDate = safetyDraft?.issueDate ? formatDateDisplay(safetyDraft.issueDate) : displayIssueDate;
+    const effectiveNote = safetyDraft?.note ?? (record?.note || "");
+    const effectiveImprovementContent = safetyDraft?.improvementContent ?? (record?.improvementContent || "");
+    const effectiveActionOwner = safetyDraft?.actionOwner ?? (record?.actionOwner || "");
+    const effectiveActionPlan = safetyDraft?.actionPlan ?? (record?.actionPlan || "");
+    const effectiveCompletionDate = safetyDraft?.completionDate || defaultCompletionDate;
+    const effectiveIssueCount = safetyDraft?.issueCount ?? (record ? getIssueCount(row) : 1);
+    const effectiveIssueType = safetyDraft?.issueType ?? (record?.issueType || "");
+    const effectiveIssueLevel = safetyDraft?.issueLevel ?? (record?.issueLevel || "");
+    const effectiveFoundChannel = safetyDraft?.foundChannel ?? normalizeFoundChannel(record?.foundChannel || (record ? (getIssueFoundBy(row) ? "worker" : "") : "worker"));
+    const effectiveIssueStatus = safetyDraft?.issueStatus ?? normalizeIssueStatus(record?.issueStatus || "open");
+    const effectiveIssueFoundBy = safetyDraft?.issueFoundBy ?? (record ? getIssueFoundBy(row) : getAccountDisplayName(currentUser, SAFETY_PERIOD_TYPE, periodId));
+    const effectiveEmployeeCode = safetyDraft?.employeeCode ?? (record ? getIssueEmployeeCode(row) : "");
+    const effectiveIssueItemLabel = safetyDraft?.issueItemLabel ?? (record ? getIssueItemLabel(row) : "Nhận diện nguy cơ mất an toàn");
 
     openFormModal({
       title: isNew ? "Thêm báo cáo đánh giá an toàn" : "Sửa báo cáo đánh giá an toàn",
       submitText: "Lưu báo cáo",
+      draftKey: safetyDraftKey,
+      getDraftSnapshot: captureSafetySnapshot,
+      isDraftDirty: isSafetyDraftDirty,
       extraActions: !isNew && canManageSafetyRecord(record)
         ? "<button class=\"danger-button\" type=\"button\" data-action=\"delete-safety-record\" data-id=\"" + escapeHtml(record.id) + "\">Xóa</button>"
         : "",
@@ -14713,23 +15636,23 @@
             "<th>Zone</th><th>Ngày phát hiện (dd/mm/yyyy)</th><th>Mối nguy hiểm phát hiện được</th><th>Ảnh minh họa</th><th>Số lần</th><th>STOP 6</th><th>Cấp bậc</th><th>Phát hiện</th><th>Tình trạng</th><th>Phát hiện bởi</th><th>Mã nhân viên</th><th>Hạng mục</th><th>Nội dung cải tiến, xử lý</th><th>Ảnh sau cải tiến</th><th>Đảm nhiệm</th><th>Kế hoạch</th><th>Ngày dự kiến hoàn thành</th>" +
           "</tr></thead>" +
           "<tbody><tr>" +
-            "<td><select name=\"areaId\" required>" + getSafetyAreaOptions(periodId, selectedArea.id, isNew ? null : allowedIds) + "</select></td>" +
-            "<td><span class=\"safety-date-editor\"><input name=\"issueDate\" type=\"text\" data-safety-date placeholder=\"dd/mm/yyyy\" inputmode=\"numeric\" maxlength=\"10\" value=\"" + escapeHtml(displayIssueDate) + "\" required autocomplete=\"off\"><input type=\"date\" class=\"safety-date-calendar\" aria-label=\"Mở lịch chọn ngày\" value=\"" + escapeHtml(issueDate) + "\"></span></td>" +
-            "<td><textarea name=\"note\" required>" + escapeHtml(record?.note || "") + "</textarea></td>" +
-            "<td><input name=\"photo\" type=\"file\" accept=\"image/*\">" + photoPreview + "</td>" +
-            "<td><input name=\"issueCount\" type=\"number\" min=\"1\" step=\"1\" value=\"" + escapeHtml(record ? getIssueCount(row) : 1) + "\"></td>" +
-            "<td><select name=\"issueType\">" + optionHtml(STOP6_OPTIONS, record?.issueType || "") + "</select></td>" +
-            "<td><select name=\"issueLevel\">" + optionHtml(ISSUE_LEVEL_OPTIONS, record?.issueLevel || "") + "</select></td>" +
-            "<td><select name=\"foundChannel\">" + optionHtml(SAFETY_FOUND_OPTIONS, normalizeFoundChannel(record?.foundChannel || (record ? (getIssueFoundBy(row) ? "worker" : "") : "worker"))) + "</select></td>" +
-            "<td><select name=\"issueStatus\">" + optionHtml(ISSUE_STATUS_OPTIONS, normalizeIssueStatus(record?.issueStatus || "open")) + "</select></td>" +
-            "<td><input name=\"issueFoundBy\" type=\"text\" value=\"" + escapeHtml(record ? getIssueFoundBy(row) : getAccountDisplayName(currentUser, SAFETY_PERIOD_TYPE, periodId)) + "\"></td>" +
-            "<td><input name=\"employeeCode\" type=\"text\" value=\"" + escapeHtml(record ? getIssueEmployeeCode(row) : "") + "\"></td>" +
-            "<td><input name=\"issueItemLabel\" type=\"text\" value=\"" + escapeHtml(record ? getIssueItemLabel(row) : "Nhận diện nguy cơ mất an toàn") + "\"></td>" +
-            "<td><textarea name=\"improvementContent\">" + escapeHtml(record?.improvementContent || "") + "</textarea></td>" +
-            "<td><input name=\"afterPhoto\" type=\"file\" accept=\"image/*\">" + afterPhotoPreview + "</td>" +
-            "<td><input name=\"actionOwner\" type=\"text\" value=\"" + escapeHtml(record?.actionOwner || "") + "\"></td>" +
-            "<td><input name=\"actionPlan\" type=\"text\" value=\"" + escapeHtml(record?.actionPlan || "") + "\"></td>" +
-            "<td><input name=\"completionDate\" type=\"date\" value=\"" + escapeHtml(defaultCompletionDate) + "\"></td>" +
+            "<td><select name=\"areaId\" required>" + getSafetyAreaOptions(periodId, effectiveAreaId, isNew ? null : allowedIds) + "</select></td>" +
+            "<td><span class=\"safety-date-editor\"><input name=\"issueDate\" type=\"text\" data-safety-date placeholder=\"dd/mm/yyyy\" inputmode=\"numeric\" maxlength=\"10\" value=\"" + escapeHtml(effectiveDisplayIssueDate) + "\" required autocomplete=\"off\"><input type=\"date\" class=\"safety-date-calendar\" aria-label=\"Mở lịch chọn ngày\" value=\"" + escapeHtml(effectiveIssueDate) + "\"></span></td>" +
+            "<td><textarea name=\"note\" required>" + escapeHtml(effectiveNote) + "</textarea></td>" +
+            "<td>" + photoEditor + "</td>" +
+            "<td><input name=\"issueCount\" type=\"number\" min=\"1\" step=\"1\" value=\"" + escapeHtml(effectiveIssueCount) + "\"></td>" +
+            "<td><select name=\"issueType\">" + optionHtml(STOP6_OPTIONS, effectiveIssueType) + "</select></td>" +
+            "<td><select name=\"issueLevel\">" + optionHtml(ISSUE_LEVEL_OPTIONS, effectiveIssueLevel) + "</select></td>" +
+            "<td><select name=\"foundChannel\">" + optionHtml(SAFETY_FOUND_OPTIONS, effectiveFoundChannel) + "</select></td>" +
+            "<td><select name=\"issueStatus\">" + optionHtml(ISSUE_STATUS_OPTIONS, effectiveIssueStatus) + "</select></td>" +
+            "<td><input name=\"issueFoundBy\" type=\"text\" value=\"" + escapeHtml(effectiveIssueFoundBy) + "\"></td>" +
+            "<td><input name=\"employeeCode\" type=\"text\" value=\"" + escapeHtml(effectiveEmployeeCode) + "\"></td>" +
+            "<td><input name=\"issueItemLabel\" type=\"text\" value=\"" + escapeHtml(effectiveIssueItemLabel) + "\"></td>" +
+            "<td><textarea name=\"improvementContent\">" + escapeHtml(effectiveImprovementContent) + "</textarea></td>" +
+            "<td>" + afterPhotoEditor + "</td>" +
+            "<td><input name=\"actionOwner\" type=\"text\" value=\"" + escapeHtml(effectiveActionOwner) + "\"></td>" +
+            "<td><input name=\"actionPlan\" type=\"text\" value=\"" + escapeHtml(effectiveActionPlan) + "\"></td>" +
+            "<td><input name=\"completionDate\" type=\"date\" value=\"" + escapeHtml(effectiveCompletionDate) + "\"></td>" +
           "</tr></tbody>" +
         "</table></div>" + actualDateFields,
       async onSubmit(formData, form) {
@@ -14757,12 +15680,13 @@
         const beforeLabel = record ? getIssueLocation(row) + " · " + (record.note || "") : "Tạo mới";
         const photoInput = form.elements.photo;
         const afterPhotoInput = form.elements.afterPhoto;
-        const nextPhoto = await prepareScorePhoto(photoInput?.files?.[0], record, formData.get("removePhoto") === "on", periodId);
+        const nextPhoto = await prepareScorePhoto(photoInput?.files?.[0], record, formData.get("removePhoto") === "on", periodId, "an-toan");
         const nextAfterPhoto = await prepareScorePhoto(
           afterPhotoInput?.files?.[0],
           { photoDataUrl: record?.afterPhotoDataUrl, photoName: record?.afterPhotoName },
           formData.get("removeAfterPhoto") === "on",
           periodId,
+          "an-toan",
         );
         const issueType = String(formData.get("issueType") || "");
         const issueLevel = String(formData.get("issueLevel") || "");
@@ -14785,6 +15709,7 @@
           note,
           photoDataUrl: nextPhoto.photoDataUrl,
           photoName: nextPhoto.photoName,
+          photoAnnotations: nextPhoto.photoDataUrl !== (record?.photoDataUrl || "") ? [] : (record?.photoAnnotations || []),
           issueCount,
           issueType,
           issueLevel,
@@ -14796,6 +15721,7 @@
           improvementContent: String(formData.get("improvementContent") || "").trim(),
           afterPhotoDataUrl: nextAfterPhoto.photoDataUrl,
           afterPhotoName: nextAfterPhoto.photoName,
+          afterPhotoAnnotations: nextAfterPhoto.photoDataUrl !== (record?.afterPhotoDataUrl || "") ? [] : (record?.afterPhotoAnnotations || []),
           actionOwner: String(formData.get("actionOwner") || "").trim(),
           actionPlan: String(formData.get("actionPlan") || "").trim(),
           completionDate: String(formData.get("completionDate") || "").trim() || defaultCompletionDate,
@@ -14826,18 +15752,7 @@
           state.safetyRecords = [payload, ...(state.safetyRecords || [])];
         }
         state.deletedSafetyRecords = (state.deletedSafetyRecords || []).filter((item) => item.id !== payload.id);
-        await Promise.all([
-          tryUnmarkSafetyRecordDeleted(payload.id),
-          tryLogAdminChange({
-            subjectLabel: "Đánh giá an toàn",
-            areaCode: selected.code,
-            beforeLabel,
-            afterLabel: payload.issueLocation + " · " + payload.note,
-            changeLabel: (isNew ? "Thêm" : "Sửa") + " báo cáo AT Zone " + selected.code,
-            scope: SAFETY_PERIOD_TYPE,
-            periodId,
-          }),
-        ]);
+        await tryUnmarkSafetyRecordDeleted(payload.id);
         await deleteUnusedPhotoFiles([
           existingRecordCopy?.photoDataUrl && existingRecordCopy.photoDataUrl !== payload.photoDataUrl ? existingRecordCopy.photoDataUrl : "",
           existingRecordCopy?.afterPhotoDataUrl && existingRecordCopy.afterPhotoDataUrl !== payload.afterPhotoDataUrl ? existingRecordCopy.afterPhotoDataUrl : "",
@@ -14852,12 +15767,42 @@
           after: payloadCopy,
           isNew,
         });
+        window.FormDraftManager?.clearDraft(safetyDraftKey);
         showToast(isNew ? "Đã thêm báo cáo an toàn." : "Đã cập nhật báo cáo an toàn.");
         renderAll();
         return true;
       },
     });
 
+    bindSafetyPhotoEditors(elements.modalBody);
+    if (safetyDraft?.photoDataUrl) {
+      const pImg = elements.modalBody.querySelector('[data-safety-photo-field="photoAnnotations"], img.safety-thumb');
+      if (pImg) {
+        pImg.src = safetyDraft.photoDataUrl;
+        pImg.dataset.previewImg = safetyDraft.photoDataUrl;
+        pImg.dataset.safetyAnnotations = JSON.stringify(safetyDraft.photoAnnotations || []);
+        pImg.hidden = false;
+        pImg.closest(".photo-upload-box")?.classList.add("has-photo");
+        pImg.closest(".photo-upload-box")?.querySelector(".photo-preview-wrap")?.classList.remove("is-hidden");
+        pImg.closest(".photo-upload-box")?.querySelector(".photo-editor-empty")?.classList.add("is-hidden");
+        pImg.closest(".photo-upload-box")?.querySelectorAll("[data-photo-annotate], [data-photo-open], [data-photo-change], [data-photo-delete]").forEach((btn) => { btn.hidden = false; });
+        window.refreshSafetyPhotoAnnotationThumbnail?.(pImg, safetyDraft.photoAnnotations || []);
+      }
+    }
+    if (safetyDraft?.afterPhotoDataUrl) {
+      const apImg = elements.modalBody.querySelector('[data-safety-photo-field="afterPhotoAnnotations"]');
+      if (apImg) {
+        apImg.src = safetyDraft.afterPhotoDataUrl;
+        apImg.dataset.previewImg = safetyDraft.afterPhotoDataUrl;
+        apImg.dataset.safetyAnnotations = JSON.stringify(safetyDraft.afterPhotoAnnotations || []);
+        apImg.hidden = false;
+        apImg.closest(".photo-upload-box")?.classList.add("has-photo");
+        apImg.closest(".photo-upload-box")?.querySelector(".photo-preview-wrap")?.classList.remove("is-hidden");
+        apImg.closest(".photo-upload-box")?.querySelector(".photo-editor-empty")?.classList.add("is-hidden");
+        apImg.closest(".photo-upload-box")?.querySelectorAll("[data-photo-annotate], [data-photo-open], [data-photo-change], [data-photo-delete]").forEach((btn) => { btn.hidden = false; });
+        window.refreshSafetyPhotoAnnotationThumbnail?.(apImg, safetyDraft.afterPhotoAnnotations || []);
+      }
+    }
     const modalForm = elements.modalBody?.querySelector("form") || elements.modalBody;
     const safetyDateText = modalForm?.querySelector('[data-safety-date]');
     const safetyDateCalendar = modalForm?.querySelector('.safety-date-calendar');
@@ -18310,12 +19255,13 @@
       indicator.classList.toggle("has-error", hasError);
       indicator.classList.toggle("has-score-drafts", scoreDrafts > 0);
       indicator.disabled = scoreDrafts === 0;
-      indicator.title = scoreDrafts > 0
+      indicator.title = detail.lastError || (scoreDrafts > 0
         ? "Đồng bộ hoặc xử lý xung đột bản nháp điểm"
-        : pending > 0 ? "Dữ liệu sẽ tự đồng bộ khi kết nối ổn định" : "Không có dữ liệu chờ đồng bộ";
+        : pending > 0 ? "Dữ liệu sẽ tự đồng bộ khi kết nối ổn định" : "Không có dữ liệu chờ đồng bộ");
       indicator.setAttribute("aria-label", scoreDrafts > 0
         ? `${scoreDrafts} bản nháp điểm chưa đồng bộ`
-        : pending > 0 ? `${pending} thay đổi đang chờ đồng bộ` : "Không có dữ liệu chờ đồng bộ");
+        : hasError && online ? `Có lỗi đồng bộ${pending > 0 ? ` · ${pending} thay đổi còn chờ` : ""}`
+          : pending > 0 ? `${pending} thay đổi đang chờ đồng bộ` : "Không có dữ liệu chờ đồng bộ");
     }
 
     if (label) {
@@ -18323,6 +19269,8 @@
         label.textContent = !online
           ? `${scoreDrafts} bản nháp điểm lưu trên thiết bị`
           : `${scoreDrafts} bản nháp điểm chờ đồng bộ`;
+      } else if (hasError && online) {
+        label.textContent = pending > 0 ? `Lỗi đồng bộ · ${pending} thay đổi cần xử lý` : "Lỗi khi lưu dữ liệu";
       } else if (pending > 0) {
         label.textContent = syncing
           ? `Đang đồng bộ ${pending} thay đổi...`
@@ -18371,6 +19319,9 @@
   }
 
   function getHistoryEntryScope(entry) {
+    if (Array.isArray(entry?.scopes) && entry.scopes.length === 1) {
+      return normalizeCatalogType(entry.scopes[0]);
+    }
     if (entry?.scope) {
       return normalizeCatalogType(entry.scope);
     }
@@ -18389,11 +19340,24 @@
     const normalizedScope = scope ? normalizeCatalogType(scope) : "";
     return [...(state.history || [])]
       .filter((entry) => !isHistoryEntryExpired(entry))
-      .filter((entry) => !normalizedScope || getHistoryEntryScope(entry) === normalizedScope)
+      .filter((entry) => !normalizedScope || getHistoryChangesForScope(entry, normalizedScope).length > 0)
       .sort((a, b) => new Date(b.timestamp || 0) - new Date(a.timestamp || 0));
   }
 
-  function formatHistoryTarget(entry) {
+  function getHistoryChangesForScope(entry, scope = "") {
+    const inferredScope = entry?.scope ? normalizeCatalogType(entry.scope) : getHistoryEntryScope(entry);
+    return getAuditChanges(entry).filter((change) => {
+      if (!scope) return true;
+      return normalizeCatalogType(change.scope || inferredScope) === normalizeCatalogType(scope);
+    });
+  }
+
+  function formatHistoryTarget(entry, scope = "") {
+    if (Array.isArray(entry?.changes) && entry.changes.length) {
+      const targets = [...new Set(getHistoryChangesForScope(entry, scope).map((change) => change.target).filter(Boolean))];
+      const period = entry.periodLabel || "";
+      return [period, ...targets].filter(Boolean).join(" · ") || "-";
+    }
     const parts = [
       entry.periodLabel || "",
       entry.areaCode ? "Zone " + entry.areaCode : "",
@@ -18414,47 +19378,272 @@
     return [entry.beforeLabel, entry.afterLabel].filter(Boolean).join(" → ") || "-";
   }
 
+  const AUDIT_LOG_PAGE_SIZE = 25;
+  const auditLogPagination = {
+    page: 1,
+  };
+
+  function setAuditLogPage(page) {
+    auditLogPagination.page = Math.max(1, Math.trunc(Number(page) || 1));
+  }
+
+  function renderAuditLogPager(page, totalPages, totalRows, startIndex, endIndex) {
+    if (totalRows <= 0) return "";
+    const start = startIndex + 1;
+    const end = endIndex;
+
+    const pages = [];
+    if (totalPages <= 7) {
+      for (let i = 1; i <= totalPages; i++) pages.push(i);
+    } else {
+      pages.push(1);
+      if (page > 3) pages.push("...");
+      const startP = Math.max(2, page - 1);
+      const endP = Math.min(totalPages - 1, page + 1);
+      for (let i = startP; i <= endP; i++) {
+        if (!pages.includes(i)) pages.push(i);
+      }
+      if (page < totalPages - 2) pages.push("...");
+      if (!pages.includes(totalPages)) pages.push(totalPages);
+    }
+
+    const numberButtons = pages.map((item) => {
+      if (item === "...") {
+        return '<span class="audit-log-pager-ellipsis">...</span>';
+      }
+      const isActive = item === page;
+      return '<button type="button" class="tiny-button audit-log-page-btn' + (isActive ? ' is-active' : '') + '" data-action="set-audit-log-page" data-page="' + item + '" ' + (isActive ? 'aria-current="page"' : '') + '>' + item + '</button>';
+    }).join("");
+
+    return '<div class="audit-log-pager" aria-label="Phân trang lịch sử chỉnh sửa">' +
+      '<div class="audit-log-pager-info">' +
+        'Hiển thị <strong>' + start + '–' + end + '</strong> / <strong>' + totalRows + '</strong> chỉnh sửa · Trang <strong>' + page + '</strong>/<strong>' + totalPages + '</strong>' +
+      '</div>' +
+      '<div class="audit-log-pager-controls">' +
+        '<button type="button" class="tiny-button" data-action="set-audit-log-page" data-page="1"' + (page <= 1 ? ' disabled' : '') + ' title="Trang đầu">« Đầu</button>' +
+        '<button type="button" class="tiny-button" data-action="set-audit-log-page" data-page="' + (page - 1) + '"' + (page <= 1 ? ' disabled' : '') + ' title="Trang trước">‹ Trước</button>' +
+        '<div class="audit-log-pager-numbers">' + numberButtons + '</div>' +
+        '<button type="button" class="tiny-button" data-action="set-audit-log-page" data-page="' + (page + 1) + '"' + (page >= totalPages ? ' disabled' : '') + ' title="Trang sau">Sau ›</button>' +
+        '<button type="button" class="tiny-button" data-action="set-audit-log-page" data-page="' + totalPages + '"' + (page >= totalPages ? ' disabled' : '') + ' title="Trang cuối">Cuối »</button>' +
+      '</div>' +
+    '</div>';
+  }
+
+  function renderSingleScopeCard(scope, isActive, action = "set-history-scope", titlePrefix = "Lịch sử") {
+    const normalizedScope = normalizeScopeCardValue(scope);
+    const option = ACCOUNT_SCOPE_OPTIONS.find((opt) => normalizeScopeCardValue(opt.value) === normalizedScope) || {
+      value: scope,
+      label: normalizedScope === SAFETY_PERIOD_TYPE ? "AT" : "5S",
+      icon: normalizedScope === SAFETY_PERIOD_TYPE ? "AT" : "5S",
+    };
+    const isViewerScope = normalizedScope === ACCOUNT_VIEWER_SCOPE;
+    const isDepartmentHeadScope = normalizedScope === ACCOUNT_DEPARTMENT_HEAD_SCOPE;
+    const period = isViewerScope ? null : getPeriod(getActivePeriodId(normalizedScope));
+    const activeClass = isActive ? " is-active" : "";
+    const title = titlePrefix + " " + option.label;
+    const periodText = isViewerScope || isDepartmentHeadScope ? "Toàn bộ bảng biểu" : period ? periodLabel(period) : currentDateDisplay();
+    const iconText = option.icon || option.label;
+    const cardClass = isDepartmentHeadScope ? "department-head-card" : isViewerScope ? "viewer-card" : normalizedScope === SAFETY_PERIOD_TYPE ? "safety-card" : "score-card";
+    return '<article class="admin-home-card dashboard-home-card simple-home-card scope-card ' + cardClass + activeClass + '">' +
+      '<button class="scope-card-toggle" type="button" data-action="' + escapeHtml(action) + '" data-id="' + escapeHtml(normalizedScope) + '" aria-label="' + escapeHtml(title) + '" aria-expanded="' + (isActive ? "true" : "false") + '">' +
+        '<span class="admin-home-card-icon">' + escapeHtml(iconText) + '</span>' +
+        '<span class="scope-card-copy"><span class="scope-card-kicker">' + escapeHtml(titlePrefix) + '</span><strong>' + escapeHtml(option.label) + '</strong></span>' +
+        '<span class="scope-card-period">' + escapeHtml(periodText) + '</span>' +
+      '</button>' +
+      '<div class="scope-card-detail-slot" data-scope-detail-slot="' + escapeHtml(normalizedScope) + '"></div>' +
+    '</article>';
+  }
+
+  function renderAuditLogTab() {
+    const container = document.getElementById("tab-audit-log");
+    if (!container) {
+      return;
+    }
+
+    if (!isAdminAccount(currentUser)) {
+      container.innerHTML = '<div class="history-empty" style="margin: 20px;"><strong>Không có quyền truy cập</strong><span>Chỉ tài khoản admin mới có quyền xem lịch sử chỉnh sửa.</span></div>';
+      return;
+    }
+
+    const activeScope = expandedHistoryScope ? normalizeCatalogType(expandedHistoryScope) : "";
+    const otherScope = activeScope === SAFETY_PERIOD_TYPE ? FIVE_S_PERIOD_TYPE : SAFETY_PERIOD_TYPE;
+
+    if (!activeScope) {
+      const card5SHtml = '<div class="scope-card-row history-scope-row">' +
+        renderSingleScopeCard(FIVE_S_PERIOD_TYPE, false, "set-history-scope", "Lịch sử") +
+      '</div>';
+      const cardATHtml = '<div class="scope-card-row history-scope-row history-scope-row-bottom">' +
+        renderSingleScopeCard(SAFETY_PERIOD_TYPE, false, "set-history-scope", "Lịch sử") +
+      '</div>';
+
+      container.innerHTML = '<div class="audit-log-page">' +
+        card5SHtml +
+        cardATHtml +
+      '</div>';
+      return;
+    }
+
+    activeHistoryScope = activeScope;
+    const rows = getHistoryEntries(activeHistoryScope);
+    const totalRows = rows.length;
+    const totalPages = Math.max(1, Math.ceil(totalRows / AUDIT_LOG_PAGE_SIZE));
+    auditLogPagination.page = Math.min(Math.max(1, auditLogPagination.page), totalPages);
+
+    const startIndex = (auditLogPagination.page - 1) * AUDIT_LOG_PAGE_SIZE;
+    const endIndex = Math.min(startIndex + AUDIT_LOG_PAGE_SIZE, totalRows);
+    const pagedRows = rows.slice(startIndex, endIndex);
+
+    const topCardHtml = '<div class="scope-card-row history-scope-row">' +
+      renderSingleScopeCard(activeScope, true, "set-history-scope", "Lịch sử") +
+    '</div>';
+
+    const bottomCardHtml = '<div class="scope-card-row history-scope-row history-scope-row-bottom">' +
+      renderSingleScopeCard(otherScope, false, "set-history-scope", "Lịch sử") +
+    '</div>';
+
+    if (!totalRows) {
+      container.innerHTML = '<div class="audit-log-page">' +
+        topCardHtml +
+        '<div class="audit-log-card">' +
+          '<div class="history-empty">' +
+            '<strong>Chưa có log chỉnh sửa ' + escapeHtml(getAccountScopeLabel(activeHistoryScope)) + ' (3 tháng gần nhất)</strong>' +
+            '<span>Khi admin hoặc assessor cập nhật dữ liệu, lịch sử sẽ hiện ở đây.</span>' +
+          '</div>' +
+          '<p class="history-retention-note">💡 <em>Hệ thống tự động lưu giữ lịch sử chỉnh sửa trong vòng 3 tháng gần nhất để tối ưu hiệu năng và dung lượng.</em></p>' +
+        '</div>' +
+        bottomCardHtml +
+      '</div>';
+      return;
+    }
+
+    const historyRows = pagedRows.map((entry) => {
+      const resolvedCode = resolveHistoryEntryEmployeeCode(entry);
+      if (resolvedCode && !entry.employeeCode) {
+        entry.employeeCode = resolvedCode;
+      }
+      const employeeCode = resolvedCode || String(entry.employeeCode || "").trim() || "chưa có";
+      const userName = entry.userName || (entry.username && state.accounts?.find((a) => a.username === entry.username)?.displayName) || "Không rõ";
+      const userLabel = "Mã NV: " + employeeCode + " · " + userName + (entry.username ? " (" + entry.username + ")" : "");
+      const allChanges = getAuditChanges(entry);
+      const changes = getHistoryChangesForScope(entry, activeHistoryScope);
+      const isLegacySession = !Array.isArray(entry?.changes) && Number(entry?.changeCount || 0) > 1;
+      const displayChangeCount = isLegacySession ? Number(entry.changeCount) : changes.length;
+      const totalSessionChanges = Array.isArray(entry?.changes) ? allChanges.length : (Number(entry?.changeCount) || displayChangeCount);
+
+      const scopeLabel = getAccountScopeLabel(activeHistoryScope);
+      let sessionSubtitle = "";
+      if (isLegacySession) {
+        sessionSubtitle = "Phiên làm việc tổng hợp (log cũ)";
+      } else if (displayChangeCount < totalSessionChanges) {
+        sessionSubtitle = `Phiên đăng nhập (tổng ${totalSessionChanges} thay đổi cả phiên)`;
+      } else {
+        sessionSubtitle = "Phiên đăng nhập";
+      }
+
+      const countHeader = displayChangeCount < totalSessionChanges
+        ? `${displayChangeCount} thay đổi ${scopeLabel}`
+        : `${displayChangeCount} thay đổi`;
+
+      let changeListHtml = "";
+      if (isLegacySession) {
+        const values = [
+          entry.beforeLabel ? "<span><strong>Thao tác đầu:</strong> " + escapeHtml(entry.beforeLabel) + "</span>" : "",
+          entry.afterLabel ? "<span><strong>Thao tác cuối:</strong> " + escapeHtml(entry.afterLabel) + "</span>" : "",
+        ].filter(Boolean).join("");
+        changeListHtml = '<li class="history-change-item">' +
+          '<span class="history-action-badge is-edited">Gộp</span>' +
+          '<strong>Phiên làm việc tổng hợp</strong> · ' + escapeHtml(entry.changeLabel || "Phiên có nhiều thay đổi") +
+          (values ? '<div class="history-change-values">' + values + '</div>' : '') +
+          '<div style="margin-top: 6px; font-size: 0.78rem; color: #64748b; font-style: italic;">💡 Log phiên cũ (23/10 trở về trước) chỉ lưu tóm tắt phiên và thay đổi gần nhất. Các phiên mới hiện tại sẽ hiển thị chi tiết từng Zone & Tiêu chí.</div>' +
+        '</li>';
+      } else {
+        const renderItem = (change) => {
+          const actionClass = change.action === "Thêm" ? "is-added" : change.action === "Xóa" ? "is-deleted" : "is-edited";
+          const target = change.target ? " · " + escapeHtml(change.target) : "";
+          const values = [
+            change.before ? "<span><strong>Trước:</strong> " + escapeHtml(change.before) + "</span>" : "",
+            change.after ? "<span><strong>Sau:</strong> " + escapeHtml(change.after) + "</span>" : "",
+          ].filter(Boolean).join("");
+          const time = change.timestamp ? '<span style="font-size: 0.76rem; color: #64748b; margin-left: 6px;">(' + escapeHtml(formatDateTimeDisplay(change.timestamp)) + ')</span>' : '';
+          return '<li class="history-change-item"><span class="history-action-badge ' + actionClass + '">' + escapeHtml(change.action) + '</span><strong>' + escapeHtml(change.section) + '</strong> · ' + escapeHtml(change.label) + target + time + (values ? '<div class="history-change-values">' + values + '</div>' : '') + '</li>';
+        };
+
+        if (changes.length <= 4) {
+          changeListHtml = changes.map(renderItem).join("");
+        } else {
+          const visibleChanges = changes.slice(0, 3);
+          const hiddenChanges = changes.slice(3);
+          changeListHtml = visibleChanges.map(renderItem).join("") +
+            '<div class="history-hidden-changes" hidden style="display: grid; gap: 8px; margin-top: 8px;">' +
+              hiddenChanges.map(renderItem).join("") +
+            '</div>' +
+            '<button type="button" class="tiny-button history-toggle-btn" data-action="toggle-history-row" data-remaining="' + hiddenChanges.length + '" style="margin-top: 6px; font-size: 0.78rem;">▼ Xem thêm ' + hiddenChanges.length + ' thay đổi khác</button>';
+        }
+      }
+
+      const timestamp = entry.sessionStartedAt || entry.timestamp;
+      const lastChanged = entry.sessionLastChangedAt && entry.sessionLastChangedAt !== timestamp
+        ? '<span>Cập nhật cuối: ' + escapeHtml(formatDateTimeDisplay(entry.sessionLastChangedAt)) + '</span>'
+        : '';
+      return '<tr>' +
+        '<td data-label="Đăng nhập / sửa cuối">' + escapeHtml(formatDateTimeDisplay(timestamp)) + lastChanged + '</td>' +
+        '<td data-label="Người thực hiện">' + escapeHtml(userLabel) + '</td>' +
+        '<td data-label="Kỳ / Zone">' + escapeHtml(formatHistoryTarget(entry, activeHistoryScope)) + '</td>' +
+        '<td data-label="Phần & thao tác"><strong>' + escapeHtml(countHeader) + '</strong><span>' + escapeHtml(sessionSubtitle) + '</span></td>' +
+        '<td data-label="Chi tiết thay đổi"><ul class="history-change-list">' + (changeListHtml || '<li>-</li>') + '</ul></td>' +
+        '<td data-label="Ghi chú">' + escapeHtml(entry.note || '-') + '</td>' +
+      '</tr>';
+    }).join("");
+
+    const topPagerHtml = renderAuditLogPager(auditLogPagination.page, totalPages, totalRows, startIndex, endIndex);
+    const bottomPagerHtml = renderAuditLogPager(auditLogPagination.page, totalPages, totalRows, startIndex, endIndex);
+
+    container.innerHTML = '<div class="audit-log-page">' +
+      topCardHtml +
+      '<div class="audit-log-card">' +
+        '<div class="audit-log-card-header">' +
+          '<div class="history-summary">' +
+            '<strong>' + totalRows + '</strong>' +
+            '<span>phiên có chỉnh sửa ' + escapeHtml(getAccountScopeLabel(activeHistoryScope)) + ' trong 3 tháng gần nhất từ tất cả tài khoản.</span>' +
+          '</div>' +
+          topPagerHtml +
+        '</div>' +
+        '<div class="history-table-wrap audit-log-table-wrap" data-drag-scroll>' +
+          '<table class="history-table audit-log-table">' +
+            '<thead>' +
+              '<tr>' +
+                '<th style="min-width: 140px; width: 140px;">Đăng nhập / sửa cuối</th>' +
+                '<th style="min-width: 180px; width: 180px;">Người thực hiện</th>' +
+                '<th style="min-width: 180px; width: 180px;">Kỳ / Zone</th>' +
+                '<th style="min-width: 140px; width: 140px;">Phần & thao tác</th>' +
+                '<th style="min-width: 320px;">Chi tiết thay đổi</th>' +
+                '<th style="min-width: 120px; width: 130px;">Ghi chú</th>' +
+              '</tr>' +
+            '</thead>' +
+            '<tbody>' +
+              historyRows +
+            '</tbody>' +
+          '</table>' +
+        '</div>' +
+        '<div class="audit-log-card-footer">' +
+          bottomPagerHtml +
+          '<p class="history-retention-note">💡 <em>Hệ thống tự động lưu giữ lịch sử chỉnh sửa trong vòng 3 tháng gần nhất để tối ưu hiệu năng và dung lượng.</em></p>' +
+        '</div>' +
+      '</div>' +
+      bottomCardHtml +
+    '</div>';
+  }
+
   function openEditHistoryModal(scope = activeHistoryScope) {
     if (!requireAdminAction()) {
       return;
     }
 
     closeAccountMenu();
+    closeModal();
     activeHistoryScope = normalizeCatalogType(scope);
-    const rows = getHistoryEntries(activeHistoryScope);
-    const historyRows = rows.map((entry) => {
-      const userLabel = (entry.userName || "Không rõ") + (entry.username ? " (" + entry.username + ")" : "");
-      const beforeAfter = [
-        entry.beforeLabel ? "<span><strong>Trước:</strong> " + escapeHtml(entry.beforeLabel) + "</span>" : "",
-        entry.afterLabel ? "<span><strong>Sau:</strong> " + escapeHtml(entry.afterLabel) + "</span>" : "",
-      ].filter(Boolean).join("") || "-";
-      return "<tr>" +
-        "<td data-label=\"Thời gian\">" + escapeHtml(formatDateTimeDisplay(entry.timestamp)) + "</td>" +
-        "<td data-label=\"Tài khoản\">" + escapeHtml(userLabel) + "</td>" +
-        "<td data-label=\"Kỳ / Zone\">" + escapeHtml(formatHistoryTarget(entry)) + "</td>" +
-        "<td data-label=\"Nội dung\"><strong>" + escapeHtml(formatHistoryChange(entry)) + "</strong>" + (entry.subjectLabel ? "<span>" + escapeHtml(entry.subjectLabel) + "</span>" : "") + "</td>" +
-        "<td data-label=\"Trước / Sau\">" + beforeAfter + "</td>" +
-        "<td data-label=\"Ghi chú\">" + escapeHtml(entry.note || "-") + "</td>" +
-      "</tr>";
-    }).join("");
-    const scopeSwitch = "<div class=\"scope-card-row history-scope-row\">" + scopeCardHtml(activeHistoryScope, "set-history-scope", "Lịch sử") + "</div>";
-    const html = scopeSwitch + (rows.length
-      ? "<div class=\"history-summary\"><strong>" + rows.length + "</strong><span>phiên có chỉnh sửa " + escapeHtml(getAccountScopeLabel(activeHistoryScope)) + " trong 3 tháng gần nhất từ tất cả tài khoản.</span></div>" +
-        "<div class=\"history-table-wrap\"><table class=\"history-table\"><thead><tr>" +
-          "<th>Thời gian</th><th>Tài khoản</th><th>Kỳ / Zone</th><th>Nội dung</th><th>Trước / Sau</th><th>Ghi chú</th>" +
-        "</tr></thead><tbody>" + historyRows + "</tbody></table></div>"
-      : "<div class=\"history-empty\"><strong>Chưa có log chỉnh sửa " + escapeHtml(getAccountScopeLabel(activeHistoryScope)) + " (3 tháng gần nhất)</strong><span>Khi admin hoặc assessor cập nhật dữ liệu, lịch sử sẽ hiện ở đây.</span></div>") +
-      "<p style=\"margin:10px 0 0; font-size:0.8rem; color:var(--muted); text-align:right;\">💡 <em>Hệ thống tự động lưu giữ lịch sử chỉnh sửa trong vòng 3 tháng gần nhất để tối ưu hiệu năng và dung lượng.</em></p>";
-
-    openFormModal({
-      title: "Lịch sử chỉnh sửa",
-      submitText: "Đóng",
-      submitClass: "secondary-button",
-      html,
-      onSubmit() {
-        return true;
-      },
-    });
+    auditLogPagination.page = 1;
+    goToTab("audit-log");
   }
 
   const COPY_STYLE_PROPS = [
@@ -19183,54 +20372,366 @@
   }
 
   function openUserGuideSetupModal() {
-    if (!requireAdminAction()) {
+    closeAccountMenu();
+    goToTab("guide-setup");
+  }
+
+  function openUserGuideViewerModal(initialSection = "safety", customGuides = null) {
+    closeAccountMenu();
+    const guideApi = window.UserGuideContent;
+    if (!guideApi) return;
+    const existing = document.getElementById("userGuideViewerModal");
+    if (existing) existing.remove();
+
+    const guidesToRender = customGuides ? guideApi.normalize(customGuides) : state.userGuides;
+    const isPreview = Boolean(customGuides);
+
+    const backdrop = document.createElement("div");
+    backdrop.id = "userGuideViewerModal";
+    backdrop.className = "unsaved-changes-backdrop is-dark-theme user-guide-viewer-backdrop";
+    let activeSec = initialSection;
+
+    const renderContent = () => {
+      return `
+        <div class="user-guide-viewer-card" role="dialog" aria-modal="true" aria-labelledby="guideViewerTitle">
+          <div class="user-guide-viewer-header">
+            <div class="guide-viewer-header-info">
+              <span class="section-step">${isPreview ? "Xem trước cấu hình" : "Tài liệu hệ thống"}</span>
+              <h2 id="guideViewerTitle"><i class="fa-solid fa-circle-question" style="color: #38bdf8;"></i> ${isPreview ? "Xem trước hướng dẫn sử dụng" : "Hướng dẫn sử dụng"}</h2>
+            </div>
+            <button type="button" class="guide-viewer-close-btn" data-guide-viewer-close title="Đóng">&times;</button>
+          </div>
+          <div class="guide-viewer-tabs">
+            ${guideApi.sections.map((s) => {
+              const icon = s.id === "safety" ? '<i class="fa-solid fa-shield-halved"></i>' : s.id === "5s" ? '<i class="fa-solid fa-clipboard-check"></i>' : '<i class="fa-solid fa-list-check"></i>';
+              return `
+                <button type="button" class="guide-viewer-tab-btn ${s.id === activeSec ? "is-active" : ""}" data-guide-view-tab="${s.id}">
+                  ${icon} <span>${escapeHtml(s.label)}</span>
+                </button>
+              `;
+            }).join("")}
+          </div>
+          <div class="user-guide-viewer-body">
+            ${guideApi.renderGuide(activeSec, guidesToRender)}
+          </div>
+          <div class="user-guide-viewer-footer">
+            <button type="button" class="primary-button" data-guide-viewer-close>Đóng</button>
+          </div>
+        </div>
+      `;
+    };
+
+    backdrop.innerHTML = renderContent();
+    document.body.appendChild(backdrop);
+    hydrateAuthenticatedPhotos(backdrop);
+
+    const close = () => backdrop.remove();
+    backdrop.addEventListener("click", (e) => {
+      if (e.target === backdrop || e.target.closest("[data-guide-viewer-close]")) {
+        close();
+        return;
+      }
+      const tabBtn = e.target.closest("[data-guide-view-tab]");
+      if (tabBtn) {
+        activeSec = tabBtn.dataset.guideViewTab;
+        backdrop.innerHTML = renderContent();
+        hydrateAuthenticatedPhotos(backdrop);
+      }
+      const img = e.target.closest("img.mobile-user-guide-image, img");
+      if (img) {
+        const src = img.currentSrc || img.src || img.dataset.photoSrc || "";
+        if (!src) return;
+        e.preventDefault();
+        e.stopPropagation();
+        const annotations = (() => {
+          try {
+            return JSON.parse(img.dataset.guideAnnotations || img.dataset.safetyAnnotations || "[]");
+          } catch (_) {
+            return [];
+          }
+        })();
+        openMobileImageModal(src, {
+          initialCircles: annotations,
+          editable: false,
+          viewOnly: true,
+          showToolbar: false,
+        });
+      }
+    });
+  }
+
+
+  function renderGuideSetupTab() {
+    const container = document.getElementById("tab-guide-setup");
+    if (!container) return;
+
+    if (!isAdminAccount(currentUser)) {
+      container.innerHTML = `
+        <div class="guide-setup-page">
+          <div class="guide-setup-card">
+            <h2>Thiết lập hướng dẫn</h2>
+            <p>Trang này chỉ dành cho tài khoản Quản trị viên (Admin).</p>
+          </div>
+        </div>
+      `;
       return;
     }
-    closeAccountMenu();
 
     const guideApi = window.UserGuideContent;
-    if (!guideApi?.renderEditor || !dataStore?.savePhoto) {
-      showToast("Không mở được thiết lập hướng dẫn. Vui lòng tải lại ứng dụng.", true);
+    if (!guideApi?.renderEditor) {
+      container.innerHTML = `
+        <div class="guide-setup-page">
+          <div class="guide-setup-card">
+            <h2>Thiết lập hướng dẫn</h2>
+            <p>Không tải được dữ liệu hướng dẫn. Vui lòng tải lại ứng dụng.</p>
+          </div>
+        </div>
+      `;
       return;
     }
 
-    openFormModal({
-      title: "Thiết lập hướng dẫn",
-      submitText: "Lưu hướng dẫn",
-      modalClass: "user-guide-setup-modal",
-      html: guideApi.renderEditor(state.userGuides),
-      onError: () => showToast("Không lưu được hướng dẫn. Vui lòng thử lại.", true),
-      async onSubmit(_formData, form) {
-        if (!requireAdminAction()) {
-          return false;
+    const savedGuides = guideApi.normalize(state.userGuides);
+    const rawGuideDraft = window.FormDraftManager?.getDraft("guide_setup");
+    let hasGuideDraft = Boolean(rawGuideDraft && typeof rawGuideDraft === "object");
+    const effectiveGuides = (() => {
+      if (!hasGuideDraft) return savedGuides;
+      const draftNormalized = guideApi.normalize(rawGuideDraft);
+      for (const section of guideApi.sections) {
+        const draftSection = draftNormalized[section.id];
+        const savedSection = savedGuides[section.id];
+        if (!draftSection || !savedSection) continue;
+        const savedSteps = Array.isArray(savedSection.steps) ? savedSection.steps : [];
+        draftSection.steps = (draftSection.steps || []).map((step, idx) => {
+          const savedStep = savedSteps.find((s) => s.id && s.id === step.id) || savedSteps[idx] || null;
+          let nextImageUrl = String(step.imageUrl || "");
+          if (nextImageUrl.startsWith("blob:")) {
+            nextImageUrl = String(savedStep?.imageUrl || "");
+          }
+          let nextAnnotations = Array.isArray(step.annotations) ? step.annotations : [];
+          if (nextAnnotations.length === 0 && Array.isArray(savedStep?.annotations) && savedStep.annotations.length > 0 && nextImageUrl && nextImageUrl === savedStep?.imageUrl) {
+            nextAnnotations = savedStep.annotations;
+          }
+          return {
+            ...step,
+            imageUrl: nextImageUrl,
+            annotations: nextAnnotations,
+          };
+        });
+      }
+      if (JSON.stringify(draftNormalized) === JSON.stringify(savedGuides)) {
+        window.FormDraftManager?.clearDraft("guide_setup");
+        hasGuideDraft = false;
+        return savedGuides;
+      }
+      return draftNormalized;
+    })();
+
+    container.innerHTML = `
+      <div class="guide-setup-page">
+        <div class="guide-setup-card">
+          <div class="guide-setup-header">
+            <div>
+              <span class="section-step">Quản trị hệ thống</span>
+              <h2>Thiết lập hướng dẫn</h2>
+              <p class="history-retention-note">Chỉnh sửa nội dung và các bước hướng dẫn (kèm ảnh minh họa, khoanh vùng và mũi tên đỏ). Dữ liệu sẽ hiển thị khi người dùng mở dấu ? ở các phần tương ứng.</p>
+            </div>
+            <div class="guide-setup-header-actions">
+              <button type="button" class="btn-export-pdf-gradient" data-guide-export-pdf title="Xuất tài liệu hướng dẫn ra file PDF"><i class="fa-solid fa-file-pdf"></i> <span>Xuất PDF</span></button>
+              <button type="submit" form="guide-setup-form" class="primary-button"><i class="fa-solid fa-floppy-disk"></i> Lưu tất cả hướng dẫn</button>
+            </div>
+          </div>
+
+          ${hasGuideDraft ? `
+            <div class="guide-draft-banner">
+              <span><i class="fa-solid fa-clock-rotate-left"></i> Đang hiển thị bản nháp chưa lưu trên thiết bị này. Dữ liệu từ máy chủ/thiết bị khác có thể mới hơn.</span>
+              <button type="button" class="secondary-button" data-guide-clear-draft><i class="fa-solid fa-rotate-left"></i> Xóa bản nháp & Lấy dữ liệu mới nhất</button>
+            </div>
+          ` : ""}
+
+          <form id="guide-setup-form" class="guide-setup-form">
+            ${guideApi.renderEditor(effectiveGuides)}
+
+            <div class="guide-setup-footer">
+              <button type="button" class="secondary-button" data-guide-reset>Tải lại ban đầu</button>
+              <button type="button" class="secondary-button" data-guide-export-pdf><i class="fa-solid fa-file-pdf"></i> Xuất PDF hướng dẫn</button>
+              <button type="submit" class="primary-button"><i class="fa-solid fa-floppy-disk"></i> Lưu tất cả hướng dẫn</button>
+            </div>
+          </form>
+        </div>
+      </div>
+    `;
+
+    const form = container.querySelector("#guide-setup-form");
+    if (!form) return;
+
+    wireGuideSetupForm(form, container);
+    hydrateAuthenticatedPhotos(container);
+    container.querySelectorAll("img[data-safety-annotations], img[data-guide-annotations]").forEach((img) => {
+      window.refreshSafetyPhotoAnnotationThumbnail?.(img);
+    });
+  }
+
+  function wireGuideSetupForm(form, container = null) {
+    const guideApi = window.UserGuideContent;
+
+    const captureGuideDraft = () => {
+      const draftData = {};
+      for (const section of guideApi.sections) {
+        const panel = form.querySelector(`[data-guide-panel="${section.id}"]`);
+        if (!panel) continue;
+        const readField = (name) => panel.querySelector(`[data-guide-field="${name}"]`)?.value?.trim() || "";
+        const steps = [];
+        for (const card of panel.querySelectorAll("[data-guide-step-card]")) {
+          const title = card.querySelector('[data-guide-step-field="title"]')?.value?.trim() || "";
+          const body = card.querySelector('[data-guide-step-field="body"]')?.value?.trim() || "";
+          const imageItems = Array.from(card.querySelectorAll("[data-guide-image-item]"));
+          const images = [];
+
+          imageItems.slice(0, 3).forEach((item, itemIdx) => {
+            const preview = item.querySelector("[data-guide-image-preview]");
+            const rawPreviewSrc = preview?.getAttribute("src") || "";
+            const dataImageUrl = rawPreviewSrc.startsWith("data:") ? rawPreviewSrc : "";
+            const itemImageUrl = item.dataset.imageUrl && !item.dataset.imageUrl.startsWith("blob:") ? item.dataset.imageUrl : "";
+            const photoSrcUrl = preview?.dataset?.photoSrc && !preview.dataset.photoSrc.startsWith("blob:") ? preview.dataset.photoSrc : "";
+            const imgUrl = dataImageUrl || itemImageUrl || photoSrcUrl || "";
+            let annotations = [];
+            try {
+              annotations = JSON.parse(item.dataset.annotations || preview?.dataset?.safetyAnnotations || "[]");
+            } catch (_) {}
+            if (imgUrl) {
+              images.push({
+                id: item.dataset.imageId || `img-${itemIdx + 1}`,
+                imageUrl: imgUrl,
+                annotations,
+              });
+            }
+          });
+
+          const primary = images[0] || null;
+          steps.push({
+            id: card.dataset.stepId || makeId("guide-step"),
+            title,
+            body,
+            imageUrl: primary ? primary.imageUrl : "",
+            annotations: primary ? primary.annotations : [],
+            images,
+          });
         }
+        draftData[section.id] = {
+          title: readField("title"),
+          intro: readField("intro"),
+          hint: readField("hint"),
+          adminNote: readField("adminNote"),
+          steps,
+        };
+      }
+      return draftData;
+    };
 
-        const previousPhotoUrls = Object.values(state.userGuides || {})
-          .flatMap((guide) => guide?.steps || [])
-          .map((step) => step?.imageUrl || "")
-          .filter(Boolean);
-        const newlyUploadedPhotoUrls = [];
-        const currentPeriod = getPeriod(getActivePeriodId(FIVE_S_PERIOD_TYPE))
-          || getPeriod(getActivePeriodId(SAFETY_PERIOD_TYPE));
-        const now = new Date();
-        const nextGuides = {};
+    const savedBaselineJson = JSON.stringify(guideApi.normalize(state.userGuides));
+    const isGuideActuallyDirty = () => {
+      if (!form?.isConnected || activeTab !== "guide-setup") return false;
+      try {
+        return JSON.stringify(guideApi.normalize(captureGuideDraft())) !== savedBaselineJson;
+      } catch (_) {
+        return false;
+      }
+    };
+    const markGuideDirty = () => {
+      try {
+        if (isGuideActuallyDirty()) {
+          const snap = captureGuideDraft();
+          window.FormDraftManager?.saveDraft("guide_setup", snap);
+        } else {
+          window.FormDraftManager?.clearDraft("guide_setup");
+        }
+      } catch (_) {}
+    };
 
-        try {
-          for (const section of guideApi.sections) {
-            const panel = form.querySelector(`[data-guide-panel="${section.id}"]`);
-            if (!panel) continue;
-            const readField = (name) => panel.querySelector(`[data-guide-field="${name}"]`)?.value?.trim() || "";
-            const steps = [];
+    window.FormDraftManager?.registerDirtyForm("guide_setup", {
+      isDirty: isGuideActuallyDirty,
+      getSnapshot: captureGuideDraft,
+      onDiscard: () => {
+        window.FormDraftManager?.clearDraft("guide_setup");
+        if (activeTab === "guide-setup") {
+          try {
+            renderGuideSetupTab();
+          } catch (_) {}
+        }
+      },
+    });
 
-            for (const card of panel.querySelectorAll("[data-guide-step-card]")) {
-              const title = card.querySelector('[data-guide-step-field="title"]')?.value?.trim() || "";
-              const body = card.querySelector('[data-guide-step-field="body"]')?.value?.trim() || "";
-              const file = card.querySelector("[data-guide-image-input]")?.files?.[0] || null;
-              let imageUrl = card.dataset.imageUrl || "";
+    form.addEventListener("input", markGuideDirty);
+    form.addEventListener("change", markGuideDirty);
+    container?.querySelector("[data-guide-clear-draft]")?.addEventListener("click", () => {
+      window.FormDraftManager?.clearDraft("guide_setup");
+      window.FormDraftManager?.unregisterDirtyForm("guide_setup");
+      renderGuideSetupTab();
+    });
 
-              if (card.dataset.imageRemoved === "true") {
-                imageUrl = "";
-              }
+    const triggerExportPdf = () => {
+      const activeTabBtn = form?.querySelector("[data-guide-tab].is-active");
+      const activeSectionId = activeTabBtn?.dataset.guideTab || "safety";
+      if (typeof showToast === "function") {
+        showToast("Đang chuẩn bị bản in PDF hướng dẫn...");
+      }
+      guideApi?.exportPdf?.({
+        form,
+        activeSectionId,
+        sourceGuides: state.userGuides,
+        currentUser,
+        getAuthUrlFn: getAuthenticatedPhotoObjectUrl,
+      })?.catch?.((err) => {
+        if (typeof showToast === "function") {
+          showToast(err?.message || "Không thể xuất PDF hướng dẫn. Vui lòng thử lại.", true);
+        }
+      });
+    };
+
+    container?.querySelectorAll("[data-guide-export-pdf]").forEach((button) => {
+      button.addEventListener("click", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        triggerExportPdf();
+      });
+    });
+
+    form.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      if (!requireAdminAction()) return;
+
+      const submitButtons = document.querySelectorAll('button[type="submit"][form="guide-setup-form"], #guide-setup-form button[type="submit"]');
+      submitButtons.forEach((btn) => { btn.disabled = true; });
+
+      const previousPhotoUrls = Object.values(state.userGuides || {})
+        .flatMap((guide) => guide?.steps || [])
+        .flatMap((step) => [step?.imageUrl, ...(step?.images || []).map((img) => img?.imageUrl)])
+        .filter(Boolean);
+      const newlyUploadedPhotoUrls = [];
+      const currentPeriod = getPeriod(getActivePeriodId(FIVE_S_PERIOD_TYPE))
+        || getPeriod(getActivePeriodId(SAFETY_PERIOD_TYPE));
+      const now = new Date();
+      const nextGuides = {};
+
+      try {
+        for (const section of guideApi.sections) {
+          const panel = form.querySelector(`[data-guide-panel="${section.id}"]`);
+          if (!panel) continue;
+          const readField = (name) => panel.querySelector(`[data-guide-field="${name}"]`)?.value?.trim() || "";
+          const steps = [];
+
+          for (const card of panel.querySelectorAll("[data-guide-step-card]")) {
+            const title = card.querySelector('[data-guide-step-field="title"]')?.value?.trim() || "";
+            const body = card.querySelector('[data-guide-step-field="body"]')?.value?.trim() || "";
+            const imageItems = Array.from(card.querySelectorAll("[data-guide-image-item]"));
+            const images = [];
+
+            for (let imgIdx = 0; imgIdx < Math.min(3, imageItems.length); imgIdx++) {
+              const item = imageItems[imgIdx];
+              const fileInput = item.querySelector("[data-guide-single-image-input]");
+              const file = fileInput?.files?.[0] || null;
+              let imgUrl = item.dataset.imageUrl || "";
+
               if (file) {
                 const dataUrl = await resizeImageFile(file, PHOTO_MAX_SIZE, PHOTO_JPEG_QUALITY);
                 const savedPhoto = await dataStore.savePhoto({
@@ -19238,42 +20739,96 @@
                   fileName: file.name || "anh-huong-dan.jpg",
                   month: currentPeriod?.month || now.getMonth() + 1,
                   year: currentPeriod?.year || now.getFullYear(),
+                  category: "huong-dan",
                 });
-                imageUrl = savedPhoto?.url || "";
-                if (!imageUrl) {
-                  throw new Error("Không lưu được ảnh minh họa.");
-                }
-                newlyUploadedPhotoUrls.push(imageUrl);
+                imgUrl = savedPhoto?.url || "";
+                if (!imgUrl) throw new Error("Không lưu được ảnh minh họa.");
+                newlyUploadedPhotoUrls.push(imgUrl);
+              } else if (imgUrl.startsWith("data:image/")) {
+                const savedPhoto = await dataStore.savePhoto({
+                  dataUrl: imgUrl,
+                  fileName: "anh-huong-dan.jpg",
+                  month: currentPeriod?.month || now.getMonth() + 1,
+                  year: currentPeriod?.year || now.getFullYear(),
+                  category: "huong-dan",
+                });
+                imgUrl = savedPhoto?.url || "";
+                if (imgUrl) newlyUploadedPhotoUrls.push(imgUrl);
               }
 
-              steps.push({ id: card.dataset.stepId || makeId("guide-step"), title, body, imageUrl });
+              let annotations = [];
+              try {
+                annotations = JSON.parse(item.dataset.annotations || "[]");
+              } catch (_) {}
+
+              if (imgUrl) {
+                images.push({
+                  id: item.dataset.imageId || `img-${imgIdx + 1}`,
+                  imageUrl: imgUrl,
+                  annotations,
+                });
+              }
             }
 
-            nextGuides[section.id] = {
-              title: readField("title"),
-              intro: readField("intro"),
-              hint: readField("hint"),
-              adminNote: readField("adminNote"),
-              steps,
-            };
+            const primary = images[0] || null;
+            steps.push({
+              id: card.dataset.stepId || makeId("guide-step"),
+              title,
+              body,
+              imageUrl: primary ? primary.imageUrl : "",
+              annotations: primary ? primary.annotations : [],
+              images,
+            });
           }
 
-          const normalizedGuides = guideApi.normalize(nextGuides);
-          await dbRef("userGuides").set(normalizedGuides);
-          state.userGuides = normalizedGuides;
-          await deleteUnusedPhotoFiles(previousPhotoUrls);
-          showToast("Đã lưu hướng dẫn.");
-          return true;
-        } catch (error) {
-          await deleteUnusedPhotoFiles(newlyUploadedPhotoUrls);
-          throw error;
+          nextGuides[section.id] = {
+            title: readField("title"),
+            intro: readField("intro"),
+            hint: readField("hint"),
+            adminNote: readField("adminNote"),
+            steps,
+          };
         }
-      },
+
+        const normalizedGuides = guideApi.normalize(nextGuides);
+        await dbRef("userGuides").set(normalizedGuides);
+        state.userGuides = normalizedGuides;
+        await deleteUnusedPhotoFiles(previousPhotoUrls);
+        window.FormDraftManager?.clearDraft("guide_setup");
+        window.FormDraftManager?.unregisterDirtyForm("guide_setup");
+
+        let syncSucceeded = true;
+        if (window.LocalDataStore?.flushOfflineQueue) {
+          try {
+            syncSucceeded = await window.LocalDataStore.flushOfflineQueue();
+          } catch (_) {
+            syncSucceeded = false;
+          }
+        }
+        const pendingQueue = (await window.LocalDataStore?.getOfflineQueueCount?.().catch(() => 0)) || 0;
+        if (pendingQueue > 0 || !syncSucceeded) {
+          showToast("Đã lưu vào bộ nhớ tạm của thiết bị. Đang chờ kết nối máy chủ để đồng bộ sang PC/các thiết bị khác.", true);
+        } else {
+          showToast("Đã lưu và đồng bộ thiết lập hướng dẫn lên máy chủ thành công.");
+        }
+        renderGuideSetupTab();
+      } catch (error) {
+        await deleteUnusedPhotoFiles(newlyUploadedPhotoUrls);
+        showToast(error?.message || "Không lưu được hướng dẫn. Vui lòng thử lại.", true);
+      } finally {
+        submitButtons.forEach((btn) => { btn.disabled = false; });
+      }
     });
 
-    const modalBody = elements.modalBody;
-    const form = modalBody.querySelector("#modal-form");
-    form?.addEventListener("click", (event) => {
+    form.addEventListener("click", (event) => {
+      const exportBtn = event.target.closest("[data-guide-export-pdf]");
+      if (exportBtn) {
+        event.preventDefault();
+        event.stopPropagation();
+        triggerExportPdf();
+        return;
+      }
+
       const tabButton = event.target.closest("[data-guide-tab]");
       if (tabButton) {
         const selectedSection = tabButton.dataset.guideTab;
@@ -19297,7 +20852,42 @@
           const stepIndex = steps.querySelectorAll("[data-guide-step-card]").length;
           steps.insertAdjacentHTML("beforeend", guideApi.renderStepEditor(sectionId, { id: makeId("guide-step") }, stepIndex));
           updateUserGuideStepNumbers(panel);
+          markGuideDirty();
           steps.lastElementChild?.querySelector('[data-guide-step-field="title"]')?.focus();
+        }
+        return;
+      }
+
+      const moveButton = event.target.closest("[data-guide-move-step]");
+      if (moveButton) {
+        event.preventDefault();
+        const direction = moveButton.dataset.guideMoveStep;
+        const card = moveButton.closest("[data-guide-step-card]");
+        const panel = card?.closest("[data-guide-panel]");
+        if (!card || !panel) return;
+
+        if (direction === "up") {
+          const prev = card.previousElementSibling;
+          if (prev && prev.matches("[data-guide-step-card]")) {
+            card.parentElement.insertBefore(card, prev);
+            updateUserGuideStepNumbers(panel);
+            markGuideDirty();
+            card.classList.remove("is-highlighted");
+            void card.offsetWidth;
+            card.classList.add("is-highlighted");
+            card.scrollIntoView({ behavior: "smooth", block: "nearest" });
+          }
+        } else if (direction === "down") {
+          const next = card.nextElementSibling;
+          if (next && next.matches("[data-guide-step-card]")) {
+            card.parentElement.insertBefore(card, next.nextElementSibling);
+            updateUserGuideStepNumbers(panel);
+            markGuideDirty();
+            card.classList.remove("is-highlighted");
+            void card.offsetWidth;
+            card.classList.add("is-highlighted");
+            card.scrollIntoView({ behavior: "smooth", block: "nearest" });
+          }
         }
         return;
       }
@@ -19307,45 +20897,196 @@
         const panel = deleteButton.closest("[data-guide-panel]");
         deleteButton.closest("[data-guide-step-card]")?.remove();
         if (panel) updateUserGuideStepNumbers(panel);
+        markGuideDirty();
+        return;
+      }
+
+      const addImageBtn = event.target.closest("[data-guide-add-image]");
+      if (addImageBtn) {
+        event.preventDefault();
+        event.stopPropagation();
+        const card = addImageBtn.closest("[data-guide-step-card]");
+        card?.querySelector("[data-guide-add-image-input]")?.click();
+        return;
+      }
+
+      const changeGuideImageButton = event.target.closest("[data-guide-change-image]");
+      if (changeGuideImageButton) {
+        event.preventDefault();
+        event.stopPropagation();
+        const item = changeGuideImageButton.closest("[data-guide-image-item]");
+        item?.querySelector("[data-guide-single-image-input]")?.click();
+        return;
+      }
+
+      const annotateGuideImageButton = event.target.closest("[data-guide-annotate-image]");
+      const openGuideImageButton = event.target.closest("[data-guide-open-image]");
+      const previewGuideImage = event.target.closest("[data-guide-image-preview]");
+      if (annotateGuideImageButton || openGuideImageButton || previewGuideImage) {
+        event.preventDefault();
+        event.stopPropagation();
+        const triggerEl = annotateGuideImageButton || openGuideImageButton || previewGuideImage;
+        const item = triggerEl.closest("[data-guide-image-item]");
+        const card = triggerEl.closest("[data-guide-step-card]");
+        const preview = item ? item.querySelector("[data-guide-image-preview]") : card?.querySelector("[data-guide-image-preview]");
+        const src = preview?.currentSrc || preview?.src || preview?.dataset.photoSrc || "";
+        if (!src) return;
+        const currentAnnotations = (() => {
+          try {
+            return JSON.parse(item?.dataset?.annotations || card?.dataset?.annotations || preview?.dataset?.safetyAnnotations || "[]");
+          } catch (_) {
+            return [];
+          }
+        })();
+
+        if (typeof window.openMobileImageModal === "function") {
+          window.openMobileImageModal(src, {
+            initialCircles: currentAnnotations,
+            editable: true,
+            viewOnly: false,
+            showToolbar: true,
+            isGuide: true,
+            onSave: async (nextAnnotations) => {
+              const serialized = JSON.stringify(nextAnnotations);
+              if (item) item.dataset.annotations = serialized;
+              if (card) card.dataset.annotations = serialized;
+              if (preview) {
+                preview.dataset.safetyAnnotations = serialized;
+                window.refreshSafetyPhotoAnnotationThumbnail?.(preview, nextAnnotations);
+              }
+              markGuideDirty();
+              return true;
+            },
+            onError: (error) => showToast(error?.message || "Không lưu được nét vẽ.", true),
+          });
+          return;
+        }
+        openImageFullscreenModal(preview);
         return;
       }
 
       const removeImageButton = event.target.closest("[data-guide-remove-image]");
       if (removeImageButton) {
+        event.preventDefault();
+        event.stopPropagation();
+        const item = removeImageButton.closest("[data-guide-image-item]");
         const card = removeImageButton.closest("[data-guide-step-card]");
-        const preview = card?.querySelector("[data-guide-image-preview]");
-        const input = card?.querySelector("[data-guide-image-input]");
-        if (card) card.dataset.imageRemoved = "true";
-        if (input) input.value = "";
-        if (preview) preview.hidden = true;
-        removeImageButton.hidden = true;
+        if (item && card) {
+          item.remove();
+          updateStepImagesList(card);
+          markGuideDirty();
+        }
+        return;
+      }
+
+      const resetButton = event.target.closest("[data-guide-reset]");
+      if (resetButton) {
+        if (confirm("Bạn có chắc chắn muốn hủy các thay đổi chưa lưu và tải lại dữ liệu ban đầu?")) {
+          window.FormDraftManager?.clearDraft("guide_setup");
+          window.FormDraftManager?.unregisterDirtyForm("guide_setup");
+          renderGuideSetupTab();
+        }
+        return;
       }
     });
-    form?.addEventListener("change", (event) => {
-      const input = event.target.closest("[data-guide-image-input]");
-      const file = input?.files?.[0];
-      if (!file) return;
-      const card = input.closest("[data-guide-step-card]");
-      const preview = card?.querySelector("[data-guide-image-preview]");
-      const removeButton = card?.querySelector("[data-guide-remove-image]");
-      const reader = new FileReader();
-      reader.onload = () => {
-        if (!preview) return;
-        preview.src = String(reader.result || "");
-        preview.dataset.photoSrc = "";
-        preview.hidden = false;
-        if (removeButton) removeButton.hidden = false;
-        if (card) card.dataset.imageRemoved = "false";
-      };
-      reader.readAsDataURL(file);
+
+    const updateStepImagesList = (card) => {
+      if (!card) return;
+      const list = card.querySelector("[data-guide-images-list]");
+      const items = Array.from(list?.querySelectorAll("[data-guide-image-item]") || []);
+      const counter = card.querySelector("[data-guide-images-counter]");
+      const addWrap = card.querySelector("[data-guide-add-image-wrap]");
+      const addBtnText = addWrap?.querySelector(".btn-add-step-image span");
+      const count = items.length;
+
+      items.forEach((item, idx) => {
+        const badge = item.querySelector(".guide-image-badge");
+        if (badge) {
+          badge.textContent = `Ảnh ${idx + 1}`;
+          badge.title = `Ảnh ${idx + 1}`;
+        }
+      });
+
+      if (counter) counter.textContent = `${count}/3 ảnh`;
+      if (addBtnText) addBtnText.textContent = `Thêm ảnh minh họa (${count}/3)`;
+      if (addWrap) addWrap.hidden = count >= 3;
+    };
+
+    form.addEventListener("change", (event) => {
+      const addInput = event.target.closest("[data-guide-add-image-input]");
+      if (addInput) {
+        const file = addInput.files?.[0];
+        if (!file) return;
+        const card = addInput.closest("[data-guide-step-card]");
+        const list = card?.querySelector("[data-guide-images-list]");
+        if (!card || !list) return;
+        const currentCount = list.querySelectorAll("[data-guide-image-item]").length;
+        if (currentCount >= 3) {
+          showToast("Mỗi bước chỉ được thêm tối đa 3 ảnh minh họa.", true);
+          addInput.value = "";
+          return;
+        }
+
+        const reader = new FileReader();
+        reader.onload = () => {
+          const dataUrl = String(reader.result || "");
+          const nextIndex = list.querySelectorAll("[data-guide-image-item]").length;
+          const html = guideApi.renderStepImageItem({ id: makeId("guide-img"), imageUrl: dataUrl, annotations: [] }, nextIndex);
+          list.insertAdjacentHTML("beforeend", html);
+          const newItem = list.lastElementChild;
+          const preview = newItem?.querySelector("[data-guide-image-preview]");
+          if (preview) window.refreshSafetyPhotoAnnotationThumbnail?.(preview, []);
+          updateStepImagesList(card);
+          markGuideDirty();
+          addInput.value = "";
+        };
+        reader.readAsDataURL(file);
+        return;
+      }
+
+      const singleInput = event.target.closest("[data-guide-single-image-input]");
+      if (singleInput) {
+        const file = singleInput.files?.[0];
+        if (!file) return;
+        const item = singleInput.closest("[data-guide-image-item]");
+        const preview = item?.querySelector("[data-guide-image-preview]");
+        if (!item || !preview) return;
+
+        const reader = new FileReader();
+        reader.onload = () => {
+          const dataUrl = String(reader.result || "");
+          preview.src = dataUrl;
+          preview.dataset.photoSrc = "";
+          preview.dataset.safetyAnnotations = "[]";
+          item.dataset.imageUrl = dataUrl;
+          item.dataset.annotations = "[]";
+          window.refreshSafetyPhotoAnnotationThumbnail?.(preview, []);
+          markGuideDirty();
+          singleInput.value = "";
+        };
+        reader.readAsDataURL(file);
+        return;
+      }
     });
-    hydrateAuthenticatedPhotos(modalBody);
   }
 
   function updateUserGuideStepNumbers(panel) {
-    panel?.querySelectorAll("[data-guide-step-card]").forEach((card, index) => {
-      const number = card.querySelector(".guide-editor-step-heading strong");
+    if (!panel) return;
+    const cards = Array.from(panel.querySelectorAll("[data-guide-step-card]"));
+    const total = cards.length;
+    cards.forEach((card, index) => {
+      const number = card.querySelector(".guide-editor-step-title-group strong, .guide-editor-step-heading strong");
       if (number) number.textContent = `Bước ${index + 1}`;
+      const upBtn = card.querySelector('[data-guide-move-step="up"]');
+      const downBtn = card.querySelector('[data-guide-move-step="down"]');
+      if (upBtn) {
+        upBtn.disabled = index === 0;
+        upBtn.classList.toggle("is-disabled", index === 0);
+      }
+      if (downBtn) {
+        downBtn.disabled = index === total - 1;
+        downBtn.classList.toggle("is-disabled", index === total - 1);
+      }
     });
   }
 
@@ -19358,6 +21099,8 @@
       "set-catalog-scope",
       "set-account-scope",
       "set-history-scope",
+      "set-audit-log-page",
+      "toggle-history-row",
       "delete-period",
       "edit-five-s-period-date",
       "edit-safety-period-date",
@@ -19426,6 +21169,30 @@
       "set-catalog-scope": () => setCatalogScope(id),
       "set-account-scope": () => setAccountScope(id),
       "set-history-scope": () => setHistoryScope(id),
+      "set-audit-log-page": () => {
+        const page = Number(sourceElement?.dataset.page) || 1;
+        setAuditLogPage(page);
+        renderActiveTab();
+        const wrap = document.querySelector("#tab-audit-log .audit-log-table-wrap, #tab-audit-log .history-table-wrap");
+        if (wrap) wrap.scrollTop = 0;
+      },
+      "toggle-history-row": () => {
+        const row = sourceElement?.closest("td");
+        const hiddenWrap = row?.querySelector(".history-hidden-changes");
+        if (hiddenWrap && sourceElement) {
+          const isHidden = hiddenWrap.hasAttribute("hidden") || hiddenWrap.hidden;
+          if (isHidden) {
+            hiddenWrap.removeAttribute("hidden");
+            hiddenWrap.hidden = false;
+            sourceElement.textContent = "▲ Thu gọn";
+          } else {
+            hiddenWrap.setAttribute("hidden", "");
+            hiddenWrap.hidden = true;
+            const remaining = sourceElement.dataset.remaining || "";
+            sourceElement.textContent = "▼ Xem thêm " + remaining + " thay đổi khác";
+          }
+        }
+      },
       "set-safety-department-filter": () => {
         if (elements.safetyDepartmentFilter) {
           elements.safetyDepartmentFilter.value = id || "";
@@ -19457,11 +21224,19 @@
       "edit-area-assessor": () => editAreaAssessor(id, periodId),
       "show-problem-zone-emails": () => showProblemZoneEmails(),
       "setup-user-guide": () => openUserGuideSetupModal(),
+      "view-user-guide": () => {
+        const guideSec = activeTab === "safety" ? "safety" : (activeTab === "five-s-findings" ? "findings" : "5s");
+        openUserGuideViewerModal(guideSec);
+      },
       "edit-five-s-chart-target": () => editFiveSChartTarget(id),
       "copy-report-target": () => copyReportTarget(sourceElement?.dataset.copyTarget || id).catch((error) => {
         showToast("Lỗi khi copy bảng/biểu đồ.", true);
       }),
-      "show-edit-history": () => openEditHistoryModal(),
+      "show-edit-history": () => {
+        auditLogPagination.page = 1;
+        expandedHistoryScope = expandedHistoryScope || activeHistoryScope || FIVE_S_PERIOD_TYPE;
+        goToTab("audit-log");
+      },
       "edit-department-head-email": () => editDepartmentHeadEmail(id),
       "clear-department-head-email": () => clearDepartmentHeadEmail(id),
       "delete-area": () => deleteArea(id),
@@ -19535,6 +21310,7 @@
     document.querySelectorAll(".tab-button").forEach((button) => {
       button.addEventListener("click", () => {
         const tab = button.dataset.tab;
+        if (!tab) return;
         if (tab === "catalog") {
           expandedCatalogScope = "";
         } else if (tab === "accounts") {
@@ -19563,9 +21339,35 @@
       if (!image || image.closest(".brand-line,.cyber-brand,.safety-logo-cell")) {
         return;
       }
-      if (image.closest(".findings-mobile") && typeof window.openMobileImageModal === "function") return;
       const src = image.currentSrc || image.src || image.dataset.photoSrc || "";
       if (!src) {
+        return;
+      }
+      const guideStepCard = image.closest("[data-guide-step-card]");
+      if (guideStepCard) {
+        event.preventDefault();
+        const annotateBtn = guideStepCard.querySelector("[data-guide-annotate-image]");
+        if (annotateBtn) {
+          annotateBtn.click();
+          return;
+        }
+      }
+      if (image.closest(".findings-mobile, .mobile-responsive-overlay, .mobile-help-dialog, .mobile-user-guide") && typeof window.openMobileImageModal === "function") {
+        event.preventDefault();
+        const isGuide = Boolean(image.closest(".mobile-help-dialog, .mobile-user-guide, .mobile-user-guide-image"));
+        const annotations = (() => {
+          try {
+            return JSON.parse(image.dataset.guideAnnotations || image.dataset.safetyAnnotations || "[]");
+          } catch (_) {
+            return [];
+          }
+        })();
+        window.openMobileImageModal(src, {
+          initialCircles: annotations,
+          editable: false,
+          viewOnly: isGuide,
+          showToolbar: !isGuide,
+        });
         return;
       }
       event.preventDefault();
@@ -20037,6 +21839,9 @@
       const userId = currentUser?.id || "";
       state = normalizeState(raw);
       invalidateScoreRecordIndex();
+      if (window.FormDraftManager && !window.FormDraftManager.isFormDirty("guide_setup")) {
+        window.FormDraftManager.clearDraft("guide_setup");
+      }
       if (!currentUser) {
         return;
       }
@@ -20103,5 +21908,6 @@
     }
   }
 
+  window.openImageFullscreenModal = openImageFullscreenModal;
   init();
 })();

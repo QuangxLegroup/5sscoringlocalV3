@@ -160,12 +160,12 @@ class JsonFileRepository {
     }
   }
 
-  async updateRoot(mutator) {
+  async updateRoot(mutator, options = {}) {
     return this.enqueue(async () => {
       const currentRoot = await this.readRoot();
-      const nextRoot = await mutator(clone(currentRoot));
+      const nextRoot = await mutator(currentRoot);
       await this.persistRoot(nextRoot);
-      return nextRoot;
+      return options.compactResult ? { revision: null } : nextRoot;
     });
   }
 

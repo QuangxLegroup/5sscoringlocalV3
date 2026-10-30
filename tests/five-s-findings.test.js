@@ -20,7 +20,7 @@ function fixture(extra = {}) {
   return { service: new DataService({ repository, authService }), repository };
 }
 
-const sheet = { id: "sheet-1", periodId: "p", areaId: "z26", area: "Zone 26", inspector: "Người kiểm tra", inspectionDate: "2026-09-28", rows: [{ problem: "Vật thừa", stop6: "A", fiveS: "S1", location: "Bàn", shift: "1", countermeasure: "Dọn dẹp", owner: "Người xử lý", dueDate: "2026-09-30", progress: "25" }] };
+const sheet = { id: "sheet-1", periodId: "p", areaId: "z26", area: "Zone 26", inspector: "Người kiểm tra", inspectionDate: "2026-09-28", rows: [{ problem: "Vật thừa", stop6: "A", fiveS: "S1", location: "Bàn", shift: "1", countermeasure: "", owner: "Người xử lý", dueDate: "2026-09-30", progress: "25" }] };
 
 test("linked zone-owner accounts follow catalog assignments even with stale account Zone lists", () => {
   const auth = new AuthService({ repository: {} });

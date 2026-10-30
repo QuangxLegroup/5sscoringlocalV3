@@ -64,6 +64,41 @@
   const blankRow = () => Object.fromEntries(fields.map((key) => [key, key === "progress" ? "0" : ""]));
   const UNASSIGNED = "unassigned";
   const displayDate = (value) => String(value || "").replace(/^(\d{4})-(\d{2})-(\d{2})$/, "$3/$2/$1");
+  function photoThumbnailUrl(value) {
+    const raw = String(value || "");
+    if (!raw.includes("/api/photos/")) return raw;
+    try {
+      const url = new URL(raw, window.location.href);
+      url.searchParams.set("size", "thumb");
+      return url.origin === window.location.origin ? `${url.pathname}${url.search}${url.hash}` : url.toString();
+    } catch (_) {
+      return raw;
+    }
+  }
+  const cleanFindingDraftPhotoUrl = (url) => {
+    const val = String(url || "").trim();
+    if (!val || val.startsWith("blob:") || (typeof window !== "undefined" && (val === window.location.href || val === window.location.origin + "/"))) return "";
+    if (val.startsWith("data:image/") || val.startsWith("/api/photos/") || val.includes("/api/photos/")) return val;
+    return val;
+  };
+  function areFindingRowsEqual(a, b) {
+    if (!a && !b) return true;
+    if (!a || !b) return false;
+    for (const k of fields) {
+      if (k === "dueDate") {
+        if (displayDate(a.dueDate) !== displayDate(b.dueDate)) return false;
+      } else if (k === "fiveS") {
+        if (findingCategoryNormalized(a.fiveS) !== findingCategoryNormalized(b.fiveS)) return false;
+      } else if (k === "progress") {
+        if (String(Number(a.progress) || 0) !== String(Number(b.progress) || 0)) return false;
+      } else {
+        if (String(a[k] || "").trim() !== String(b[k] || "").trim()) return false;
+      }
+    }
+    if (cleanFindingDraftPhotoUrl(a.photoDataUrl) !== cleanFindingDraftPhotoUrl(b.photoDataUrl)) return false;
+    if (JSON.stringify(a.photoAnnotations || []) !== JSON.stringify(b.photoAnnotations || [])) return false;
+    return true;
+  }
   function photoImageAttributes(row, esc, metadata = {}) {
     const annotations = JSON.stringify(row?.photoAnnotations || []);
     return `data-safety-annotations="${esc(annotations)}" data-finding-photo-sheet-id="${esc(metadata.sheetId || "")}" data-finding-photo-row-index="${Number.isInteger(metadata.rowIndex) ? metadata.rowIndex : ""}" data-finding-photo-url="${esc(row?.photoDataUrl || "")}" data-finding-photo-editable="${metadata.editable ? "true" : "false"}"`;
@@ -73,32 +108,31 @@
       ? `<img class="findings-photo-thumb" src="${esc(row.photoDataUrl)}" alt="Ảnh vấn đề 5S" ${photoImageAttributes(row, esc, metadata)}>`
       : '<span class="findings-photo-empty">Chưa có ảnh</span>';
   }
-  function photoEditor(row, editing, esc, metadata = {}) {
-    return `<div class="findings-photo-editor">
-      ${row?.photoDataUrl ? `<img class="findings-photo-thumb" data-findings-photo-preview src="${esc(row.photoDataUrl)}" alt="Ảnh vấn đề 5S" ${photoImageAttributes(row, esc, metadata)}>` : '<img class="findings-photo-thumb" data-findings-photo-preview alt="Ảnh xem trước" hidden><span class="findings-photo-empty">Chưa có ảnh</span>'}
-      ${editing ? `<label class="findings-photo-picker"><span>${row?.photoDataUrl ? "Chọn ảnh thay thế" : "Thêm ảnh"}</span><input name="findingPhoto" type="file" accept="image/*" capture="environment"></label>
-        <small class="findings-photo-hint">Ảnh sẽ được nén khi lưu.</small>${row?.photoDataUrl ? '<label class="findings-photo-remove"><input name="removeFindingPhoto" type="checkbox"> Xóa ảnh hiện tại</label>' : ""}` : ""}
-    </div>`;
-  }
-  function mobilePhotoEditor(row, editing, esc, metadata = {}) {
+  function photoEditorWidget(row, editing, esc, metadata = {}, mobile = false) {
     const hasPhoto = Boolean(row?.photoDataUrl);
-    return `<div class="photo-upload-box findings-mobile-photo-upload">
+    return `<div class="photo-upload-box photo-edit-widget findings-photo-editor ${mobile ? "findings-mobile-photo-upload" : ""} ${hasPhoto ? "has-photo" : ""}">
       <input name="findingPhoto" type="file" accept="image/*" capture="environment" class="photo-file-input ${hasPhoto ? "is-hidden" : ""}" ${editing ? "" : "disabled"}>
-      <div class="photo-placeholder ${hasPhoto ? "is-hidden" : ""}">
+      <div class="photo-placeholder photo-editor-empty ${hasPhoto ? "is-hidden" : ""}">
         <div class="photo-icon-circle"><i class="fa-solid fa-camera"></i></div>
-        <p class="photo-primary-prompt">Chụp ảnh hoặc Tải lên ảnh</p>
-        <p class="photo-sub-prompt">Nhấn vào đây để mở máy ảnh / bộ sưu tập</p>
-        <div class="photo-action-chip"><i class="fa-solid fa-plus"></i> Chụp ảnh minh họa</div>
+        <p class="photo-primary-prompt">Ảnh vấn đề 5S</p>
+        <p class="photo-sub-prompt">Chụp ảnh hoặc tải ảnh minh họa</p>
+        ${editing ? '<button type="button" class="photo-action-chip" data-finding-add><i class="fa-solid fa-plus"></i> Thêm ảnh</button>' : '<span class="findings-photo-empty">Chưa có ảnh</span>'}
       </div>
       <div class="photo-preview-wrap ${hasPhoto ? "" : "is-hidden"}">
-        <img class="photo-preview-img findings-photo-thumb" data-findings-photo-preview data-preview-img="${hasPhoto ? esc(row.photoDataUrl) : ""}" ${hasPhoto ? `src="${esc(row.photoDataUrl)}" ${photoImageAttributes(row, esc, metadata)}` : "hidden"} alt="Ảnh vấn đề 5S" title="Chạm để khoanh tròn hoặc phóng to ảnh">
-        <div class="photo-preview-actions"><button type="button" class="photo-btn retake-btn" data-finding-retake title="Đổi/Chụp lại ảnh" ${editing ? "" : "hidden"}><i class="fa-solid fa-arrows-rotate"></i></button>
-          <button type="button" class="photo-btn delete-btn" data-finding-remove title="Xóa ảnh này" ${editing && hasPhoto ? "" : "hidden"}><i class="fa-solid fa-trash-can"></i></button></div>
+        <img class="photo-preview-img findings-photo-thumb" data-findings-photo-preview data-preview-img="${hasPhoto ? esc(row.photoDataUrl) : ""}" ${hasPhoto ? `src="${esc(row.photoDataUrl)}" ${photoImageAttributes(row, esc, metadata)}` : "hidden"} alt="Ảnh vấn đề 5S" title="Chạm để phóng to ảnh">
+        <div class="photo-preview-actions">
+          <button type="button" class="photo-btn annotate-btn" data-finding-annotate title="Vẽ nét & chú thích ảnh" aria-label="Vẽ nét & chú thích ảnh" ${hasPhoto ? "" : "hidden"}><i class="fa-solid fa-pen-to-square"></i></button>
+          <button type="button" class="photo-btn open-btn" data-finding-open title="Mở ảnh lớn" aria-label="Mở ảnh vấn đề 5S" ${hasPhoto ? "" : "hidden"}><i class="fa-solid fa-expand"></i></button>
+          <button type="button" class="photo-btn retake-btn" data-finding-retake title="Đổi ảnh" aria-label="Đổi ảnh vấn đề 5S" ${editing && hasPhoto ? "" : "hidden"}><i class="fa-solid fa-arrows-rotate"></i></button>
+          <button type="button" class="photo-btn delete-btn" data-finding-remove title="Xóa ảnh" aria-label="Xóa ảnh vấn đề 5S" ${editing && hasPhoto ? "" : "hidden"}><i class="fa-solid fa-trash-can"></i></button>
+        </div>
         <div class="photo-attached-badge"><i class="fa-solid fa-circle-check"></i> Đã đính kèm ảnh</div>
       </div>
       <input type="checkbox" name="removeFindingPhoto" hidden aria-hidden="true">
     </div>`;
   }
+  function photoEditor(row, editing, esc, metadata = {}) { return photoEditorWidget(row, editing, esc, metadata); }
+  function mobilePhotoEditor(row, editing, esc, metadata = {}) { return photoEditorWidget(row, editing, esc, metadata, true); }
   function bindFindingPhotoImages(root, ctx, row = null, metadata = {}) {
     root?.querySelectorAll?.("img.findings-photo-thumb, img.findings-record-thumb").forEach((image) => {
       const readAnnotations = () => {
@@ -121,19 +155,57 @@
       };
       if (typeof image.__findingPhotoAnnotationSave !== "function") image.__findingPhotoAnnotationSave = saveAnnotations;
       if (!image.dataset.findingPhotoEditable) image.dataset.findingPhotoEditable = "false";
-      if ((image.matches(".findings-record-thumb") || root.closest?.(".findings-mobile, .is-mobile-detail")) && image.dataset.findingPhotoClickBound !== "true") {
+      const openImage = () => {
+        const src = image.dataset.previewImg || image.currentSrc || image.src;
+        if (!src) return;
+        const options = {
+          initialCircles: readAnnotations(),
+          editable: image.dataset.findingPhotoEditable === "true" || image.dataset.findingPhotoSourcePending === "true",
+          onSave: saveAnnotations,
+          onError: (error) => ctx.showToast(error?.message || "Không lưu được nét khoanh.", true),
+        };
+        if (typeof window.openMobileImageModal === "function") {
+          window.openMobileImageModal(src, options);
+          return;
+        }
+        if (typeof window.openImageFullscreenModal === "function") {
+          window.openImageFullscreenModal(image);
+          return;
+        }
+
+        const viewer = document.createElement("div");
+        viewer.className = "mobile-image-modal-fullscreen";
+        const backdrop = document.createElement("div");
+        backdrop.className = "mobile-image-fullscreen-backdrop";
+        const closeButton = document.createElement("button");
+        closeButton.type = "button";
+        closeButton.className = "mobile-image-fullscreen-close";
+        closeButton.setAttribute("aria-label", "Đóng ảnh");
+        closeButton.innerHTML = '<i class="fa-solid fa-xmark"></i>';
+        const container = document.createElement("div");
+        container.className = "mobile-image-fullscreen-container";
+        const imagePreview = document.createElement("img");
+        imagePreview.className = "mobile-image-fullscreen-img";
+        imagePreview.alt = "Ảnh vấn đề 5S";
+        imagePreview.src = src;
+        const stage = document.createElement("div");
+        stage.className = "mobile-image-fullscreen-stage";
+        stage.appendChild(imagePreview);
+        container.appendChild(stage);
+        const viewerInteractions = window.mountImageViewerInteractions?.(viewer, stage);
+        const closeViewer = () => { viewerInteractions?.destroy(); viewer.remove(); };
+        backdrop.addEventListener("click", closeViewer);
+        closeButton.addEventListener("click", closeViewer);
+        viewer.append(backdrop, closeButton, container);
+        document.body.appendChild(viewer);
+      };
+      image.__findingPhotoOpen = openImage;
+      if (image.dataset.findingPhotoClickBound !== "true") {
         image.dataset.findingPhotoClickBound = "true";
         image.addEventListener("click", (event) => {
           event.preventDefault();
           event.stopPropagation();
-          const src = image.dataset.previewImg || image.currentSrc || image.src;
-          if (!src || typeof window.openMobileImageModal !== "function") return;
-          window.openMobileImageModal(src, {
-            initialCircles: readAnnotations(),
-            editable: image.dataset.findingPhotoEditable === "true" || image.dataset.findingPhotoSourcePending === "true",
-            onSave: saveAnnotations,
-            onError: (error) => ctx.showToast(error?.message || "Không lưu được nét khoanh.", true),
-          });
+          openImage();
         });
       }
     });
@@ -141,9 +213,8 @@
   function bindPhotoEditor(form, ctx, row, metadata = {}) {
     form.querySelectorAll('input[name="findingPhoto"]').forEach((input) => input.addEventListener("change", () => {
       const file = input.files?.[0];
-      const editor = input.closest(".findings-photo-editor");
+      const editor = input.closest(".photo-edit-widget");
       const preview = editor?.querySelector("[data-findings-photo-preview]");
-      const empty = editor?.querySelector(".findings-photo-empty");
       if (!file || !preview) return;
       const remove = editor.querySelector('input[name="removeFindingPhoto"]');
       if (remove) remove.checked = false;
@@ -151,9 +222,10 @@
       reader.onload = () => {
         if (row && metadata.preserveOriginal !== true) row.photoAnnotations = [];
         metadata.onPhotoReplaced?.();
-        preview.src = String(reader.result || "");
+        const src = String(reader.result || "");
+        preview.src = src;
         preview.dataset.photoSrc = "";
-        preview.dataset.previewImg = String(reader.result || "");
+        preview.dataset.previewImg = src;
         preview.dataset.safetyAnnotations = "[]";
         preview.dataset.findingPhotoAnnotations = "[]";
         preview.dataset.findingPhotoSourcePending = "true";
@@ -162,23 +234,43 @@
         preview.dataset.findingPhotoUrl = "";
         preview.dataset.findingPhotoEditable = "true";
         preview.hidden = false;
-        if (empty) empty.hidden = true;
+        editor.querySelector(".photo-preview-wrap")?.classList.remove("is-hidden");
+        editor.querySelector(".photo-editor-empty")?.classList.add("is-hidden");
+        input.classList.add("is-hidden");
+        editor.querySelector("[data-finding-annotate]")?.removeAttribute("hidden");
+        editor.querySelector("[data-finding-open]")?.removeAttribute("hidden");
+        editor.querySelector("[data-finding-retake]")?.toggleAttribute("hidden", !metadata.editable);
+        editor.querySelector("[data-finding-remove]")?.toggleAttribute("hidden", !metadata.editable);
+        editor.classList.add("has-photo");
+        window.refreshSafetyPhotoAnnotationThumbnail?.(preview, []);
       };
       reader.readAsDataURL(file);
     }));
     form.querySelectorAll('input[name="removeFindingPhoto"]').forEach((input) => input.addEventListener("change", () => {
-      const preview = input.closest(".findings-photo-editor, .findings-mobile-photo-upload")?.querySelector("[data-findings-photo-preview]");
-      if (preview) preview.hidden = input.checked;
+      const editor = input.closest(".photo-edit-widget");
+      const preview = editor?.querySelector("[data-findings-photo-preview]");
+      if (!editor || !preview) return;
+      editor.querySelector(".photo-preview-wrap")?.classList.toggle("is-hidden", input.checked);
+      editor.querySelector(".photo-editor-empty")?.classList.toggle("is-hidden", !input.checked);
+      preview.hidden = input.checked;
+      editor.querySelector("input[name=\"findingPhoto\"]")?.classList.toggle("is-hidden", !input.checked);
+      editor.classList.toggle("has-photo", !input.checked);
     }));
     bindFindingPhotoImages(form, ctx, row, metadata);
-    form.querySelectorAll(".findings-mobile-photo-upload").forEach((editor) => {
+    form.querySelectorAll(".photo-edit-widget").forEach((editor) => {
       const input = editor.querySelector('input[name="findingPhoto"]');
       const preview = editor.querySelector("[data-findings-photo-preview]");
       const placeholder = editor.querySelector(".photo-placeholder");
       const previewWrap = editor.querySelector(".photo-preview-wrap");
       const remove = editor.querySelector('input[name="removeFindingPhoto"]');
+      const add = editor.querySelector("[data-finding-add]");
+      const annotate = editor.querySelector("[data-finding-annotate]");
+      const open = editor.querySelector("[data-finding-open]");
       const retake = editor.querySelector("[data-finding-retake]");
       const deleteButton = editor.querySelector("[data-finding-remove]");
+      const choosePhoto = () => {
+        input?.click();
+      };
       const setPhoto = (src, annotations = row?.photoAnnotations || []) => {
         if (!preview) return;
         preview.src = src;
@@ -188,38 +280,33 @@
         preview.hidden = false;
         previewWrap?.classList.remove("is-hidden");
         placeholder?.classList.add("is-hidden");
+        editor.classList.add("has-photo");
         input?.classList.add("is-hidden");
+        if (annotate) annotate.hidden = false;
+        if (open) open.hidden = false;
         if (retake) retake.hidden = !metadata.editable;
         if (deleteButton) deleteButton.hidden = !metadata.editable;
         if (remove) remove.hidden = true;
       };
-      input?.addEventListener("change", () => {
-        const file = input.files?.[0];
-        if (!file || !preview) return;
-        const reader = new FileReader();
-        reader.onload = () => {
-          if (row && metadata.preserveOriginal !== true) row.photoAnnotations = [];
-          metadata.onPhotoReplaced?.();
-          if (remove) remove.checked = false;
-          preview.dataset.findingPhotoSourcePending = "true";
-          preview.dataset.findingPhotoSheetId = "";
-          preview.dataset.findingPhotoRowIndex = "";
-          preview.dataset.findingPhotoUrl = "";
-          preview.dataset.findingPhotoEditable = "true";
-          preview.dataset.safetyAnnotations = "[]";
-          preview.dataset.findingPhotoAnnotations = "[]";
-          setPhoto(String(reader.result || ""), []);
-          window.refreshSafetyPhotoAnnotationThumbnail?.(preview, []);
-        };
-        reader.readAsDataURL(file);
+      add?.addEventListener("click", (event) => { event.preventDefault(); event.stopPropagation(); choosePhoto(); });
+      annotate?.addEventListener("click", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        preview?.__findingPhotoOpen?.();
       });
-      retake?.addEventListener("click", (event) => { event.preventDefault(); event.stopPropagation(); input?.click(); });
+      open?.addEventListener("click", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        preview?.__findingPhotoOpen?.();
+      });
+      retake?.addEventListener("click", (event) => { event.preventDefault(); event.stopPropagation(); choosePhoto(); });
       deleteButton?.addEventListener("click", (event) => {
         event.preventDefault(); event.stopPropagation();
         if (remove) { remove.checked = true; remove.dispatchEvent(new Event("change", { bubbles: true })); }
         input.value = "";
         previewWrap?.classList.add("is-hidden");
         placeholder?.classList.remove("is-hidden");
+        editor.classList.remove("has-photo");
         input?.classList.remove("is-hidden");
       });
       if (preview && row?.photoDataUrl) setPhoto(row.photoDataUrl);
@@ -759,9 +846,36 @@
     if (!periods.some((period) => period.id === view.periodId)) view.periodId = periods[0]?.id || "";
     const periodId = view.periodId;
     const records = allRecords.filter((record) => resolvePeriodId(record, allPeriods) === periodId);
-    const monthRecords = allRecords
+    const allMonthRecords = allRecords
       .filter((record) => monthKeyForFinding(record, allPeriods) === view.findingMonthKey)
       .sort(compareFindingsNewestFirst);
+    const findingsPage = Math.max(1, Math.trunc(Number(view.findingsListPage) || 1));
+    const findingsPageSize = 50;
+    const findingsPageKey = `${view.findingMonthKey}:${findingsPage}`;
+    const [findingYear, findingMonth] = String(view.findingMonthKey || "").split("-").map(Number);
+    if (findingYear && findingMonth && typeof ctx.loadCollectionPage === "function" && view.findingsListPageKey !== findingsPageKey && view.findingsListFailedKey !== findingsPageKey) {
+      const requestId = (view.findingsListRequestId || 0) + 1;
+      view.findingsListRequestId = requestId;
+      view.findingsListPageKey = findingsPageKey;
+      ctx.loadCollectionPage({ collection: "fiveSFindings", year: findingYear, month: findingMonth, page: findingsPage, pageSize: findingsPageSize })
+        .then((result) => {
+          if (view.findingsListRequestId !== requestId || findingsPageKey !== `${view.findingMonthKey}:${view.findingsListPage || 1}`) return;
+          view.findingsListPageData = { ...result, key: findingsPageKey };
+          view.findingsListFailedKey = "";
+          renderMobile(host, view);
+        })
+        .catch(() => {
+          if (view.findingsListRequestId !== requestId) return;
+          view.findingsListFailedKey = findingsPageKey;
+        });
+    }
+    const serverFindingPage = view.findingsListPageData?.key === findingsPageKey ? view.findingsListPageData : null;
+    const localTotalPages = Math.max(1, Math.ceil(allMonthRecords.length / findingsPageSize));
+    const monthRecords = serverFindingPage?.items || allMonthRecords.slice((findingsPage - 1) * findingsPageSize, findingsPage * findingsPageSize);
+    const findingsPager = {
+      page: findingsPage,
+      totalPages: serverFindingPage?.totalPages || localTotalPages,
+    };
     const areas = sortedAreas(ctx, periodId);
     const zoneOptions = new Map(areas.map((area) => [area.id, zoneLabel(area)]));
     records.forEach((record) => { const id = resolveAreaId(record, areas) || record.areaId || shortZoneLabel(record.area); if (!zoneOptions.has(id)) zoneOptions.set(id, shortZoneLabel(record.area)); });
@@ -793,6 +907,20 @@
     };
     if (!view.mobileDraft || view.mobileDraft.periodId !== periodId) reset();
     const draft = view.mobileDraft;
+    const mobileFindingDraftKey = view.mobileEdit ? ("mob_5s_edit_" + view.mobileEdit.id + "_" + view.mobileEdit.index) : ("mob_5s_new_" + periodId);
+    if (!view._mobDraftCheckedKey || view._mobDraftCheckedKey !== mobileFindingDraftKey) {
+      view._mobDraftCheckedKey = mobileFindingDraftKey;
+      const mobSavedDraft = window.FormDraftManager?.getDraft(mobileFindingDraftKey);
+      if (mobSavedDraft) {
+        if (mobSavedDraft.areaId) draft.areaId = mobSavedDraft.areaId;
+        if (mobSavedDraft.area) draft.area = mobSavedDraft.area;
+        if (mobSavedDraft.inspector) draft.inspector = mobSavedDraft.inspector;
+        if (mobSavedDraft.inspectionDate) draft.inspectionDate = mobSavedDraft.inspectionDate;
+        if (mobSavedDraft.rows?.[0]) {
+          draft.rows[0] = { ...draft.rows[0], ...mobSavedDraft.rows[0] };
+        }
+      }
+    }
     const source = view.mobileEdit && records.find((record) => record.id === view.mobileEdit.id);
     const writable = Boolean(periodId && canEditPeriod(ctx, periodId) && (!view.mobileEdit || canEditSheet(ctx, source)));
     const input = (name, value, type = "text", required = false) => type === "date"
@@ -819,19 +947,44 @@
         ${view.mobileEdit ? `<button type="button" data-mobile-reset>${writable ? "Hủy sửa" : "Đóng chi tiết"}</button>${writable ? '<button type="button" class="findings-remove-issue" data-mobile-delete>Xóa vấn đề</button>' : ""}` : ""}</div>
         <p class="findings-message" role="status" aria-live="polite"></p>
       </form>
-      ${mobileList(monthRecords, monthRecords, esc, ctx, monthOptionsHtml)}
+      ${mobileList(monthRecords, monthRecords, esc, ctx, monthOptionsHtml, findingsPager)}
     </div>`;
     const badge = host.closest("#mobileProtoOverlay")?.querySelector(".period-pill-text");
     if (badge) badge.textContent = ctx.periodLabel(ctx.getPeriod(periodId));
     const form = host.querySelector("form");
     host.querySelector("[data-finding-month]")?.addEventListener("change", (event) => {
       view.findingMonthKey = event.target.value;
+      view.findingsListPage = 1;
+      view.findingsListPageData = null;
+      view.findingsListPageKey = "";
+      view.findingsListFailedKey = "";
       renderMobile(host, view);
     });
+    host.querySelectorAll("[data-findings-page]").forEach((button) => button.addEventListener("click", () => {
+      view.findingsListPage = Number(button.dataset.findingsPage) || 1;
+      view.findingsListPageData = null;
+      view.findingsListPageKey = "";
+      view.findingsListFailedKey = "";
+      renderMobile(host, view);
+    }));
     host.querySelector("[data-findings-denied]")?.addEventListener("click", () => ctx.showToast("Bạn không có quyền thêm, sửa, lưu hoặc xóa vấn đề 5S trong kỳ hoặc Zone này.", true));
     bindPhotoEditor(form, ctx, draft.rows[0], { sheetId: view.mobileEdit?.id, rowIndex: view.mobileEdit?.index, editable: writable, onAnnotationsSaved: (annotations, { pending }) => { if (!pending && view.mobileEdit?.original) view.mobileEdit.original.photoAnnotations = annotations; } });
     if (view.mobileEdit) form.elements.areaId.disabled = true;
     if (writable) form.querySelector('[data-field="problem"]').required = true;
+    const isMobileFindingDirty = () => {
+      if (!form?.isConnected || host.classList.contains("is-hidden")) return false;
+      if (view.mobileEdit && view.mobileEdit.original) {
+        const orig = view.mobileEdit.original;
+        return !areFindingRowsEqual(draft.rows[0], orig);
+      }
+      return Boolean(
+        String(draft.rows[0]?.problem || "").trim() ||
+        String(draft.rows[0]?.location || "").trim() ||
+        String(draft.rows[0]?.countermeasure || "").trim() ||
+        String(draft.rows[0]?.photoDataUrl || "").trim()
+      );
+    };
+
     const capture = () => {
       if (!writable) return;
       draft.areaId = form.elements.areaId.value;
@@ -841,7 +994,23 @@
       draft.inspector = formatInspectors(n1, n2);
       draft.inspectionDate = ctx.parseDisplayDateToIso(form.elements.inspectionDate.value) || form.elements.inspectionDate.value.trim();
       form.querySelectorAll("[data-field]").forEach((input) => { draft.rows[0][input.dataset.field] = input.dataset.field === "dueDate" ? ctx.parseDisplayDateToIso(input.value) || input.value.trim() : input.value.trim(); });
+      if (isMobileFindingDirty()) {
+        window.FormDraftManager?.saveDraft(mobileFindingDraftKey, clone(draft));
+      } else {
+        window.FormDraftManager?.clearDraft(mobileFindingDraftKey);
+      }
     };
+
+    window.FormDraftManager?.registerDirtyForm(mobileFindingDraftKey, {
+      isDirty: isMobileFindingDirty,
+      getSnapshot: () => clone(draft),
+      onDiscard: () => {
+        window.FormDraftManager?.clearDraft(mobileFindingDraftKey);
+        view._mobDraftCheckedKey = "";
+        reset(draft.areaId);
+        view.mobileNewDraft = null;
+      },
+    });
     form.addEventListener("input", capture);
     form.addEventListener("change", (event) => {
       capture();
@@ -877,11 +1046,32 @@
       openIssueModal(host, view, record, index);
     }));
     host.querySelector("[data-mobile-reset]")?.addEventListener("click", () => {
-      reset(draft.areaId);
-      if (view.mobileNewDraft?.periodId === periodId) view.mobileDraft = view.mobileNewDraft;
-      view.mobileNewDraft = null;
-      view.notice = null;
-      renderMobile(host, view);
+      const doReset = () => {
+        view._mobDraftCheckedKey = "";
+        reset(draft.areaId);
+        if (view.mobileNewDraft?.periodId === periodId) view.mobileDraft = view.mobileNewDraft;
+        view.mobileNewDraft = null;
+        view.notice = null;
+        renderMobile(host, view);
+      };
+      if (window.FormDraftManager?.isFormDirty(mobileFindingDraftKey)) {
+        window.FormDraftManager.showUnsavedConfirmModal({
+          title: "Bạn có thay đổi chưa lưu!",
+          message: "Nội dung đang nhập đã được lưu tạm vào bộ nhớ (cache). Bạn có muốn tiếp tục chỉnh sửa hay thoát?",
+          onKeepEditing: () => {},
+          onSaveDraftAndExit: () => {
+            window.FormDraftManager?.unregisterDirtyForm(mobileFindingDraftKey);
+            doReset();
+          },
+          onDiscardAndExit: () => {
+            window.FormDraftManager?.clearDraft(mobileFindingDraftKey);
+            window.FormDraftManager?.unregisterDirtyForm(mobileFindingDraftKey);
+            doReset();
+          },
+        });
+        return;
+      }
+      doReset();
     });
     const persist = async (deleting = false) => {
       if (view.busy || !writable) return;
@@ -916,7 +1106,7 @@
       await perform(host, view, async () => {
         try {
           if (!deleting) {
-            const nextPhoto = await ctx.prepareScorePhoto(form.elements.findingPhoto?.files?.[0], row, form.elements.removeFindingPhoto?.checked, periodId);
+            const nextPhoto = await ctx.prepareScorePhoto(form.elements.findingPhoto?.files?.[0], row, form.elements.removeFindingPhoto?.checked, periodId, "van-de-5s");
             if (form.elements.removeFindingPhoto?.checked) row.photoAnnotations = [];
             row.photoDataUrl = nextPhoto.photoDataUrl;
             row.photoName = nextPhoto.photoName;
@@ -929,6 +1119,9 @@
           if (!deleting) await ctx.deleteUnusedPhotoFiles([row.photoDataUrl]);
           throw error;
         }
+        window.FormDraftManager?.clearDraft(mobileFindingDraftKey);
+        window.FormDraftManager?.unregisterDirtyForm(mobileFindingDraftKey);
+        view._mobDraftCheckedKey = "";
         reset(area.id);
         view.mobileNewDraft = null;
         view.zoneFilter = "";
@@ -981,23 +1174,118 @@
         initN1 = String(ctx.currentUser?.name || ctx.currentUser?.username || "").trim().slice(0, 20);
       }
     }
-    const initialDate = (editing ? record?.inspectionDate : null) || getAreaInspectionDate(areaId) || ctx.todayIsoDate();
+    let initialDate = (editing ? record?.inspectionDate : null) || getAreaInspectionDate(areaId) || ctx.todayIsoDate();
     const originalRow = editing ? clone(record.rows[rowIndex]) : null;
     let pendingPhotoAnnotations = null;
     const originalMetadata = editing ? JSON.stringify([record.areaId, record.area, record.inspectionDate, record.inspector, record.periodId]) : null;
     const hasChanged = (target) => !target || JSON.stringify(target.rows?.[rowIndex]) !== JSON.stringify(originalRow)
       || JSON.stringify([target.areaId, target.area, target.inspectionDate, target.inspector, target.periodId]) !== originalMetadata;
     const row = originalRow || blankRow();
+    const origAreaId = areaId;
+    const origInitialDate = initialDate;
+    const origInitN1 = initN1;
+    const origInitN2 = initN2;
+
+    const findingDraftKey = editing ? ("5s_edit_" + record?.id + "_" + rowIndex) : ("5s_new_" + periodId);
+    const rawFindingDraft = window.FormDraftManager?.getDraft(findingDraftKey);
+    if (rawFindingDraft && typeof rawFindingDraft === "object") {
+      rawFindingDraft.photoDataUrl = cleanFindingDraftPhotoUrl(rawFindingDraft.photoDataUrl);
+    }
+    const hasMeaningfulNewFindingDraft = (d) => Boolean(
+      d && (
+        String(d.problem || "").trim() ||
+        String(d.location || "").trim() ||
+        String(d.countermeasure || "").trim() ||
+        String(d.dueDate || "").trim() ||
+        cleanFindingDraftPhotoUrl(d.photoDataUrl)
+      )
+    );
+    if (!editing && rawFindingDraft && !hasMeaningfulNewFindingDraft(rawFindingDraft)) {
+      window.FormDraftManager?.clearDraft(findingDraftKey);
+    }
+    if (editing && rawFindingDraft) {
+      const draftMatchesOriginal =
+        String(rawFindingDraft.areaId || "") === String(origAreaId || "") &&
+        displayDate(rawFindingDraft.inspectionDate) === displayDate(origInitialDate) &&
+        String(rawFindingDraft.inspector1 || "").trim() === String(origInitN1 || "").trim() &&
+        String(rawFindingDraft.inspector2 || "").trim() === String(origInitN2 || "").trim() &&
+        areFindingRowsEqual(rawFindingDraft, originalRow);
+      if (draftMatchesOriginal) {
+        window.FormDraftManager?.clearDraft(findingDraftKey);
+      }
+    }
+    const findingDraft = (!editing && !hasMeaningfulNewFindingDraft(rawFindingDraft))
+      ? null
+      : (editing && rawFindingDraft && window.FormDraftManager?.hasDraft(findingDraftKey) ? rawFindingDraft : null);
+
+    let effectiveAreaId = areaId;
+    if (findingDraft) {
+      if (findingDraft.areaId) effectiveAreaId = findingDraft.areaId;
+      if (findingDraft.inspectionDate) initialDate = findingDraft.inspectionDate;
+      if (findingDraft.inspector1 !== undefined) initN1 = findingDraft.inspector1;
+      if (findingDraft.inspector2 !== undefined) initN2 = findingDraft.inspector2;
+      fields.forEach((k) => {
+        if (findingDraft[k] !== undefined) row[k] = findingDraft[k];
+      });
+      if (findingDraft.photoDataUrl) {
+        row.photoDataUrl = findingDraft.photoDataUrl;
+        row.photoAnnotations = findingDraft.photoAnnotations || [];
+      }
+    }
+
+    let baselineSnapshot = null;
+    const captureFindingSnapshot = () => {
+      const modalForm = ctx.elements?.modalBody?.querySelector("form");
+      if (!modalForm) return null;
+      const photoPreview = modalForm.querySelector("[data-findings-photo-preview]");
+      const rawPhotoSrc = photoPreview && !photoPreview.hidden && !photoPreview.closest(".photo-preview-wrap")?.classList.contains("is-hidden")
+        ? (photoPreview.dataset?.photoSrc || photoPreview.dataset?.previewImg || photoPreview.getAttribute("src") || "")
+        : "";
+      let annotations = [];
+      try {
+        annotations = JSON.parse(photoPreview?.dataset?.safetyAnnotations || photoPreview?.dataset?.findingPhotoAnnotations || "[]");
+      } catch (_) {}
+      const snap = {
+        areaId: modalForm.elements.areaId?.value || "",
+        inspectionDate: modalForm.elements.inspectionDate?.value || "",
+        inspector1: modalForm.elements.inspector1?.value || "",
+        inspector2: modalForm.elements.inspector2?.value || "",
+        photoDataUrl: cleanFindingDraftPhotoUrl(rawPhotoSrc),
+        photoAnnotations: annotations,
+      };
+      fields.forEach((k) => {
+        const input = modalForm.querySelector('[data-field="' + k + '"]');
+        snap[k] = input ? input.value : "";
+      });
+      return snap;
+    };
+
+    const isFindingModalDirty = () => {
+      if (!writable) return false;
+      const cur = captureFindingSnapshot();
+      if (!cur) return false;
+      if (!editing) {
+        return hasMeaningfulNewFindingDraft(cur);
+      }
+      if (baselineSnapshot) {
+        return JSON.stringify(cur) !== JSON.stringify(baselineSnapshot);
+      }
+      return false;
+    };
+
     let saving = false;
     ctx.openFormModal({
       title: editing ? writable ? "Sửa vấn đề 5S" : "Chi tiết vấn đề 5S" : "Thêm vấn đề 5S",
       submitText: mobile && editing ? "Lưu thay đổi" : "Lưu vấn đề",
+      draftKey: findingDraftKey,
+      getDraftSnapshot: captureFindingSnapshot,
+      isDraftDirty: isFindingModalDirty,
       extraRightActions: mobile && editing ? '<button type="button" class="danger-button" data-delete-issue-modal>Xóa vấn đề</button>' : "",
       modalClass: `safety-record-modal findings-issue-modal${mobile ? " is-mobile-detail" : ""}${mobile && !host.closest(".is-light-theme") ? " is-mobile-dark" : ""}`,
       html: `<div class="modal-context"><span><strong>Kỳ:</strong> ${esc(ctx.periodLabel(ctx.getPeriod(periodId)))}</span><span><strong>Nguồn:</strong> Vấn đề 5S</span></div>
         <div class="findings-page"><div class="safety-record-entry-wrap"><table class="safety-record-entry-table findings-issue-entry-table">
           <thead><tr><th>Zone</th><th>Ngày kiểm tra</th><th>Người kiểm tra</th>${headings.map((heading, index) => `<th>${heading}</th>${index === 1 ? '<th>Ảnh vấn đề</th>' : ""}`).join("")}</tr></thead>
-          <tbody><tr><td data-label="Zone"><select name="areaId" required ${writable ? "" : "disabled"}><option value="">Chọn Zone 5S</option>${areas.map((area) => `<option value="${esc(area.id)}" ${area.id === areaId ? "selected" : ""}>${esc(zoneLabel(area))}</option>`).join("")}</select></td>
+          <tbody><tr><td data-label="Zone"><select name="areaId" required ${writable ? "" : "disabled"}><option value="">Chọn Zone 5S</option>${areas.map((area) => `<option value="${esc(area.id)}" ${area.id === effectiveAreaId ? "selected" : ""}>${esc(zoneLabel(area))}</option>`).join("")}</select></td>
           <td data-label="Ngày kiểm tra">${dateEditor(initialDate, 'name="inspectionDate"', writable, esc, true)}</td>
           <td data-label="Người kiểm tra">
             <div class="findings-inspectors-inputs">
@@ -1059,7 +1347,7 @@
         controls.forEach(([el]) => { el.disabled = true; });
         try {
           const updates = remaining ? [remaining, data] : [data];
-          const nextPhoto = await ctx.prepareScorePhoto(form.elements.findingPhoto?.files?.[0], originalRow || issue, form.elements.removeFindingPhoto?.checked, periodId);
+          const nextPhoto = await ctx.prepareScorePhoto(form.elements.findingPhoto?.files?.[0], originalRow || issue, form.elements.removeFindingPhoto?.checked, periodId, "van-de-5s");
           if (form.elements.removeFindingPhoto?.checked) issue.photoAnnotations = [];
           issue.photoDataUrl = nextPhoto.photoDataUrl;
           issue.photoName = nextPhoto.photoName;
@@ -1079,6 +1367,7 @@
           view.issueIndex = null;
           view.notice = null;
           render(host, view);
+          window.FormDraftManager?.clearDraft(findingDraftKey);
           message(host, editing ? "Đã cập nhật vấn đề 5S." : "Đã thêm vấn đề 5S.");
           return true;
         } catch (failure) {
@@ -1111,6 +1400,7 @@
       for (const event of ["input", "change"]) calendar.addEventListener(event, () => { input.value = displayDate(calendar.value); });
     });
     ctx.hydrateAuthenticatedPhotos(ctx.elements.modalBody);
+    baselineSnapshot = captureFindingSnapshot();
     if (writable) form.querySelector('[data-field="problem"]').required = true;
     if (!writable) {
       if (!mobile) ctx.elements.modalActions.querySelector('[type="submit"]')?.remove();
@@ -1143,7 +1433,8 @@
         await ctx.saveFiveSFinding(data);
         ctx.state.fiveSFindings = ctx.state.fiveSFindings.map((item) => item.id === data.id ? data : item);
         await ctx.deleteUnusedPhotoFiles([removedPhotoUrl]);
-        ctx.closeModal();
+        window.FormDraftManager?.clearDraft(findingDraftKey);
+        ctx.closeModal({ force: true });
         render(host, view);
         message(host, "Đã xóa vấn đề 5S.");
       } catch (failure) {
@@ -1189,7 +1480,7 @@
     return true;
   }
 
-  function mobileList(records, periodRecords, esc, ctx, monthOptionsHtml = "") {
+  function mobileList(records, periodRecords, esc, ctx, monthOptionsHtml = "", pagination = null) {
     const issues = records.flatMap((sheet) => (sheet.rows || []).map((row, index) => ({ sheet, row, index })).filter(({ row }) => rowHasContent(row)))
       .sort((left, right) => compareFindingsNewestFirst(left.sheet, right.sheet) || right.index - left.index);
     const total = periodRecords.reduce((count, sheet) => count + (sheet.rows || []).filter(rowHasContent).length, 0);
@@ -1198,11 +1489,12 @@
       ${issues.length ? issues.map(({ sheet, row, index }) => {
         const complete = isFindingResolved(row);
         return `<button type="button" class="findings-record-card" data-open-finding="${esc(sheet.id)}" data-issue-index="${index}">
-          ${row.photoDataUrl ? `<img class="findings-record-thumb" src="${esc(row.photoDataUrl)}" data-preview-img="${esc(row.photoDataUrl)}" alt="Ảnh vấn đề 5S" ${photoImageAttributes(row, esc, { sheetId: sheet.id, rowIndex: index, editable: canEditSheet(ctx, sheet) })}>` : '<span class="findings-record-icon" aria-hidden="true">▤</span>'}
+          ${row.photoDataUrl ? `<img class="findings-record-thumb" src="${esc(photoThumbnailUrl(row.photoDataUrl))}" data-preview-img="${esc(row.photoDataUrl)}" loading="lazy" decoding="async" alt="Ảnh vấn đề 5S" ${photoImageAttributes(row, esc, { sheetId: sheet.id, rowIndex: index, editable: canEditSheet(ctx, sheet) })}>` : '<span class="findings-record-icon" aria-hidden="true">▤</span>'}
           <span class="findings-record-copy"><strong>${esc(shortZoneLabel(sheet.area) || "Chưa chọn Zone")}</strong><span>${esc(row.problem || "Vấn đề 5S")}</span><small>${esc(displayDate(sheet.inspectionDate))}</small></span>
           <span class="findings-status ${complete ? "is-done" : ""}">${complete ? "Đã xử lý" : "Chưa xử lý"}</span><span aria-hidden="true">›</span>
         </button>`;
       }).join("") : '<div class="findings-empty"><span aria-hidden="true">▤</span><strong>Chưa có vấn đề trong tháng này</strong><p>Điền thông tin ở trên để ghi nhận vấn đề 5S.</p></div>'}
+      ${pagination?.totalPages > 1 ? `<div class="safety-table-pager" aria-label="Phân trang vấn đề 5S"><button type="button" class="tiny-button" data-findings-page="${pagination.page - 1}" ${pagination.page <= 1 ? "disabled" : ""}>Trước</button><span>Trang ${pagination.page}/${pagination.totalPages}</span><button type="button" class="tiny-button" data-findings-page="${pagination.page + 1}" ${pagination.page >= pagination.totalPages ? "disabled" : ""}>Sau</button></div>` : ""}
     </section>`;
   }
 
