@@ -52,7 +52,13 @@
   const clone = (value) => JSON.parse(JSON.stringify(value));
   const canEdit = (ctx) => Boolean(ctx.currentUser && (ctx.isAdminAccount(ctx.currentUser) || ctx.isDepartmentHeadAccount(ctx.currentUser) || (ctx.hasAccountAccessType(ctx.currentUser, ctx.FIVE_S_PERIOD_TYPE) && (ctx.isZoneOwnerAccount(ctx.currentUser, ctx.FIVE_S_PERIOD_TYPE) || ctx.isFiveSAssessor(ctx.currentUser)))));
   const canEditPeriod = (ctx, periodId) => canEdit(ctx) && Boolean(periodId && ctx.getPeriod(periodId) && !ctx.getPeriod(periodId).archived && (typeof ctx.isPeriodOpen === "function" ? ctx.isPeriodOpen(periodId, ctx.FIVE_S_PERIOD_TYPE) : ctx.getActivePeriodId(ctx.FIVE_S_PERIOD_TYPE) === periodId));
-  const sortedAreas = (ctx, periodId) => [...ctx.getAreasForPeriod(periodId)].sort((a, b) => String(a.code).localeCompare(String(b.code), "vi", { numeric: true }));
+  const sortedAreas = (ctx, periodId) => [...ctx.getAreasForPeriod(periodId)].sort((a, b) => {
+    if (typeof ctx?.compareZoneCodesByOrder === "function") return ctx.compareZoneCodesByOrder(a, b);
+    if (typeof window !== "undefined" && window.CustomDropdown?.compareZoneCodesByOrder) {
+      return window.CustomDropdown.compareZoneCodesByOrder(a, b);
+    }
+    return String(a.code).localeCompare(String(b.code), "vi", { numeric: true });
+  });
   const editableAreas = (ctx, periodId) => sortedAreas(ctx, periodId).filter((area) => canEditPeriod(ctx, periodId) && (ctx.isAdminAccount(ctx.currentUser) || ctx.getAllowedAreaIds(ctx.currentUser, periodId).has(area.id)));
   const canEditSheet = (ctx, sheet) => {
     if (!canEdit(ctx) || !sheet) return false;
@@ -496,7 +502,7 @@
           ${periodOptions(view.periodId)}${hasUnassigned ? `<option value="${UNASSIGNED}" ${view.periodId === UNASSIGNED ? "selected" : ""}>Phiếu chưa gán kỳ</option>` : ""}${!periods.length && !hasUnassigned ? '<option value="">Chưa có kỳ chấm 5S</option>' : ""}
         </select></label>
         <label ${mobile && editing ? "hidden" : ""}><span>Khu vực (Zone)</span><select data-finding-zone aria-label="Lọc theo Zone" ${editing ? "disabled" : ""}>
-          <option value="">Tất cả Zone</option>${[...zoneOptions].sort((a, b) => a[1].localeCompare(b[1], "vi", { numeric: true })).map(([key, label]) => `<option value="${esc(key)}" ${view.zoneFilter === key ? "selected" : ""}>${esc(label)}</option>`).join("")}
+          <option value="">Tất cả Zone</option>${[...zoneOptions].sort((a, b) => (ctx.compareZoneCodesByOrder || window.CustomDropdown?.compareZoneCodesByOrder || ((x, y) => x.localeCompare(y, "vi", { numeric: true })))(a[1], b[1])).map(([key, label]) => `<option value="${esc(key)}" ${view.zoneFilter === key ? "selected" : ""}>${esc(label)}</option>`).join("")}
         </select></label>
         <div class="findings-actions">${mobile && view.showDetail && !editing ? button("back", "‹ Danh sách") : ""}${editing ? '<button type="submit" data-finding-save>Lưu phiếu</button>' + button("cancel", "Hủy") : canEditPeriod(ctx, view.periodId) ? (periods.some((period) => period.id === view.periodId) ? button("new", "Thêm vấn đề 5S") : "") + (canEditSheet(ctx, saved) && mobile && view.showDetail ? button("edit", "Sửa") + button("delete", "Xóa") : "") : '<span class="findings-readonly">Chỉ xem</span>'}
         ${!editing ? `<button type="button" class="btn-export-excel-gradient" data-finding-export ${periodRecords.length ? "" : "disabled"} title="Xuất toàn bộ vấn đề trong tháng đang chọn"><i class="fa-solid fa-file-excel" aria-hidden="true"></i> Xuất Excel</button>` : ""}</div>
@@ -811,6 +817,9 @@
     if (view.notice) message(host, view.notice.text, view.notice.error);
     ctx.hydrateAuthenticatedPhotos(host);
     bindFindingPhotoImages(host, ctx);
+    if (!mobile && typeof window !== "undefined" && window.CustomDropdown?.enhanceAll) {
+      window.CustomDropdown.enhanceAll(host);
+    }
   }
 
   function renderMobile(host, view) {
@@ -1132,6 +1141,9 @@
     if (view.notice) message(host, view.notice.text, view.notice.error);
     ctx.hydrateAuthenticatedPhotos(host);
     bindFindingPhotoImages(host, ctx);
+    if (!mobile && typeof window !== "undefined" && window.CustomDropdown?.enhanceAll) {
+      window.CustomDropdown.enhanceAll(host);
+    }
   }
 
   function openIssueModal(host, view, record = null, rowIndex = null) {

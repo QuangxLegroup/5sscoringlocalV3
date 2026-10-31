@@ -1173,6 +1173,9 @@
   }
 
   function sortMobileAreasByCode(areas) {
+    if (typeof window !== "undefined" && window.CustomDropdown?.compareZoneCodesByOrder) {
+      return [...(areas || [])].sort(window.CustomDropdown.compareZoneCodesByOrder);
+    }
     return [...(areas || [])].sort((left, right) => String(left?.code || left?.templateCode || "")
       .localeCompare(String(right?.code || right?.templateCode || ""), "vi", {
         numeric: true,

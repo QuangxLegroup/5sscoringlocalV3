@@ -55,7 +55,7 @@ test("app.js renders guide draft banner and provides clear draft action", () => 
 test("index.html exposes user guide buttons for desktop users", () => {
   const html = fs.readFileSync("index.html", "utf8");
   assert.ok(html.includes("header-guide-btn"), "index.html must have header-guide-btn");
-  assert.ok(html.includes("guide-view-menu-item"), "index.html must have guide-view-menu-item");
+  assert.ok(!html.includes("guide-view-menu-item"), "index.html must remove guide-view-menu-item as requested");
   assert.ok(html.includes('data-action="view-user-guide"'), "index.html must have data-action='view-user-guide'");
 });
 

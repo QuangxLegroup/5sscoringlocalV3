@@ -897,19 +897,598 @@
       ${guide.adminNote ? `<aside class="mobile-user-guide-admin"><strong>Thao tác quyền Admin</strong><p>${escapeHtml(guide.adminNote)}</p></aside>` : ""}
     </article>
   </main>
-
-  <script>
-    window.addEventListener('load', function() {
-      setTimeout(function() {
-        try {
-          window.focus();
-          window.print();
-        } catch (_) {}
-      }, 450);
-    });
-  </script>
 </body>
 </html>`;
+  }
+
+  function dataUrlToBytes(dataUrl) {
+    const commaIdx = dataUrl.indexOf(",");
+    const base64 = commaIdx >= 0 ? dataUrl.slice(commaIdx + 1) : dataUrl;
+    const binaryString = (typeof window !== "undefined" && window.atob)
+      ? window.atob(base64)
+      : (typeof Buffer !== "undefined" ? Buffer.from(base64, "base64").toString("binary") : "");
+    const len = binaryString.length;
+    const bytes = new Uint8Array(len);
+    for (let i = 0; i < len; i++) {
+      bytes[i] = binaryString.charCodeAt(i) & 0xff;
+    }
+    return bytes;
+  }
+
+  function createPdfBinary(pages) {
+    const pageCount = pages.length;
+    const kids = [];
+    const pageObjMap = pages.map((_, i) => {
+      const pageId = 3 + i * 3;
+      const imgId = pageId + 1;
+      const contentId = pageId + 2;
+      kids.push(`${pageId} 0 R`);
+      return { pageId, imgId, contentId };
+    });
+
+    const totalObjs = 3 + pageCount * 3;
+    const offsets = [];
+    const parts = [];
+    let byteOffset = 0;
+
+    function pushString(str) {
+      const arr = new Uint8Array(str.length);
+      for (let i = 0; i < str.length; i++) {
+        arr[i] = str.charCodeAt(i) & 0xff;
+      }
+      parts.push(arr);
+      byteOffset += arr.length;
+    }
+
+    function pushBytes(arr) {
+      const u8 = arr instanceof Uint8Array ? arr : new Uint8Array(arr);
+      parts.push(u8);
+      byteOffset += u8.length;
+    }
+
+    pushString("%PDF-1.4\n%\xFF\xFF\xFF\xFF\n");
+
+    function startObj(id) {
+      offsets[id] = byteOffset;
+      pushString(`${id} 0 obj\n`);
+    }
+
+    function endObj() {
+      pushString("endobj\n");
+    }
+
+    // 1: Catalog
+    startObj(1);
+    pushString("<< /Type /Catalog /Pages 2 0 R >>\n");
+    endObj();
+
+    // 2: Pages
+    startObj(2);
+    pushString(`<< /Type /Pages /Kids [${kids.join(" ")}] /Count ${pageCount} >>\n`);
+    endObj();
+
+    for (let i = 0; i < pageCount; i++) {
+      const p = pages[i];
+      const { pageId, imgId, contentId } = pageObjMap[i];
+
+      // Page: A4 standard 595.28 x 841.89 pt
+      startObj(pageId);
+      pushString(`<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595.28 841.89] /Resources << /XObject << /Im1 ${imgId} 0 R >> >> /Contents ${contentId} 0 R >>\n`);
+      endObj();
+
+      // Image XObject with /DCTDecode (JPEG)
+      startObj(imgId);
+      pushString(`<< /Type /XObject /Subtype /Image /Width ${p.width} /Height ${p.height} /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length ${p.data.length} >>\nstream\n`);
+      pushBytes(p.data);
+      pushString("\nendstream\n");
+      endObj();
+
+      // Content stream placing Im1 to fill the A4 page
+      const contentStr = "q\n595.28 0 0 841.89 0 0 cm\n/Im1 Do\nQ\n";
+      startObj(contentId);
+      pushString(`<< /Length ${contentStr.length} >>\nstream\n${contentStr}endstream\n`);
+      endObj();
+    }
+
+    const startXref = byteOffset;
+    pushString(`xref\n0 ${totalObjs}\n`);
+    pushString("0000000000 65535 f \n");
+    for (let i = 1; i < totalObjs; i++) {
+      const off = String(offsets[i] || 0).padStart(10, "0");
+      pushString(`${off} 00000 n \n`);
+    }
+    pushString(`trailer\n<< /Size ${totalObjs} /Root 1 0 R >>\nstartxref\n${startXref}\n%%EOF\n`);
+
+    let totalLen = 0;
+    for (const part of parts) totalLen += part.length;
+    const result = new Uint8Array(totalLen);
+    let pos = 0;
+    for (const part of parts) {
+      result.set(part, pos);
+      pos += part.length;
+    }
+    return result;
+  }
+
+  function wrapCanvasText(ctx, text, maxWidth) {
+    if (!text) return [];
+    if (!ctx || typeof ctx.measureText !== "function") {
+      const charLimit = Math.max(20, Math.floor(maxWidth / 9));
+      const words = String(text).split(/\s+/);
+      const lines = [];
+      let current = "";
+      for (const w of words) {
+        const next = current ? `${current} ${w}` : w;
+        if (next.length > charLimit && current) {
+          lines.push(current);
+          current = w;
+        } else {
+          current = next;
+        }
+      }
+      if (current) lines.push(current);
+      return lines;
+    }
+
+    const paragraphs = String(text).split("\n");
+    const lines = [];
+
+    for (const para of paragraphs) {
+      const trimmed = para.trim();
+      if (!trimmed) {
+        lines.push("");
+        continue;
+      }
+      const words = trimmed.split(/\s+/);
+      let currentLine = "";
+
+      for (const word of words) {
+        const testLine = currentLine ? `${currentLine} ${word}` : word;
+        const metrics = ctx.measureText(testLine);
+        if (metrics.width > maxWidth && currentLine) {
+          lines.push(currentLine);
+          currentLine = word;
+        } else {
+          currentLine = testLine;
+        }
+      }
+      if (currentLine) {
+        lines.push(currentLine);
+      }
+    }
+    return lines;
+  }
+
+  function loadImage(src) {
+    return new Promise((resolve) => {
+      if (!src) return resolve(null);
+      if (typeof Image === "undefined") return resolve(null);
+      const img = new Image();
+      img.crossOrigin = "anonymous";
+      img.onload = () => resolve(img);
+      img.onerror = () => resolve(null);
+      img.src = src;
+    });
+  }
+
+  async function renderGuideToCanvasPages(params = {}) {
+    const { section, guide } = params;
+    const PAGE_WIDTH = 1240;
+    const PAGE_HEIGHT = 1754;
+    const MARGIN_X = 70;
+    const MARGIN_TOP = 85;
+    const MARGIN_BOTTOM = 85;
+    const CONTENT_WIDTH = PAGE_WIDTH - MARGIN_X * 2;
+    const MAX_Y = PAGE_HEIGHT - MARGIN_BOTTOM;
+
+    if (typeof document === "undefined" || !document.createElement) {
+      return [{ width: PAGE_WIDTH, height: PAGE_HEIGHT, data: new Uint8Array([0xff, 0xd8, 0xff, 0xd9]) }];
+    }
+
+    const pages = [];
+    let currentCanvas = null;
+    let ctx = null;
+    let currentY = MARGIN_TOP;
+
+    function startNewPage() {
+      currentCanvas = document.createElement("canvas");
+      currentCanvas.width = PAGE_WIDTH;
+      currentCanvas.height = PAGE_HEIGHT;
+      ctx = currentCanvas.getContext("2d");
+
+      ctx.fillStyle = "#ffffff";
+      ctx.fillRect(0, 0, PAGE_WIDTH, PAGE_HEIGHT);
+
+      ctx.save();
+      ctx.font = "bold 13px Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif";
+      ctx.fillStyle = "#64748b";
+      ctx.textAlign = "left";
+      ctx.textBaseline = "middle";
+      ctx.fillText("LEGROUP · HỆ THỐNG QUẢN LÝ 5S & AN TOÀN", MARGIN_X, 42);
+
+      ctx.font = "bold 13px Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif";
+      ctx.fillStyle = "#0b7f87";
+      ctx.textAlign = "right";
+      ctx.fillText(`HƯỚNG DẪN SỬ DỤNG · ${(section.label || "").toUpperCase()}`, PAGE_WIDTH - MARGIN_X, 42);
+
+      ctx.strokeStyle = "#e2e8f0";
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.moveTo(MARGIN_X, 60);
+      ctx.lineTo(PAGE_WIDTH - MARGIN_X, 60);
+      ctx.stroke();
+      ctx.restore();
+
+      pages.push(currentCanvas);
+      currentY = MARGIN_TOP;
+      return ctx;
+    }
+
+    ctx = startNewPage();
+
+    // Document header on page 1
+    ctx.save();
+    ctx.font = "bold 13px Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif";
+    ctx.fillStyle = "#0b7f87";
+    ctx.textAlign = "left";
+    ctx.textBaseline = "top";
+    ctx.fillText((section.label || "").toUpperCase(), MARGIN_X, currentY);
+    currentY += 24;
+
+    ctx.font = "bold 26px Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif";
+    ctx.fillStyle = "#0f172a";
+    const titleLines = wrapCanvasText(ctx, guide.title || section.label, CONTENT_WIDTH);
+    for (const line of titleLines) {
+      ctx.fillText(line, MARGIN_X, currentY);
+      currentY += 34;
+    }
+
+    if (guide.intro) {
+      currentY += 4;
+      ctx.font = "16px Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif";
+      ctx.fillStyle = "#475569";
+      const introLines = wrapCanvasText(ctx, guide.intro, CONTENT_WIDTH);
+      for (const line of introLines) {
+        ctx.fillText(line, MARGIN_X, currentY);
+        currentY += 24;
+      }
+    }
+
+    currentY += 10;
+    ctx.strokeStyle = "#cbd5e1";
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(MARGIN_X, currentY);
+    ctx.lineTo(PAGE_WIDTH - MARGIN_X, currentY);
+    ctx.stroke();
+    currentY += 24;
+    ctx.restore();
+
+    // Steps rendering
+    const steps = guide.steps || [];
+    if (steps.length === 0) {
+      ctx.save();
+      ctx.font = "15px Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif";
+      ctx.fillStyle = "#64748b";
+      ctx.fillText("Chưa có bước hướng dẫn nào được thiết lập.", MARGIN_X, currentY);
+      currentY += 30;
+      ctx.restore();
+    }
+
+    for (let stepIdx = 0; stepIdx < steps.length; stepIdx++) {
+      const step = steps[stepIdx];
+      const rawImgs = Array.isArray(step.renderedImages) && step.renderedImages.length > 0
+        ? step.renderedImages
+        : (Array.isArray(step.images) && step.images.length > 0
+          ? step.images
+          : (step.renderedImageDataUrl || step.imageUrl ? [{ imageUrl: step.imageUrl, renderedImageDataUrl: step.renderedImageDataUrl || step.imageUrl }] : []));
+
+      const loadedImages = (await Promise.all(
+        rawImgs.slice(0, 3).map(async (item) => {
+          const src = item.renderedImageDataUrl || item.imageUrl || "";
+          const img = await loadImage(src);
+          return img ? { img, item } : null;
+        })
+      )).filter(Boolean);
+
+      const imgCount = loadedImages.length;
+      let maxImgH = 0;
+      const imgLayouts = [];
+
+      if (imgCount === 1) {
+        const item = loadedImages[0];
+        const maxW = 860;
+        const maxH = 380;
+        const nw = item.img.naturalWidth || item.img.width || 800;
+        const nh = item.img.naturalHeight || item.img.height || 600;
+        let scale = Math.min(maxW / nw, maxH / nh, 1);
+        let w = Math.round(nw * scale);
+        let h = Math.round(nh * scale);
+        imgLayouts.push({ img: item.img, w, h });
+        maxImgH = h;
+      } else if (imgCount === 2) {
+        const maxW = 525;
+        const maxH = 290;
+        for (const item of loadedImages) {
+          const nw = item.img.naturalWidth || item.img.width || 800;
+          const nh = item.img.naturalHeight || item.img.height || 600;
+          let scale = Math.min(maxW / nw, maxH / nh, 1);
+          let w = Math.round(nw * scale);
+          let h = Math.round(nh * scale);
+          imgLayouts.push({ img: item.img, w, h });
+          if (h > maxImgH) maxImgH = h;
+        }
+      } else if (imgCount === 3) {
+        const maxW = 345;
+        const maxH = 240;
+        for (const item of loadedImages) {
+          const nw = item.img.naturalWidth || item.img.width || 800;
+          const nh = item.img.naturalHeight || item.img.height || 600;
+          let scale = Math.min(maxW / nw, maxH / nh, 1);
+          let w = Math.round(nw * scale);
+          let h = Math.round(nh * scale);
+          imgLayouts.push({ img: item.img, w, h });
+          if (h > maxImgH) maxImgH = h;
+        }
+      }
+
+      ctx.save();
+      ctx.font = "15px Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif";
+      const bodyLines = wrapCanvasText(ctx, step.body, CONTENT_WIDTH - 42);
+      const bodyHeight = bodyLines.length > 0 ? bodyLines.length * 22 + 8 : 0;
+      const totalStepHeight = 34 + bodyHeight + (imgCount > 0 ? maxImgH + 20 : 0) + 24;
+
+      if (currentY > MARGIN_TOP + 40 && (currentY + totalStepHeight) > MAX_Y) {
+        ctx = startNewPage();
+      }
+
+      // Draw Step Number badge
+      ctx.fillStyle = "#0b7f87";
+      ctx.beginPath();
+      ctx.arc(MARGIN_X + 14, currentY + 12, 14, 0, Math.PI * 2);
+      ctx.fill();
+
+      ctx.fillStyle = "#ffffff";
+      ctx.font = "bold 13px Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif";
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillText(String(stepIdx + 1), MARGIN_X + 14, currentY + 12);
+
+      // Draw Step Title
+      ctx.font = "bold 18px Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif";
+      ctx.fillStyle = "#0f172a";
+      ctx.textAlign = "left";
+      ctx.textBaseline = "middle";
+      ctx.fillText(step.title || `Bước ${stepIdx + 1}`, MARGIN_X + 38, currentY + 12);
+      currentY += 32;
+
+      // Draw Step Body
+      if (bodyLines.length > 0) {
+        ctx.font = "15px Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif";
+        ctx.fillStyle = "#334155";
+        ctx.textAlign = "left";
+        ctx.textBaseline = "top";
+        for (const line of bodyLines) {
+          ctx.fillText(line, MARGIN_X + 38, currentY);
+          currentY += 22;
+        }
+        currentY += 8;
+      }
+      ctx.restore();
+
+      // Draw Step Images
+      if (imgCount > 0) {
+        if (currentY + maxImgH > MAX_Y) {
+          ctx = startNewPage();
+        }
+
+        let curImgX = MARGIN_X + 38;
+        const gap = imgCount === 2 ? 20 : 15;
+
+        for (let i = 0; i < imgLayouts.length; i++) {
+          const { img, w, h } = imgLayouts[i];
+          const posX = curImgX;
+          const posY = currentY;
+
+          ctx.save();
+          ctx.beginPath();
+          if (typeof ctx.roundRect === "function") {
+            ctx.roundRect(posX, posY, w, h, 8);
+          } else {
+            ctx.rect(posX, posY, w, h);
+          }
+          ctx.clip();
+          ctx.drawImage(img, posX, posY, w, h);
+          ctx.restore();
+
+          ctx.save();
+          ctx.strokeStyle = "#cbd5e1";
+          ctx.lineWidth = 1.5;
+          ctx.beginPath();
+          if (typeof ctx.roundRect === "function") {
+            ctx.roundRect(posX, posY, w, h, 8);
+          } else {
+            ctx.rect(posX, posY, w, h);
+          }
+          ctx.stroke();
+
+          if (imgCount > 1) {
+            ctx.fillStyle = "rgba(15, 23, 42, 0.75)";
+            if (typeof ctx.roundRect === "function") {
+              ctx.beginPath();
+              ctx.roundRect(posX + 8, posY + 8, 54, 22, 4);
+              ctx.fill();
+            } else {
+              ctx.fillRect(posX + 8, posY + 8, 54, 22);
+            }
+            ctx.font = "bold 11px Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif";
+            ctx.fillStyle = "#ffffff";
+            ctx.textAlign = "center";
+            ctx.textBaseline = "middle";
+            ctx.fillText(`Ảnh ${i + 1}`, posX + 35, posY + 19);
+          }
+          ctx.restore();
+
+          curImgX += w + gap;
+        }
+
+        currentY += maxImgH + 24;
+      }
+    }
+
+    // Notes sections
+    if (guide.hint) {
+      ctx.save();
+      ctx.font = "14px Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif";
+      const hintLines = wrapCanvasText(ctx, guide.hint, CONTENT_WIDTH - 36);
+      const hintBoxH = 34 + hintLines.length * 22 + 16;
+
+      if (currentY + hintBoxH > MAX_Y) {
+        ctx = startNewPage();
+      }
+
+      ctx.save();
+      ctx.beginPath();
+      if (typeof ctx.roundRect === "function") {
+        ctx.roundRect(MARGIN_X, currentY, CONTENT_WIDTH, hintBoxH, 8);
+      } else {
+        ctx.rect(MARGIN_X, currentY, CONTENT_WIDTH, hintBoxH);
+      }
+      ctx.fillStyle = "#fffbeb";
+      ctx.fill();
+      ctx.strokeStyle = "#fde68a";
+      ctx.lineWidth = 1.5;
+      ctx.stroke();
+      ctx.restore();
+
+      ctx.font = "bold 14px Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif";
+      ctx.fillStyle = "#92400e";
+      ctx.textAlign = "left";
+      ctx.textBaseline = "top";
+      ctx.fillText("LƯU Ý", MARGIN_X + 18, currentY + 14);
+
+      ctx.font = "14px Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif";
+      ctx.fillStyle = "#78350f";
+      let lineY = currentY + 36;
+      for (const line of hintLines) {
+        ctx.fillText(line, MARGIN_X + 18, lineY);
+        lineY += 22;
+      }
+      ctx.restore();
+      currentY += hintBoxH + 16;
+    }
+
+    if (guide.adminNote) {
+      ctx.save();
+      ctx.font = "14px Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif";
+      const adminLines = wrapCanvasText(ctx, guide.adminNote, CONTENT_WIDTH - 36);
+      const adminBoxH = 34 + adminLines.length * 22 + 16;
+
+      if (currentY + adminBoxH > MAX_Y) {
+        ctx = startNewPage();
+      }
+
+      ctx.save();
+      ctx.beginPath();
+      if (typeof ctx.roundRect === "function") {
+        ctx.roundRect(MARGIN_X, currentY, CONTENT_WIDTH, adminBoxH, 8);
+      } else {
+        ctx.rect(MARGIN_X, currentY, CONTENT_WIDTH, adminBoxH);
+      }
+      ctx.fillStyle = "#eff6ff";
+      ctx.fill();
+      ctx.strokeStyle = "#bfdbfe";
+      ctx.lineWidth = 1.5;
+      ctx.stroke();
+      ctx.restore();
+
+      ctx.font = "bold 14px Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif";
+      ctx.fillStyle = "#1e40af";
+      ctx.textAlign = "left";
+      ctx.textBaseline = "top";
+      ctx.fillText("THAO TÁC QUYỀN ADMIN", MARGIN_X + 18, currentY + 14);
+
+      ctx.font = "14px Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif";
+      ctx.fillStyle = "#1e3a8a";
+      let lineY = currentY + 36;
+      for (const line of adminLines) {
+        ctx.fillText(line, MARGIN_X + 18, lineY);
+        lineY += 22;
+      }
+      ctx.restore();
+      currentY += adminBoxH + 16;
+    }
+
+    // Footers across all pages
+    const totalPages = pages.length;
+    const now = new Date();
+    const pad = (n) => String(n).padStart(2, "0");
+    const dateStr = `Ngày xuất: ${pad(now.getDate())}/${pad(now.getMonth() + 1)}/${now.getFullYear()} ${pad(now.getHours())}:${pad(now.getMinutes())}`;
+
+    for (let pIdx = 0; pIdx < totalPages; pIdx++) {
+      const pCanvas = pages[pIdx];
+      const pCtx = pCanvas.getContext("2d");
+      pCtx.save();
+      pCtx.strokeStyle = "#e2e8f0";
+      pCtx.lineWidth = 1.5;
+      pCtx.beginPath();
+      pCtx.moveTo(MARGIN_X, PAGE_HEIGHT - 55);
+      pCtx.lineTo(PAGE_WIDTH - MARGIN_X, PAGE_HEIGHT - 55);
+      pCtx.stroke();
+
+      pCtx.font = "12px Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif";
+      pCtx.fillStyle = "#94a3b8";
+      pCtx.textAlign = "left";
+      pCtx.textBaseline = "middle";
+      pCtx.fillText("Tài liệu hướng dẫn nội bộ LeGroup", MARGIN_X, PAGE_HEIGHT - 35);
+
+      pCtx.textAlign = "center";
+      pCtx.fillText(dateStr, PAGE_WIDTH / 2, PAGE_HEIGHT - 35);
+
+      pCtx.font = "bold 12px Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif";
+      pCtx.fillStyle = "#475569";
+      pCtx.textAlign = "right";
+      pCtx.fillText(`Trang ${pIdx + 1} / ${totalPages}`, PAGE_WIDTH - MARGIN_X, PAGE_HEIGHT - 35);
+      pCtx.restore();
+    }
+
+    const pageJpegs = [];
+    for (const pCanvas of pages) {
+      const dataUrl = pCanvas.toDataURL("image/jpeg", 0.92);
+      const bytes = dataUrlToBytes(dataUrl);
+      pageJpegs.push({
+        width: PAGE_WIDTH,
+        height: PAGE_HEIGHT,
+        data: bytes,
+      });
+    }
+
+    return pageJpegs;
+  }
+
+  async function generateGuidePdfBlob(params = {}) {
+    const { section, guide, documentTitle } = params;
+    const pageJpegs = await renderGuideToCanvasPages({ section, guide, documentTitle });
+    const pdfBytes = createPdfBinary(pageJpegs);
+    return (typeof Blob !== "undefined")
+      ? new Blob([pdfBytes], { type: "application/pdf" })
+      : pdfBytes;
+  }
+
+  function downloadBlob(filename, blob, mimeType = "application/pdf") {
+    if (typeof window === "undefined" || typeof document === "undefined") return;
+    const finalBlob = blob instanceof Blob ? blob : new Blob([blob], { type: mimeType });
+    const url = URL.createObjectURL(finalBlob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = filename;
+    link.style.display = "none";
+    document.body.appendChild(link);
+    link.click();
+    setTimeout(() => {
+      URL.revokeObjectURL(url);
+      link.remove();
+    }, 200);
   }
 
   async function exportPdf(params = {}) {
@@ -918,38 +1497,11 @@
       activeSectionId = "safety",
       sourceGuides = null,
       getAuthUrlFn = null,
+      download = true,
     } = params;
 
     const sectionMeta = getSection(activeSectionId || "safety");
     const guideData = collectSectionData(form, sectionMeta.id, sourceGuides);
-
-    let printWin = null;
-    try {
-      printWin = window.open("", "_blank");
-      if (printWin) {
-        printWin.document.open();
-        printWin.document.write(`<!doctype html>
-<html lang="vi">
-<head>
-  <meta charset="utf-8">
-  <title>Đang chuẩn bị in hướng dẫn...</title>
-  <style>
-    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100vh; margin: 0; background: #f8fafc; color: #1e293b; }
-    .spinner { width: 44px; height: 44px; border: 4px solid #cbd5e1; border-top-color: #0b7f87; border-radius: 50%; animation: spin 0.8s linear infinite; margin-bottom: 16px; }
-    @keyframes spin { to { transform: rotate(360deg); } }
-  </style>
-</head>
-<body>
-  <div class="spinner"></div>
-  <h2 style="margin: 0 0 8px; font-size: 1.25rem;">Đang chuẩn bị bản in hướng dẫn...</h2>
-  <p style="margin: 0; color: #64748b; font-size: 0.95rem;">Hệ thống đang chuẩn bị nội dung và ảnh minh họa.</p>
-</body>
-</html>`);
-        printWin.document.close();
-      }
-    } catch (_) {
-      printWin = null;
-    }
 
     try {
       for (const step of guideData.steps || []) {
@@ -968,44 +1520,26 @@
         step.renderedImageDataUrl = renderedImages[0]?.renderedImageDataUrl || "";
       }
 
+      const documentTitle = `Huong_Dan_${slugify(guideData.title || sectionMeta.label)}_LeGroup`;
+
+      if (download) {
+        const pdfBlob = await generateGuidePdfBlob({
+          section: sectionMeta,
+          guide: guideData,
+          documentTitle,
+        });
+
+        downloadBlob(`${documentTitle}.pdf`, pdfBlob);
+        return { success: true, title: documentTitle, blob: pdfBlob };
+      }
+
       const html = buildGuidePdfHtml({
         section: sectionMeta,
         guide: guideData,
-        documentTitle: `Huong_Dan_${slugify(guideData.title || sectionMeta.label)}_LeGroup`,
+        documentTitle,
       });
-
-      if (printWin && !printWin.closed) {
-        printWin.document.open();
-        printWin.document.write(html);
-        printWin.document.close();
-      } else {
-        let iframe = document.getElementById("guide-pdf-print-frame");
-        if (!iframe) {
-          iframe = document.createElement("iframe");
-          iframe.id = "guide-pdf-print-frame";
-          iframe.style.position = "fixed";
-          iframe.style.right = "0";
-          iframe.style.bottom = "0";
-          iframe.style.width = "0";
-          iframe.style.height = "0";
-          iframe.style.border = "0";
-          document.body.appendChild(iframe);
-        }
-        const doc = iframe.contentWindow.document;
-        doc.open();
-        doc.write(html);
-        doc.close();
-      }
-      return true;
+      return { success: true, title: documentTitle, html };
     } catch (err) {
-      if (printWin && !printWin.closed) {
-        try {
-          printWin.document.body.innerHTML = `<div style="padding: 24px; color: #b91c1c; font-family: sans-serif;">
-            <h3>Lỗi khi chuẩn bị in hướng dẫn</h3>
-            <p>${escapeHtml(err?.message || "Đã xảy ra sự cố.")}</p>
-          </div>`;
-        } catch (_) {}
-      }
       throw err;
     }
   }
@@ -1029,6 +1563,9 @@
     renderAnnotatedImageToDataUrl,
     collectSectionData,
     buildGuidePdfHtml,
+    generateGuidePdfBlob,
+    createPdfBinary,
+    downloadBlob,
     exportPdf,
     openExportModal,
   };

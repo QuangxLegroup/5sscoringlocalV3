@@ -2973,17 +2973,69 @@
     return String(left?.name || "").localeCompare(String(right?.name || ""), "vi", { numeric: true, sensitivity: "base" });
   }
 
+  function parseZoneNumberParts(str) {
+    const s = String(str || "").trim();
+    const m = s.match(/(?:zone\s*)?([0-9]+(?:\.[0-9]+)?)/i);
+    if (m) {
+      return m[1].split(".").map(Number);
+    }
+    return null;
+  }
+
   function compareZoneCodesByOrder(left, right) {
-    const codeOrder = String(left?.code || "").localeCompare(String(right?.code || ""), "vi", {
+    const leftCode = String(left?.code || left?.name || left?.textContent || left || "").trim();
+    const rightCode = String(right?.code || right?.name || right?.textContent || right || "").trim();
+    const p1 = parseZoneNumberParts(leftCode);
+    const p2 = parseZoneNumberParts(rightCode);
+    if (p1 && p2) {
+      if (p1[0] !== p2[0]) return p1[0] - p2[0];
+      if (p1[1] !== undefined || p2[1] !== undefined) {
+        return (p1[1] || 0) - (p2[1] || 0);
+      }
+    } else if (p1 && !p2) {
+      return -1;
+    } else if (!p1 && p2) {
+      return 1;
+    }
+    const codeOrder = leftCode.localeCompare(rightCode, "vi", {
       numeric: true,
       sensitivity: "base",
     });
     return codeOrder || (Number(left?.order) || 0) - (Number(right?.order) || 0);
   }
 
+  function sortAreasByDepartmentHeadAndCode(areas = []) {
+    const ordered = [...(Array.isArray(areas) ? areas : [])].sort(
+      (a, b) => (Number(a?.order) || 0) - (Number(b?.order) || 0)
+    );
+    const headGroups = new Map();
+    const blankHeadAreas = [];
+
+    ordered.forEach((area) => {
+      const headKey = String(area?.departmentHead || "").trim().toLowerCase();
+      if (!headKey) {
+        blankHeadAreas.push(area);
+        return;
+      }
+      if (!headGroups.has(headKey)) {
+        headGroups.set(headKey, []);
+      }
+      headGroups.get(headKey).push(area);
+    });
+
+    const result = [];
+    for (const groupAreas of headGroups.values()) {
+      result.push(...groupAreas.sort(compareZoneCodesByOrder));
+    }
+    if (blankHeadAreas.length) {
+      result.push(...blankHeadAreas.sort(compareZoneCodesByOrder));
+    }
+    return result;
+  }
+
   function getPeriodCatalogAreas(type = activeCatalogScope, periodId = getActiveCatalogPeriodId(type)) {
-    return [...getPeriodCatalogArrays(type, periodId).areas]
-      .sort((a, b) => (Number(a.order) || 0) - (Number(b.order) || 0));
+    return sortAreasByDepartmentHeadAndCode(getPeriodCatalogArrays(type, periodId).areas);
+
   }
 
   function getPeriodCatalogManagers(type = activeCatalogScope, periodId = getActiveCatalogPeriodId(type)) {
@@ -3025,7 +3077,7 @@
   }
 
   function getAreas(type = FIVE_S_PERIOD_TYPE) {
-    return [...getCatalogArrays(type).areas].sort((a, b) => (Number(a.order) || 0) - (Number(b.order) || 0));
+    return sortAreasByDepartmentHeadAndCode(getCatalogArrays(type).areas);
   }
 
   function getManagers(type = FIVE_S_PERIOD_TYPE) {
@@ -3347,11 +3399,13 @@
   }
 
   function getAreasForPeriod(periodId) {
+    let areas = [];
     if (shouldUsePeriodSnapshot(periodId)) {
-      return [...getPeriodSnapshot(periodId).areas].sort((a, b) => a.order - b.order);
+      areas = [...(getPeriodSnapshot(periodId)?.areas || [])];
+    } else {
+      areas = getAreas(getCatalogTypeForPeriod(periodId));
     }
-
-    return getAreas(getCatalogTypeForPeriod(periodId));
+    return sortAreasByDepartmentHeadAndCode(areas);
   }
 
   function getManagersForPeriod(periodId) {
@@ -6591,7 +6645,7 @@
       element.hidden = !currentUser;
     });
 
-    document.querySelectorAll(".header-guide-btn, .guide-view-menu-item").forEach((element) => {
+    document.querySelectorAll(".header-guide-btn").forEach((element) => {
       element.hidden = !currentUser || isViewer;
     });
 
@@ -6957,6 +7011,7 @@
       SCORE_SOURCE_AVERAGE,
       SCORE_SOURCE_OPTIONS,
       areaAverage,
+      compareZoneCodesByOrder,
       buildMatrixTable,
       canUseSafety,
       canAddSafetyEvaluation,
@@ -7252,16 +7307,18 @@
         .map((area) => `<option value="${escapeHtml(area.id)}">${escapeHtml(getFiveSAreaOptionLabel(area, fiveSPeriodId))}</option>`)
         .join("");
       elements.assessorAreaSelect.value = areaOptions.some((area) => area.id === current) ? current : areaOptions[0]?.id || "";
+      window.CustomDropdown?.enhance?.(elements.assessorAreaSelect);
     }
 
     if (elements.safetyAreaFilter) {
       const safetyPeriodId = getActivePeriodId(SAFETY_PERIOD_TYPE);
       const current = elements.safetyAreaFilter.value;
-      const periodAreas = getAreasForPeriod(safetyPeriodId).filter(isReportableSafetyArea);
-      elements.safetyAreaFilter.innerHTML = "<option value=\"\">Tất cả zone</option>" + periodAreas
+      const periodAreas = getAreasForPeriod(safetyPeriodId).filter(isReportableSafetyArea).sort(compareZoneCodesByOrder);
+      elements.safetyAreaFilter.innerHTML = "<option value=\"\">Tất cả Zone</option>" + periodAreas
         .map((area) => "<option value=\"" + escapeHtml(area.id) + "\">Zone " + escapeHtml(area.code) + " · " + escapeHtml(getSafetyDepartmentForArea(area, safetyPeriodId)) + "</option>")
         .join("");
       elements.safetyAreaFilter.value = periodAreas.some((area) => area.id === current) ? current : "";
+      window.CustomDropdown?.enhance?.(elements.safetyAreaFilter);
     }
   }
   function populateManagerSelects() {
@@ -7776,13 +7833,14 @@
 
   function populateAdminScoreSheetAreas() {
     const periodId = elements.adminScoreSheetPeriod?.value || "";
-    const areas = getAreasForPeriod(periodId);
+    const areas = getAreasForPeriod(periodId).sort(compareZoneCodesByOrder);
     const selectedAreaId = elements.adminScoreSheetArea?.value || "";
     if (!elements.adminScoreSheetArea) return areas;
     elements.adminScoreSheetArea.innerHTML = areas
       .map((area) => `<option value="${escapeHtml(area.id)}">Zone ${escapeHtml(area.code)} · ${escapeHtml(getAreaResponsibleNameForPeriod(periodId, area))}</option>`)
       .join("");
     elements.adminScoreSheetArea.value = areas.some((area) => area.id === selectedAreaId) ? selectedAreaId : areas[0]?.id || "";
+    window.CustomDropdown?.enhance?.(elements.adminScoreSheetArea);
     return areas;
   }
 
@@ -11235,6 +11293,7 @@
     }
     elements.modalBody.innerHTML = `<form class="modal-form" id="modal-form">${html}</form>`;
     refreshSelectAllStates(elements.modalBody);
+    window.CustomDropdown?.enhanceAll?.(elements.modalBody);
     elements.modalActions.innerHTML = `
       ${extraActions ? `<div class="modal-actions-left">${extraActions}</div>` : ""}
       <div class="modal-actions-right">
@@ -20415,6 +20474,7 @@
             ${guideApi.renderGuide(activeSec, guidesToRender)}
           </div>
           <div class="user-guide-viewer-footer">
+            <button type="button" class="btn-export-pdf-gradient" data-guide-viewer-export-pdf title="Xuất tài liệu hướng dẫn ra file PDF"><i class="fa-solid fa-file-pdf"></i> Xuất PDF</button>
             <button type="button" class="primary-button" data-guide-viewer-close>Đóng</button>
           </div>
         </div>
@@ -20429,6 +20489,41 @@
     backdrop.addEventListener("click", (e) => {
       if (e.target === backdrop || e.target.closest("[data-guide-viewer-close]")) {
         close();
+        return;
+      }
+      const viewerExportBtn = e.target.closest("[data-guide-viewer-export-pdf]");
+      if (viewerExportBtn) {
+        e.preventDefault();
+        e.stopPropagation();
+        const sectionMeta = guideApi?.getSection?.(activeSec);
+        const sectionLabel = sectionMeta?.label || "hướng dẫn";
+        openConfirmModal({
+          title: "Xác nhận xuất PDF",
+          message: `Xuất file PDF hướng dẫn sử dụng phần ${sectionLabel} của trang đang mở?`,
+          confirmText: "Xuất PDF",
+          renderAfter: false,
+          async onConfirm() {
+            if (typeof showToast === "function") {
+              showToast("Đang chuẩn bị và xuất file PDF hướng dẫn...");
+            }
+            try {
+              await guideApi?.exportPdf?.({
+                activeSectionId: activeSec,
+                sourceGuides: guidesToRender,
+                currentUser,
+                getAuthUrlFn: getAuthenticatedPhotoObjectUrl,
+                download: true,
+              });
+              if (typeof showToast === "function") {
+                showToast("Đã tải xuống file PDF hướng dẫn thành công.");
+              }
+            } catch (err) {
+              if (typeof showToast === "function") {
+                showToast(err?.message || "Không thể xuất PDF hướng dẫn. Vui lòng thử lại.", true);
+              }
+            }
+          },
+        });
         return;
       }
       const tabBtn = e.target.closest("[data-guide-view-tab]");
@@ -20672,19 +20767,36 @@
     const triggerExportPdf = () => {
       const activeTabBtn = form?.querySelector("[data-guide-tab].is-active");
       const activeSectionId = activeTabBtn?.dataset.guideTab || "safety";
-      if (typeof showToast === "function") {
-        showToast("Đang chuẩn bị bản in PDF hướng dẫn...");
-      }
-      guideApi?.exportPdf?.({
-        form,
-        activeSectionId,
-        sourceGuides: state.userGuides,
-        currentUser,
-        getAuthUrlFn: getAuthenticatedPhotoObjectUrl,
-      })?.catch?.((err) => {
-        if (typeof showToast === "function") {
-          showToast(err?.message || "Không thể xuất PDF hướng dẫn. Vui lòng thử lại.", true);
-        }
+      const sectionMeta = guideApi?.getSection?.(activeSectionId);
+      const sectionLabel = sectionMeta?.label || "hướng dẫn";
+
+      openConfirmModal({
+        title: "Xác nhận xuất PDF",
+        message: `Xuất file PDF hướng dẫn sử dụng phần ${sectionLabel} của trang đang mở?`,
+        confirmText: "Xuất PDF",
+        renderAfter: false,
+        async onConfirm() {
+          if (typeof showToast === "function") {
+            showToast("Đang chuẩn bị và xuất file PDF hướng dẫn...");
+          }
+          try {
+            await guideApi?.exportPdf?.({
+              form,
+              activeSectionId,
+              sourceGuides: state.userGuides,
+              currentUser,
+              getAuthUrlFn: getAuthenticatedPhotoObjectUrl,
+              download: true,
+            });
+            if (typeof showToast === "function") {
+              showToast("Đã tải xuống file PDF hướng dẫn thành công.");
+            }
+          } catch (err) {
+            if (typeof showToast === "function") {
+              showToast(err?.message || "Không thể xuất PDF hướng dẫn. Vui lòng thử lại.", true);
+            }
+          }
+        },
       });
     };
 

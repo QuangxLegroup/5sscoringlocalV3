@@ -233,6 +233,57 @@ test("CSS and annotator allow text tool clicks and show popover on top", () => {
   );
 });
 
+test("PDF export generates valid PDF binary without auto-printing and confirms via openConfirmModal", async () => {
+  const code = fs.readFileSync("modules/pages/user-guide-content.js", "utf8");
+
+  const mockWindow = {
+    crypto: { randomUUID: () => "test-uuid-pdf" },
+  };
+
+  const context = vm.createContext({
+    window: mockWindow,
+    globalThis: mockWindow,
+    URL: {
+      createObjectURL: () => "blob:mock-pdf",
+      revokeObjectURL: () => {},
+    },
+  });
+
+  vm.runInContext(code, context);
+  const guideApi = mockWindow.UserGuideContent;
+
+  assert.equal(typeof guideApi.createPdfBinary, "function", "createPdfBinary is exported");
+  assert.equal(typeof guideApi.generateGuidePdfBlob, "function", "generateGuidePdfBlob is exported");
+  assert.equal(typeof guideApi.downloadBlob, "function", "downloadBlob is exported");
+
+  // Verify createPdfBinary output
+  const dummyPages = [
+    { width: 1240, height: 1754, data: new Uint8Array([0xff, 0xd8, 0xff, 0xd9]) },
+  ];
+  const pdfBytes = guideApi.createPdfBinary(dummyPages);
+  assert.ok(pdfBytes && pdfBytes.constructor.name === "Uint8Array", "Returns Uint8Array");
+  const pdfString = Buffer.from(pdfBytes).toString("utf-8");
+  assert.ok(pdfString.startsWith("%PDF-1.4"), "Has standard PDF-1.4 header");
+  assert.ok(pdfString.includes("/Type /Catalog"), "Has Catalog");
+  assert.ok(pdfString.includes("/Type /Pages"), "Has Pages");
+  assert.ok(pdfString.includes("/Filter /DCTDecode"), "Uses JPEG DCTDecode");
+  assert.ok(pdfString.includes("%%EOF"), "Has EOF marker");
+
+  // Verify app.js wires openConfirmModal for PDF export
+  const appJs = fs.readFileSync("app.js", "utf8");
+  assert.ok(
+    appJs.includes('title: "Xác nhận xuất PDF"') &&
+    appJs.includes('confirmText: "Xuất PDF"') &&
+    appJs.includes("Xuất file PDF hướng dẫn sử dụng phần"),
+    "app.js must show confirmation modal for PDF export with 'Xác nhận xuất PDF' and 'Xuất PDF'"
+  );
+  assert.ok(
+    appJs.includes("data-guide-viewer-export-pdf"),
+    "User guide viewer modal includes export PDF button"
+  );
+});
+
+
 
 
 
