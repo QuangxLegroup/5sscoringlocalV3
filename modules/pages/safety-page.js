@@ -21,11 +21,17 @@
   const HIDDEN_SAFETY_ZONE_CODES = new Set(["27"]);
   const COUNTERMEASURE_STATUS_VALUES = new Set(["closed", "in_progress"]);
   const SAFETY_REPORT_HIDDEN_CLASS = "safety-report-hidden";
-  const SAFETY_DETAIL_PAGE_SIZE = 30;
+  const SAFETY_DETAIL_PAGE_SIZE = 25;
   const safetyPagination = {
     assessment: { key: "", page: 1 },
     factory: { key: "", page: 1 },
   };
+  const dashboardDetailRegistry = new Map();
+  const dashboardPhotoRegistry = new Map();
+  let activeDashboardDetailId = "";
+  let activeDashboardDetailPage = 1;
+  let activeDashboardDetailQuery = "";
+  let dashboardPhotoSequence = 0;
   let activeFactoryTab = "overview";
   let activeDepartmentChartView = "stacked";
 
@@ -75,11 +81,10 @@
       return "";
     }
     const { escapeHtml } = context;
-    const start = pagination.startIndex + 1;
-    const end = pagination.endIndex;
+    const currentCount = pagination.endIndex - pagination.startIndex;
     return '<div class="safety-table-pager" data-safety-pager="' + escapeHtml(type) + '">' +
       '<button class="tiny-button" type="button" data-action="set-safety-detail-page" data-page-type="' + escapeHtml(type) + '" data-page="' + escapeHtml(String(pagination.page - 1)) + '" ' + (pagination.page <= 1 ? "disabled" : "") + '>Trước</button>' +
-      '<span>Hiển thị ' + escapeHtml(start) + '-' + escapeHtml(end) + ' / ' + escapeHtml(totalRows) + ' vấn đề · Trang ' + escapeHtml(pagination.page) + '/' + escapeHtml(pagination.totalPages) + '</span>' +
+      '<span>' + escapeHtml(currentCount) + '/' + escapeHtml(totalRows) + ' · Trang ' + escapeHtml(pagination.page) + '/' + escapeHtml(pagination.totalPages) + '</span>' +
       '<button class="tiny-button" type="button" data-action="set-safety-detail-page" data-page-type="' + escapeHtml(type) + '" data-page="' + escapeHtml(String(pagination.page + 1)) + '" ' + (pagination.page >= pagination.totalPages ? "disabled" : "") + '>Sau</button>' +
     '</div>';
   }
@@ -199,7 +204,7 @@
 
   function setSafetyToolbarMode(reportId, context) {
     const { elements } = context;
-    const toolbar = elements.safetyPeriodSelect?.closest?.(".safety-toolbar");
+    const toolbar = elements.safetyYearFilter?.closest?.(".safety-toolbar");
     if (toolbar) {
       toolbar.hidden = !reportId;
     }
@@ -207,7 +212,6 @@
     const isAssessment = reportId === "assessment";
     const isIdentification = reportId === "identification";
     const isFactory = reportId === "factory";
-    setFieldVisible(elements.safetyPeriodSelect, isAssessment);
     setFieldVisible(elements.safetyYearFilter, Boolean(reportId));
     setFieldVisible(elements.safetyMonthFilter, isAssessment || isIdentification);
     setFieldVisible(elements.safetyAreaFilter, isAssessment);
@@ -218,10 +222,27 @@
         (context.ISSUE_STATUS_OPTIONS || []).map((option) => `<option value="${context.escapeHtml(option.value)}">${context.escapeHtml(option.label)}</option>`).join("");
       elements.safetyStatusFilter.value = (context.ISSUE_STATUS_OPTIONS || []).some((option) => option.value === selected) ? selected : "";
     }
+    setFieldVisible(elements.safetySourceFilter, isAssessment);
+    if (elements.safetySourceFilter) {
+      const selectedSource = elements.safetySourceFilter.value || "";
+      const sourceOptions = [
+        { value: "", label: "Tất cả nguồn phát hiện" },
+        ...(context.SAFETY_FOUND_OPTIONS || [
+          { value: "worker", label: "Công nhân" },
+          { value: "department-head", label: "Trưởng bộ phận" },
+          { value: "assessor", label: "Assessor" },
+          { value: "at5s", label: "Ban AT - 5S" },
+        ]).filter((opt) => opt.value),
+      ];
+      elements.safetySourceFilter.innerHTML = sourceOptions
+        .map((opt) => `<option value="${context.escapeHtml(opt.value)}">${context.escapeHtml(opt.label)}</option>`)
+        .join("");
+      elements.safetySourceFilter.value = sourceOptions.some((opt) => opt.value === selectedSource) ? selectedSource : "";
+    }
     setFieldVisible(elements.safetyDepartmentFilter, false);
 
     const isAdmin = Boolean(context.isAdminAccount?.(context.currentUser));
-    const activePeriodId = elements.safetyPeriodSelect?.value || context.getActivePeriodId(context.SAFETY_PERIOD_TYPE) || "";
+    const activePeriodId = context.getActivePeriodId(context.SAFETY_PERIOD_TYPE) || "";
     const isPeriodOpen = Boolean(activePeriodId && !context.isPeriodArchived(activePeriodId, context.SAFETY_PERIOD_TYPE) && (typeof context.isPeriodOpen === "function" ? context.isPeriodOpen(activePeriodId, context.SAFETY_PERIOD_TYPE) : activePeriodId === context.getActivePeriodId(context.SAFETY_PERIOD_TYPE)));
     const canAdd = isAssessment && isPeriodOpen
       && (context.canAddSafetyEvaluation?.(context.currentUser) ?? context.canUseSafety(context.currentUser));
@@ -239,7 +260,7 @@
       elements.exportSafetyExcelButton.classList.remove("admin-only");
     }
     setButtonVisible(elements.exportSafetyExcelButton, canShowExport, context);
-    const safetyToolbar = elements.safetyPeriodSelect?.closest?.(".safety-toolbar");
+    const safetyToolbar = elements.safetyYearFilter?.closest?.(".safety-toolbar");
     if (safetyToolbar) {
       safetyToolbar.querySelectorAll('[data-action="import-page-json"], [data-action="export-page-json"]').forEach((btn) => {
         btn.classList.toggle(SAFETY_REPORT_HIDDEN_CLASS, !isAssessment);
@@ -262,8 +283,8 @@
     const isAdmin = Boolean(isAdminAccount?.(currentUser));
     const usesAdminViewScope = context.activeSafetyReport === "assessment" || context.activeSafetyReport === "identification" || context.activeSafetyReport === "factory";
     const areaId = context.activeSafetyReport === "assessment" ? elements.safetyAreaFilter?.value || "" : "";
-    const openYear = Number(period?.year) || new Date().getFullYear();
-    const openMonth = Number(period?.month) || new Date().getMonth() + 1;
+    const openYear = new Date().getFullYear();
+    const openMonth = new Date().getMonth() + 1;
 
     let years = typeof getSafetyFilterYears === "function" ? getSafetyFilterYears({ areaId }) : [];
     if (!isAdmin && !usesAdminViewScope) {
@@ -294,7 +315,7 @@
     }
 
     if (elements.safetyMonthFilter) {
-      const visibleMonths = !isAdmin && !usesAdminViewScope ? [openMonth] : months;
+      const visibleMonths = !isAdmin && !usesAdminViewScope ? [openMonth] : months.length ? months : [openMonth];
       elements.safetyMonthFilter.innerHTML = visibleMonths.length
         ? visibleMonths
           .map((month) => `<option value="${month}" ${month === selectedMonth ? "selected" : ""}>Tháng ${month}</option>`)
@@ -547,6 +568,7 @@
     const workerRows = monthRows.filter((row) => isSafetyFoundSelected(row.score, "worker"));
     const departmentHeadRows = monthRows.filter((row) => isSafetyFoundSelected(row.score, "department-head"));
     const assessorRows = monthRows.filter((row) => isSafetyFoundSelected(row.score, "assessor"));
+    const at5sRows = monthRows.filter((row) => isSafetyFoundSelected(row.score, "at5s"));
     const updateText = "Update Ngày: " + new Date().toLocaleDateString("vi-VN");
 
     function renderHeaderActionCell(label, action, area, title) {
@@ -600,6 +622,7 @@
       { label: "Công nhân phát hiện", css: "risk-green-section", rows: workerRows },
       { label: "Tổ trưởng phát hiện", css: "risk-peach-section", rows: departmentHeadRows },
       { label: "Assessor phát hiện", css: "risk-white-section", rows: assessorRows },
+      { label: "Ban AT - 5S phát hiện", css: "risk-peach-section", rows: at5sRows },
     ];
     const updateRowSpan = SAFETY_STOP6_COLUMNS.length * sourceSections.length;
     const sectionRows = sourceSections.map((section, sectionIndex) => SAFETY_STOP6_COLUMNS.map((column, rowIndex) => {
@@ -707,6 +730,281 @@
         total: monthly.reduce((sum, value) => sum + value, 0),
       };
     });
+  }
+
+  function renderDonutDashboard({ id, scope, title, subtitle, entries, context }) {
+    const escapeHtml = context.escapeHtml;
+    const total = entries.reduce((sum, entry) => sum + entry.count, 0);
+    const radius = 64;
+    const strokeWidth = 20;
+    const circumference = 2 * Math.PI * radius;
+    const activeSegmentCount = entries.filter((entry) => entry.count > 0).length;
+    const separators = [];
+    let offset = 0;
+    const segments = total ? entries.map((entry) => {
+        if (!entry.count) return "";
+        const segmentLength = (entry.count / total) * circumference;
+        const detailId = `${id}-${entry.value}`;
+        dashboardDetailRegistry.set(detailId, {
+          id: detailId,
+          scope,
+          title: `${entry.label} · ${subtitle}`,
+          label: entry.label,
+          rows: entry.rows,
+          context,
+          periodLabel: subtitle,
+        });
+        const circle = `<circle class="safety-donut-segment" cx="90" cy="90" r="${radius}" fill="none" stroke="${escapeHtml(entry.color)}" stroke-width="${strokeWidth}" stroke-dasharray="${segmentLength.toFixed(2)} ${(circumference - segmentLength).toFixed(2)}" stroke-dashoffset="${(-offset).toFixed(2)}" transform="rotate(-90 90 90)" role="button" tabindex="0" aria-label="${escapeHtml(entry.label)}: ${escapeHtml(countCell(entry.count))}" data-safety-dashboard-detail="${escapeHtml(detailId)}"><title>${escapeHtml(entry.label)}: ${escapeHtml(countCell(entry.count))}</title></circle>`;
+        offset += segmentLength;
+        const angle = -Math.PI / 2 + offset / radius;
+        const innerRadius = radius - strokeWidth / 2;
+        const outerRadius = radius + strokeWidth / 2;
+        const innerX = 90 + Math.cos(angle) * innerRadius;
+        const innerY = 90 + Math.sin(angle) * innerRadius;
+        const outerX = 90 + Math.cos(angle) * outerRadius;
+        const outerY = 90 + Math.sin(angle) * outerRadius;
+        if (activeSegmentCount > 1) {
+          separators.push(`<path class="safety-donut-separator" d="M ${innerX.toFixed(2)} ${innerY.toFixed(2)} L ${outerX.toFixed(2)} ${outerY.toFixed(2)}"></path>`);
+        }
+        return circle;
+      }).join("") : "";
+    const ring = total
+      ? `<circle class="safety-donut-track" cx="90" cy="90" r="${radius}" fill="none" stroke-width="${strokeWidth}"></circle>${segments}${separators.join("")}`
+      : `<circle class="safety-donut-track" cx="90" cy="90" r="${radius}" fill="none" stroke-width="${strokeWidth}"></circle>`;
+
+    const legend = entries.map((entry) => {
+      const detailId = `${id}-${entry.value}`;
+      const percent = total ? Math.round((entry.count / total) * 100) : 0;
+      dashboardDetailRegistry.set(detailId, {
+        id: detailId,
+        scope,
+        title: `${entry.label} · ${subtitle}`,
+        label: entry.label,
+        rows: entry.rows,
+        context,
+        periodLabel: subtitle,
+      });
+      const isZero = entry.count === 0;
+      return `<button class="safety-donut-legend-item ${isZero ? "is-zero-count" : "is-has-count"}" type="button" data-safety-dashboard-detail="${escapeHtml(detailId)}" title="Bấm để xem danh sách: ${escapeHtml(entry.label)} (${escapeHtml(countCell(entry.count))})">
+        <span class="donut-legend-bullet" style="--donut-color:${escapeHtml(entry.color)}"></span>
+        <div class="donut-legend-info">
+          <div class="donut-legend-meta">
+            <span class="donut-legend-name" title="${escapeHtml(entry.label)}">${escapeHtml(entry.label)}</span>
+            <div class="donut-legend-numbers">
+              <strong class="donut-legend-val">${escapeHtml(countCell(entry.count))}</strong>
+              <small class="donut-legend-pct">${percent}%</small>
+            </div>
+          </div>
+          <div class="donut-legend-bar-track">
+            <div class="donut-legend-bar-fill" style="width: ${percent}%; background-color: ${escapeHtml(entry.color)};"></div>
+          </div>
+        </div>
+      </button>`;
+    }).join("");
+
+    const cardIcons = {
+      rank: { icon: "fa-solid fa-ranking-star", class: "is-rank" },
+      department: { icon: "fa-solid fa-building-user", class: "is-dept" },
+      status: { icon: "fa-solid fa-chart-pie", class: "is-status" },
+      stop6: { icon: "fa-solid fa-triangle-exclamation", class: "is-stop6" },
+    };
+    const cardKey = id.endsWith("-stop6")
+      ? "stop6"
+      : id.endsWith("-department")
+        ? "department"
+        : id.endsWith("-rank")
+          ? "rank"
+          : id.endsWith("-status") ? "status" : "default";
+    const iconMeta = cardIcons[cardKey] || { icon: "fa-solid fa-chart-simple", class: "is-default" };
+
+    const dashboardTypeClass = id.endsWith("-stop6")
+      ? " is-stop6-dashboard"
+      : id.endsWith("-department")
+        ? " is-department-dashboard"
+        : id.endsWith("-rank")
+          ? " is-rank-dashboard"
+          : id.endsWith("-status") ? " is-status-dashboard" : "";
+    return `<section class="safety-donut-dashboard${dashboardTypeClass}" aria-label="${escapeHtml(title)}">
+      <header class="safety-donut-dashboard-header">
+        <div class="donut-header-left">
+          <div class="donut-header-icon ${iconMeta.class}">
+            <i class="${iconMeta.icon}"></i>
+          </div>
+          <div class="donut-header-titles">
+            <h3>${escapeHtml(title)}</h3>
+            <span><i class="fa-regular fa-calendar"></i> ${escapeHtml(subtitle)}</span>
+          </div>
+        </div>
+        <div class="donut-header-right">
+          <span class="donut-card-badge"><i class="fa-solid fa-cubes-stacked"></i> ${escapeHtml(countCell(total))} vấn đề</span>
+        </div>
+      </header>
+      <div class="safety-donut-dashboard-content">
+        <div class="safety-donut-visual">
+          <svg viewBox="0 0 180 180" role="img" aria-label="${escapeHtml(title)}: ${escapeHtml(countCell(total))} vấn đề">
+            <circle class="safety-donut-inner-card" cx="90" cy="90" r="48"></circle>
+            ${ring}
+            <text x="90" y="83" class="safety-donut-total">${escapeHtml(countCell(total))}</text>
+            <text x="90" y="103" class="safety-donut-total-label">VẤN ĐỀ</text>
+          </svg>
+        </div>
+        <div class="safety-donut-legend">${legend}</div>
+      </div>
+      <footer class="safety-donut-card-footer">
+        <span><i class="fa-solid fa-arrow-pointer"></i> Nhấp vào mục hoặc biểu đồ để xem chi tiết</span>
+      </footer>
+    </section>`;
+  }
+
+  function renderSafetyDashboardIssueList(detail, context) {
+    const escapeHtml = context.escapeHtml;
+    const sortedRows = [...detail.rows].sort((a, b) => {
+      const dateA = context.getSafetyRecordIssueDate(a.score, context.getPeriod(a.score.periodId)) || "";
+      const dateB = context.getSafetyRecordIssueDate(b.score, context.getPeriod(b.score.periodId)) || "";
+      return dateB.localeCompare(dateA);
+    });
+    const query = activeDashboardDetailQuery.trim().toLocaleLowerCase("vi");
+    const filteredRows = query ? sortedRows.filter((row) => {
+      const issueDate = context.getSafetyRecordIssueDate(row.score, context.getPeriod(row.score.periodId));
+      const stop6 = context.SAFETY_STOP6_COLUMNS.filter((column) => context.isSafetyStop6Selected(row.score, column.value)).map((column) => `${column.value.split("-")[0]} - ${column.label}`).join(", ");
+      const rank = context.SAFETY_LEVEL_COLUMNS.filter((column) => context.isSafetyLevelSelected(row.score, column.value)).map((column) => `Rank ${column.value}`).join(", ");
+      const statusLabel = context.getIssueStatusLabel(row.score.issueStatus);
+      const searchable = [row.area.code, context.formatDateDisplay(issueDate), context.getIssueLocation(row), row.score.note, context.getIssueDescription(row), stop6, rank, statusLabel, context.getIssueCount(row)].join(" ").toLocaleLowerCase("vi");
+      return searchable.includes(query);
+    }) : sortedRows;
+    const pageSize = SAFETY_DETAIL_PAGE_SIZE;
+    const totalPages = Math.max(1, Math.ceil(filteredRows.length / pageSize));
+    activeDashboardDetailPage = Math.min(Math.max(activeDashboardDetailPage, 1), totalPages);
+    const startIndex = (activeDashboardDetailPage - 1) * pageSize;
+    const pageRows = filteredRows.slice(startIndex, startIndex + pageSize);
+    const body = pageRows.length ? pageRows.map((row, index) => {
+      const issueDate = context.getSafetyRecordIssueDate(row.score, context.getPeriod(row.score.periodId));
+      const stop6 = context.SAFETY_STOP6_COLUMNS.filter((column) => context.isSafetyStop6Selected(row.score, column.value)).map((column) => `${column.value.split("-")[0]} - ${column.label}`).join(", ") || "Chưa phân loại";
+      const rank = context.SAFETY_LEVEL_COLUMNS.filter((column) => context.isSafetyLevelSelected(row.score, column.value)).map((column) => `Rank ${column.value}`).join(", ") || "Chưa phân loại";
+      const status = context.normalizeIssueStatus?.(row.score.issueStatus) || "open";
+      const statusLabel = context.getIssueStatusLabel(row.score.issueStatus);
+      const photoUrl = row.score.photoDataUrl;
+      const photoId = photoUrl ? `dashboard-photo-${++dashboardPhotoSequence}` : "";
+      if (photoUrl) dashboardPhotoRegistry.set(photoId, { url: photoUrl, label: "Ảnh minh chứng" });
+      const photoCell = photoUrl
+        ? `<button type="button" class="safety-dashboard-photo-link" data-safety-dashboard-photo="${photoId}">Xem ảnh</button>`
+        : `<span class="safety-dashboard-no-photo">Không có ảnh</span>`;
+      return `<tr><td>${startIndex + index + 1}</td><td>Zone ${escapeHtml(row.area.code)}</td><td>${escapeHtml(context.formatDateDisplay(issueDate))}</td><td>${escapeHtml(context.getIssueLocation(row))}</td><td>${photoCell}</td><td>${escapeHtml(row.score.note || context.getIssueDescription(row))}</td><td>${escapeHtml(stop6)}</td><td>${escapeHtml(rank)}</td><td><span class="safety-dashboard-status-pill is-${escapeHtml(status)}">${escapeHtml(statusLabel)}</span></td><td>${escapeHtml(context.getIssueCount(row))}</td></tr>`;
+    }).join("") : `<tr><td colspan="10" class="empty-cell">${query ? "Không có vấn đề phù hợp với từ khóa." : "Không có vấn đề thuộc nhóm này."}</td></tr>`;
+    const pager = `<div class="safety-dashboard-detail-pager"><button type="button" data-safety-dashboard-page="${activeDashboardDetailPage - 1}" ${activeDashboardDetailPage <= 1 ? "disabled" : ""}>Trước</button><span>${pageRows.length}/${filteredRows.length} · Trang ${activeDashboardDetailPage}/${totalPages}</span><button type="button" data-safety-dashboard-page="${activeDashboardDetailPage + 1}" ${activeDashboardDetailPage >= totalPages ? "disabled" : ""}>Sau</button></div>`;
+    return `<div class="safety-dashboard-modal-content"><div class="safety-dashboard-popup-toolbar"><label class="safety-dashboard-search"><span aria-hidden="true">⌕</span><input type="search" data-safety-dashboard-search value="${escapeHtml(activeDashboardDetailQuery)}" placeholder="Tìm theo zone, vị trí, vấn đề..." aria-label="Tìm kiếm vấn đề"></label><span class="safety-dashboard-popup-summary">${escapeHtml(countCell(filteredRows.length))} vấn đề · ${escapeHtml(detail.periodLabel)}</span></div>${filteredRows.length > pageSize ? pager : ""}<div class="safety-dashboard-issue-table-wrap"><table class="safety-dashboard-issues-table"><thead><tr><th>No</th><th>Zone</th><th>Ngày phát hiện</th><th>Vị trí</th><th>Ảnh minh chứng</th><th>Vấn đề an toàn</th><th>STOP 6</th><th>Rank</th><th>Trạng thái</th><th>Số lần</th></tr></thead><tbody>${body}</tbody></table></div>${pager}</div>`;
+  }
+
+  function refreshActiveDashboardDetail(focusSearch = false) {
+    const detail = dashboardDetailRegistry.get(activeDashboardDetailId);
+    if (!detail) return;
+    const content = document.querySelector("#modal-body .safety-dashboard-modal-content");
+    if (!content) return;
+    content.outerHTML = renderSafetyDashboardIssueList(detail, detail.context);
+    const search = focusSearch ? document.querySelector("#modal-body [data-safety-dashboard-search]") : null;
+    if (search) {
+      search.focus();
+      search.setSelectionRange(search.value.length, search.value.length);
+    }
+  }
+
+  function openSafetyDashboardDetail(detailId) {
+    const detail = dashboardDetailRegistry.get(detailId);
+    if (!detail) return;
+    activeDashboardDetailId = detailId;
+    activeDashboardDetailPage = 1;
+    activeDashboardDetailQuery = "";
+    detail.context.openFormModal({
+      title: detail.title,
+      html: renderSafetyDashboardIssueList(detail, detail.context),
+      submitText: "Đóng",
+      submitClass: "secondary-button",
+      modalClass: "safety-dashboard-popup",
+      autoFocus: false,
+      isDraftDirty: () => false,
+      onSubmit() { return true; },
+    });
+  }
+
+  function renderSafetyDashboardDonuts(rows, year, month, scope, context, options = {}) {
+    dashboardDetailRegistry.clear();
+    dashboardPhotoRegistry.clear();
+    activeDashboardDetailId = "";
+    activeDashboardDetailPage = 1;
+    activeDashboardDetailQuery = "";
+    const day = Number(options.day) || 0;
+    const suffix = `${year}${month ? `-${String(month).padStart(2, "0")}` : ""}${day ? `-${String(day).padStart(2, "0")}` : ""}`;
+    const periodLabel = options.periodLabel || (day
+      ? `Ngày ${String(day).padStart(2, "0")}/${String(month).padStart(2, "0")}/${year}`
+      : month ? `Tháng ${month}/${year}` : `Năm ${year}`);
+    const rankDefinitions = [
+      { value: "A", label: "Rank A", color: "#f43f5e" },
+      { value: "B", label: "Rank B", color: "#f59e0b" },
+      { value: "C", label: "Rank C", color: "#10b981" },
+    ];
+    const ranks = rankDefinitions.map((definition) => {
+      const matched = rows.filter((row) => context.isSafetyLevelSelected(row.score, definition.value));
+      return { ...definition, rows: matched, count: sumIssueCounts(matched, context) };
+    });
+    const statusDefinitions = [
+      { value: "closed", label: "Đã xử lý", color: "#10b981" },
+      { value: "in_progress", label: "Đang xử lý", color: "#3b82f6" },
+      { value: "open", label: "Chưa xử lý", color: "#f59e0b" },
+      { value: "overdue", label: "Quá hạn", color: "#ef4444" },
+    ];
+    const statuses = statusDefinitions.map((definition) => {
+      const matched = rows.filter((row) => issueStatusOf(row, context) === definition.value);
+      return { ...definition, rows: matched, count: sumIssueCounts(matched, context) };
+    });
+    const modernStop6Colors = ["#3b82f6", "#ef4444", "#10b981", "#8b5cf6", "#06b6d4", "#f97316", "#64748b"];
+    const stops = context.SAFETY_STOP6_COLUMNS.map((column, index) => {
+      const matched = rows.filter((row) => context.isSafetyStop6Selected(row.score, column.value));
+      return {
+        value: column.value,
+        label: `${column.value.split("-")[0]} - ${column.label}`,
+        color: modernStop6Colors[index % modernStop6Colors.length],
+        rows: matched,
+        count: sumIssueCounts(matched, context),
+      };
+    });
+    const departmentPeriodIds = new Set(rows.map((row) => row.score.periodId).filter(Boolean));
+    const departmentPeriods = context.getPeriodsByType?.(context.SAFETY_PERIOD_TYPE) || [];
+    departmentPeriods
+      .filter((period) => Number(period.year) === Number(year) && (!month || Number(period.month) === Number(month)))
+      .forEach((period) => departmentPeriodIds.add(period.id));
+    if (!departmentPeriodIds.size && scope !== "statistics") {
+      const activeSafetyPeriodId = context.getActivePeriodId?.(context.SAFETY_PERIOD_TYPE);
+      if (activeSafetyPeriodId) departmentPeriodIds.add(activeSafetyPeriodId);
+    }
+    const departmentRows = new Map();
+    departmentPeriodIds.forEach((periodId) => {
+      (context.getSafetyDepartmentGroups(periodId) || []).forEach((group) => {
+        const department = String(group.name || "").trim();
+        if (department && !departmentRows.has(department)) departmentRows.set(department, []);
+      });
+    });
+    rows.forEach((row) => {
+      const department = String(context.getSafetyDepartmentForArea(row.area, row.score.periodId) || "").trim() || "Chưa phân bộ phận";
+      if (!departmentRows.has(department)) departmentRows.set(department, []);
+      departmentRows.get(department).push(row);
+    });
+    const modernDepartmentColors = [
+      "#3b82f6", "#ef4444", "#10b981", "#f59e0b", "#8b5cf6", "#06b6d4",
+      "#ec4899", "#14b8a6", "#f97316", "#6366f1", "#84cc16", "#a855f7",
+      "#0ea5e9", "#e11d48", "#d97706"
+    ];
+    const departments = [...departmentRows.entries()]
+      .map(([label, departmentIssues]) => ({ label, value: label, rows: departmentIssues, count: sumIssueCounts(departmentIssues, context) }))
+      .sort((a, b) => b.count - a.count || a.label.localeCompare(b.label, "vi"))
+      .map((entry, index) => ({ ...entry, color: modernDepartmentColors[index % modernDepartmentColors.length] }));
+    const key = scope === "factory" ? "annual" : scope === "statistics" ? "statistics" : "monthly";
+    const content = `<div class="safety-donut-dashboard-grid">
+      ${renderDonutDashboard({ id: `${key}-${suffix}-rank`, scope, title: "Nguy cơ theo Rank", subtitle: periodLabel, entries: ranks, context })}
+      ${renderDonutDashboard({ id: `${key}-${suffix}-department`, scope, title: "Nguy cơ theo bộ phận", subtitle: periodLabel, entries: departments, context })}
+      ${renderDonutDashboard({ id: `${key}-${suffix}-status`, scope, title: "Trạng thái đối sách", subtitle: periodLabel, entries: statuses, context })}
+      ${renderDonutDashboard({ id: `${key}-${suffix}-stop6`, scope, title: "Nguy cơ STOP 6", subtitle: periodLabel, entries: stops, context })}
+    </div>`;
+    return content;
   }
 
   function renderGroupedColumnChart(series, config, context) {
@@ -1149,7 +1447,7 @@
       : canEdit;
     const statusLabel = getIssueStatusLabel ? getIssueStatusLabel(row.score.issueStatus) : (isIssueOpen(row.score) ? "Chưa xử lý" : "Đã xử lý");
     const completionDate = getCompletionDateDisplay(row.score);
-    const actions = canEditCountermeasure
+    const actions = canEdit || canEditCountermeasure
       ? `<div class="safety-actions">
           <button class="tiny-button" type="button" data-action="edit-safety-record" data-id="${escapeHtml(row.score.id)}">${canEdit ? "Sửa" : "Sửa xử lý"}</button>
           ${canEdit ? `<button class="tiny-button danger-text-button" type="button" data-action="delete-safety-record" data-id="${escapeHtml(row.score.id)}">Xóa</button>` : ""}
@@ -1200,22 +1498,22 @@
     return `
       <colgroup>
         <col style="width: 58px"><col style="width: 110px"><col style="width: 120px"><col style="width: 50px"><col style="width: 50px"><col style="width: 280px"><col style="width: 170px"><col style="width: 74px">
-        ${Array.from({ length: 13 }, () => '<col style="width: 36px">').join("")}
+        ${Array.from({ length: 14 }, () => '<col style="width: 36px">').join("")}
         <col style="width: 110px"><col style="width: 260px"><col style="width: 170px"><col style="width: 120px"><col style="width: 120px"><col style="width: 92px"><col style="width: 150px"><col style="width: 150px">
       </colgroup>
       <thead>
         <tr class="safety-form-top">
           <th class="safety-logo-cell" colspan="4" rowspan="2"><img src="images/Logo.jpg" alt="LeGroup"></th>
-          <th class="safety-title-cell" colspan="19" rowspan="2"><strong>BẢNG THEO DÕI NHẬN DẠNG NGUY HIỂM VÀ KHẮC PHỤC</strong><span>HAZARD IDENTIFICATION &amp; ACTIVITY FOLLOW UP SHEET</span></th>
+          <th class="safety-title-cell" colspan="20" rowspan="2"><strong>BẢNG THEO DÕI NHẬN DẠNG NGUY HIỂM VÀ KHẮC PHỤC</strong><span>HAZARD IDENTIFICATION &amp; ACTIVITY FOLLOW UP SHEET</span></th>
           <th class="safety-date-label" colspan="3">Issue Date</th><th class="safety-date-value" colspan="3">${escapeHtml(issueDate)}</th>
         </tr>
         <tr class="safety-form-top"><th class="safety-date-label" colspan="3">Report date</th><th class="safety-date-value" colspan="3">${escapeHtml(reportDate)}</th></tr>
-        <tr class="safety-meta-row"><td colspan="7"><span>Người Thực Hiện:</span> ${escapeHtml(report.performer)}</td><td colspan="5"><span>Người Kiểm Tra:</span></td><td colspan="17"><strong>${escapeHtml(report.checker)}</strong></td></tr>
-        <tr class="safety-meta-row"><td colspan="7"><span>Chức Danh:</span> ${escapeHtml(report.performerTitle || "")}</td><td colspan="5"><span>Chức Danh:</span> ${escapeHtml(report.checkerTitle || "")}</td><td colspan="17"></td></tr>
-        <tr class="safety-meta-row"><td colspan="7"><span>Bộ Phận:</span> ${escapeHtml(report.department || "")}</td><td colspan="5"><span>Bộ Phận:</span> ${escapeHtml(report.checkerDepartment || "")}</td><td colspan="17"></td></tr>
+        <tr class="safety-meta-row"><td colspan="7"><span>Người Thực Hiện:</span> ${escapeHtml(report.performer)}</td><td colspan="5"><span>Người Kiểm Tra:</span></td><td colspan="18"><strong>${escapeHtml(report.checker)}</strong></td></tr>
+        <tr class="safety-meta-row"><td colspan="7"><span>Chức Danh:</span> ${escapeHtml(report.performerTitle || "")}</td><td colspan="5"><span>Chức Danh:</span> ${escapeHtml(report.checkerTitle || "")}</td><td colspan="18"></td></tr>
+        <tr class="safety-meta-row"><td colspan="7"><span>Bộ Phận:</span> ${escapeHtml(report.department || "")}</td><td colspan="5"><span>Bộ Phận:</span> ${escapeHtml(report.checkerDepartment || "")}</td><td colspan="18"></td></tr>
         <tr class="safety-main-header">
           <th rowspan="3">No</th><th rowspan="3">Trạng thái</th><th rowspan="3">Vị trí</th><th rowspan="3">Ngày</th><th rowspan="3">Tháng</th><th rowspan="3">Mối nguy hiểm phát hiện được</th><th rowspan="3">Hình Ảnh Minh Họa</th><th rowspan="3">Số lần phát hiện</th>
-          <th colspan="13">${escapeHtml(report.instruction || DEFAULT_SAFETY_REPORT.instruction)}</th>
+          <th colspan="14">${escapeHtml(report.instruction || DEFAULT_SAFETY_REPORT.instruction)}</th>
           <th rowspan="3">Mã nhân viên</th><th rowspan="3">Nội dung cải tiến, xử lý</th><th rowspan="3">Hình ảnh sau cải tiến, xử lý</th><th rowspan="3">Đảm nhiệm</th><th rowspan="3">Kế hoạch</th><th colspan="3">Hoàn thành</th>
         </tr>
         <tr class="safety-main-header"><th colspan="${SAFETY_STOP6_COLUMNS.length}">Phân loại STOP 6</th><th colspan="${SAFETY_LEVEL_COLUMNS.length}">Cấp bậc</th><th colspan="${SAFETY_FOUND_COLUMNS.length}">Phát hiện</th><th rowspan="2">Ngày</th><th rowspan="2">Xác nhận theo cấp độ</th><th rowspan="2">Xác nhận theo loại stop 6</th></tr>
@@ -1225,7 +1523,7 @@
           ${SAFETY_FOUND_COLUMNS.map((column) => `<th><span>${escapeHtml(column.label)}</span></th>`).join("")}
         </tr>
       </thead>
-      <tbody>${rows.length ? rows.map((row, index) => renderSafetyRow(row, startIndex + index + 1, context)).join("") : `<tr><td colspan="29" class="empty-cell">${escapeHtml(emptyMessage)}</td></tr>`}</tbody>`;
+      <tbody>${rows.length ? rows.map((row, index) => renderSafetyRow(row, startIndex + index + 1, context)).join("") : `<tr><td colspan="30" class="empty-cell">${escapeHtml(emptyMessage)}</td></tr>`}</tbody>`;
   }
 
   function renderAnnualFactoryCard(filters, yearRows, groups, selectedDepartment, reportPeriod, context) {
@@ -1254,25 +1552,10 @@
 
     // Calculate Executive KPI summary values
     const totalDetectedYtd = monthTotals.reduce((sum, v) => sum + v, 0);
-    const totalCountermeasureYtd = countermeasureTotals.reduce((sum, v) => sum + v, 0);
     const totalCompletedYtd = timeline.completed.reduce((sum, value) => sum + value, 0);
     const completionDenominator = totalDetectedYtd + timeline.carryCompletion;
     const completionRatePct = completionDenominator ? Math.round((totalCompletedYtd / completionDenominator) * 100) : 0;
     
-    // High Risk Rank A
-    const rankARow = rankMatrix.find((r) => r.value === "A" || String(r.name).toUpperCase().includes("RANK A"));
-    const rankACount = rankARow ? rankARow.total : 0;
-    
-    // Top STOP 6 hazard
-    const stop6Sorted = [...stop6Matrix].sort((a, b) => (b.total || 0) - (a.total || 0));
-    const topStop6 = stop6Sorted[0]?.total > 0 ? stop6Sorted[0] : null;
-    const topStop6Text = topStop6 ? `${topStop6.name} (${topStop6.total} vụ)` : "Không có";
-
-    // Top department
-    const deptSorted = [...matrix].sort((a, b) => (b.total || 0) - (a.total || 0));
-    const topDept = deptSorted[0]?.total > 0 ? deptSorted[0] : null;
-    const topDeptText = topDept ? `${topDept.name} (${topDept.total} vụ)` : "Không có";
-
     const departmentSummaryHtml = '<div class="dashboard-table-wrap department-zone-summary-wrap" data-drag-scroll>' +
       '<table class="department-zone-summary-table factory-styled-table">' +
         '<thead><tr><th>Zone</th><th style="text-align: left; padding-left: 14px; min-width: 120px;">Bộ phận</th><th>Mục tiêu/tháng</th><th>Số nhận diện năm</th><th>Chưa xử lý</th><th>Đã xử lý</th><th>Đang xử lý</th><th>Quá hạn</th><th>Đối sách</th></tr></thead>' +
@@ -1306,8 +1589,8 @@
           </div>
         </div>
 
-        <!-- KPI Summary Cards Row (Executive Metrics) -->
-        <div class="factory-kpi-grid">
+        <!-- Factory summary KPIs -->
+        <div class="factory-kpi-summary-grid">
           <div class="factory-kpi-card">
             <div class="kpi-card-header">
               <span class="kpi-icon-wrap icon-amber"><i class="fa-solid fa-triangle-exclamation"></i></span>
@@ -1318,18 +1601,6 @@
               <span class="kpi-label">Tổng nhận diện nguy cơ</span>
             </div>
             <div class="kpi-subtext"><i class="fa-regular fa-calendar-check"></i> Toàn bộ 12 tháng năm ${escapeHtml(filters.year)}</div>
-          </div>
-
-          <div class="factory-kpi-card">
-            <div class="kpi-card-header">
-              <span class="kpi-icon-wrap icon-blue"><i class="fa-solid fa-shield-halved"></i></span>
-              <span class="kpi-badge">Đã xử lý</span>
-            </div>
-            <div class="kpi-main">
-              <strong class="kpi-value font-mono">${totalCountermeasureYtd}</strong>
-              <span class="kpi-label">Đối sách đã triển khai</span>
-            </div>
-            <div class="kpi-subtext">Theo ngày thực tế triển khai · Hoàn thành thực tế: ${totalCompletedYtd}</div>
           </div>
 
           <div class="factory-kpi-card">
@@ -1346,29 +1617,6 @@
             </div>
           </div>
 
-          <div class="factory-kpi-card">
-            <div class="kpi-card-header">
-              <span class="kpi-icon-wrap icon-rose"><i class="fa-solid fa-circle-exclamation"></i></span>
-              <span class="kpi-badge badge-danger">Cấp A</span>
-            </div>
-            <div class="kpi-main">
-              <strong class="kpi-value font-mono text-rose-400">${rankACount}</strong>
-              <span class="kpi-label">Nguy cơ nghiêm trọng (Rank A)</span>
-            </div>
-            <div class="kpi-subtext"><i class="fa-solid fa-bell"></i> Ưu tiên giám sát & giải quyết ngay</div>
-          </div>
-
-          <div class="factory-kpi-card">
-            <div class="kpi-card-header">
-              <span class="kpi-icon-wrap icon-purple"><i class="fa-solid fa-chart-pie"></i></span>
-              <span class="kpi-badge">Top STOP 6</span>
-            </div>
-            <div class="kpi-main">
-              <strong class="kpi-value text-sm font-semibold truncate" title="${escapeHtml(topStop6Text)}">${escapeHtml(topStop6Text)}</strong>
-              <span class="kpi-label">Nguy cơ STOP 6 nhiều nhất</span>
-            </div>
-            <div class="kpi-subtext"><i class="fa-solid fa-building"></i> Điểm nóng: ${escapeHtml(topDeptText)}</div>
-          </div>
         </div>
 
         <!-- Main Section Navigation Tabs -->
@@ -1707,20 +1955,22 @@
   }
   function renderSafetyAssessmentCard(filters, monthRows, yearRows, visibleAreas, reportPeriod, context) {
     const { escapeHtml } = context;
-    const allMonthRows = monthRows;
     const statusFilter = context.elements.safetyStatusFilter?.value || "";
+    const sourceFilter = context.elements.safetySourceFilter?.value || "";
     monthRows = monthRows
       .filter((row) => !statusFilter || issueStatusOf(row, context) === statusFilter)
+      .filter((row) => !sourceFilter || context.isSafetyFoundSelected(row.score, sourceFilter))
       .sort((a, b) => {
+        const dateA = context.getSafetyRecordIssueDate?.(a.score, context.getPeriod(a.score.periodId)) || "";
+        const dateB = context.getSafetyRecordIssueDate?.(b.score, context.getPeriod(b.score.periodId)) || "";
+        if (dateA !== dateB) return dateB.localeCompare(dateA);
         const timeA = String(a.score?.createdAt || a.score?.updatedAt || "");
         const timeB = String(b.score?.createdAt || b.score?.updatedAt || "");
-        if (timeA !== timeB) {
-          return timeB.localeCompare(timeA);
-        }
+        if (timeA !== timeB) return timeB.localeCompare(timeA);
         return String(b.score?.id || "").localeCompare(String(a.score?.id || ""));
       });
     const zoneText = visibleAreas.length === 1 ? "Zone " + visibleAreas[0].code + " · " : "";
-    const pageKey = [filters.year, filters.month, visibleAreas.map((area) => area.id).join(","), reportPeriod?.id || "", statusFilter].join("|");
+    const pageKey = [filters.year, filters.month, visibleAreas.map((area) => area.id).join(","), reportPeriod?.id || "", statusFilter, sourceFilter].join("|");
     const pagination = getPaginationState("assessment", pageKey, monthRows.length);
     const pagedRows = monthRows.slice(pagination.startIndex, pagination.endIndex);
     const pager = renderSafetyPager("assessment", pagination, monthRows.length, context);
@@ -1732,7 +1982,6 @@
     return '<section class="dashboard-card wide safety-report-card safety-assessment-card">' +
       '<div class="section-heading excel-title-heading"><h2>ĐÁNH GIÁ AN TOÀN</h2><span>' + escapeHtml(caption) + '</span></div>' +
       copyableReportBlock("safety-assessment-" + (reportPeriod?.id || filters.year + "-" + filters.month), tableHtml, "Copy", context) +
-      renderSafetyAssessmentCharts(filters, allMonthRows, yearRows, context) +
       '</section>';
   }
 
@@ -1781,7 +2030,7 @@
       return;
     }
 
-    const activePeriod = getPeriod(elements.safetyPeriodSelect?.value || getActivePeriodId(SAFETY_PERIOD_TYPE));
+    const activePeriod = getPeriod(getActivePeriodId(SAFETY_PERIOD_TYPE));
     const activePeriodId = activePeriod?.id || "";
     const isCurrentPeriodOpen = Boolean(activePeriodId && !isPeriodArchived(activePeriodId, SAFETY_PERIOD_TYPE) && (typeof context.isPeriodOpen === "function" ? context.isPeriodOpen(activePeriodId, SAFETY_PERIOD_TYPE) : activePeriodId === getActivePeriodId(SAFETY_PERIOD_TYPE)));
     const isAdmin = Boolean(context.isAdminAccount?.(context.currentUser));
@@ -1842,6 +2091,41 @@
   }
 
   document.addEventListener("click", (event) => {
+    const dashboardChoice = event.target.closest("[data-safety-dashboard-detail]");
+    if (dashboardChoice) {
+      const detailId = dashboardChoice.dataset.safetyDashboardDetail || "";
+      if (!dashboardDetailRegistry.has(detailId)) return;
+      openSafetyDashboardDetail(detailId);
+      return;
+    }
+
+    const dashboardPage = event.target.closest("[data-safety-dashboard-page]");
+    if (dashboardPage) {
+      activeDashboardDetailPage = Number(dashboardPage.dataset.safetyDashboardPage) || 1;
+      refreshActiveDashboardDetail();
+      return;
+    }
+
+    const dashboardPhoto = event.target.closest("[data-safety-dashboard-photo]");
+    if (dashboardPhoto) {
+      const photo = dashboardPhotoRegistry.get(dashboardPhoto.dataset.safetyDashboardPhoto || "");
+      if (!photo?.url) return;
+      const dialog = document.createElement("dialog");
+      dialog.className = "safety-dashboard-photo-dialog";
+      dialog.setAttribute("aria-label", photo.label);
+      dialog.innerHTML = `<button type="button" class="safety-dashboard-photo-close" aria-label="Đóng ảnh">×</button><img src="${dashboardDetailRegistry.get(activeDashboardDetailId)?.context.escapeHtml(photo.url) || ""}" alt="${dashboardDetailRegistry.get(activeDashboardDetailId)?.context.escapeHtml(photo.label) || "Ảnh vấn đề"}">`;
+      document.body.appendChild(dialog);
+      const removeDialog = () => dialog.remove();
+      dialog.addEventListener("close", removeDialog, { once: true });
+      dialog.addEventListener("click", (photoEvent) => {
+        if (photoEvent.target === dialog) dialog.close();
+      });
+      dialog.querySelector(".safety-dashboard-photo-close")?.addEventListener("click", () => dialog.close());
+      if (typeof dialog.showModal === "function") dialog.showModal();
+      else dialog.setAttribute("open", "");
+      return;
+    }
+
     const navBtn = event.target.closest(".factory-nav-pill");
     if (navBtn) {
       const targetTab = navBtn.dataset.factoryTab;
@@ -1893,9 +2177,77 @@
     }
   });
 
+  document.addEventListener("input", (event) => {
+    const search = event.target.closest?.("[data-safety-dashboard-search]");
+    if (!search) return;
+    activeDashboardDetailQuery = search.value || "";
+    activeDashboardDetailPage = 1;
+    refreshActiveDashboardDetail(true);
+  });
+
+  const syncDashboardHighlight = (choice) => {
+    const dashboard = choice?.closest?.(".safety-donut-dashboard");
+    if (!dashboard) return;
+    const selectedId = choice.dataset.safetyDashboardDetail || "";
+    dashboard.classList.add("has-highlight");
+    dashboard.querySelectorAll(".safety-donut-segment, .safety-donut-legend-item").forEach((item) => {
+      const isActive = item.dataset.safetyDashboardDetail === selectedId;
+      item.classList.toggle("is-active", isActive);
+      item.classList.toggle("is-muted", !isActive);
+    });
+  };
+
+  const clearDashboardHighlight = (dashboard) => {
+    if (!dashboard) return;
+    dashboard.classList.remove("has-highlight");
+    dashboard.querySelectorAll(".safety-donut-segment, .safety-donut-legend-item").forEach((item) => {
+      item.classList.remove("is-active", "is-muted");
+    });
+  };
+
+  document.addEventListener("pointerover", (event) => {
+    const choice = event.target.closest?.(".safety-donut-segment, .safety-donut-legend-item");
+    if (choice) syncDashboardHighlight(choice);
+  });
+
+  document.addEventListener("pointerout", (event) => {
+    const choice = event.target.closest?.(".safety-donut-segment, .safety-donut-legend-item");
+    if (!choice || choice.contains(event.relatedTarget)) return;
+    const dashboard = choice.closest(".safety-donut-dashboard");
+    const nextChoice = event.relatedTarget?.closest?.(".safety-donut-segment, .safety-donut-legend-item");
+    if (nextChoice && nextChoice.closest(".safety-donut-dashboard") === dashboard) syncDashboardHighlight(nextChoice);
+    else clearDashboardHighlight(dashboard);
+  });
+
+  document.addEventListener("focusin", (event) => {
+    const choice = event.target.closest?.(".safety-donut-segment, .safety-donut-legend-item");
+    if (choice) syncDashboardHighlight(choice);
+  });
+
+  document.addEventListener("focusout", (event) => {
+    const choice = event.target.closest?.(".safety-donut-segment, .safety-donut-legend-item");
+    if (!choice) return;
+    const nextChoice = event.relatedTarget?.closest?.(".safety-donut-segment, .safety-donut-legend-item");
+    const dashboard = choice.closest(".safety-donut-dashboard");
+    if (nextChoice && nextChoice.closest(".safety-donut-dashboard") === dashboard) syncDashboardHighlight(nextChoice);
+    else clearDashboardHighlight(dashboard);
+  });
+
+  document.addEventListener("keydown", (event) => {
+    if (!event.target.matches?.(".safety-donut-segment") || !["Enter", " "].includes(event.key)) return;
+    event.preventDefault();
+    event.target.click();
+  });
+
   window.SafetyPage = {
     setDetailPage(type, page) {
       setSafetyPage(type, page);
+    },
+    renderStatisticsDashboard(rows, filters, context) {
+      return renderSafetyDashboardDonuts(rows, filters.year, Number(filters.month) || 0, "statistics", context, {
+        day: Number(filters.day) || 0,
+        periodLabel: filters.periodLabel,
+      });
     },
   };
 

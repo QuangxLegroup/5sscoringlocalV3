@@ -45,14 +45,15 @@ const STRUCTURED_COLLECTIONS = Object.freeze({
   departmentHeadContacts: { table: "department_head_contacts", fields: [["name", (row) => row.name], ["employee_code", (row) => row.employeeCode], ["emails", (row) => row.emails, "jsonb"]] },
   safetyDepartmentHeadContacts: { table: "safety_department_head_contacts", fields: [["name", (row) => row.name], ["employee_code", (row) => row.employeeCode], ["emails", (row) => row.emails, "jsonb"]] },
   safetyDepartmentGroups: { table: "safety_department_groups", fields: [["name", (row) => row.name], ["employee_code", (row) => row.employeeCode], ["emails", (row) => row.emails, "jsonb"]] },
+  at5sMembers: { table: "at5s_members", fields: [["name", (row) => row.name], ["employee_code", (row) => row.employeeCode], ["emails", (row) => row.emails, "jsonb"]] },
   scores: { table: "scores", fields: [
     ["period_id", (row) => row.periodId], ["area_id", (row) => row.areaId], ["item_id", (row) => row.itemId],
     ["criterion_id", (row) => row.criterionId], ["score_source", (row) => row.scoreSource], ["score", (row) => safeNumber(row.score)],
     ["scorer_name", (row) => row.scorerName], ["account_username", (row) => row.accountUsername], ["record_status", (row) => row.status],
-    ["occurred_at", (row) => safeDate(row.updatedAt), "date"], ["updated_at", (row) => safeTimestamp(row.updatedAt), "timestamptz"],
+    ["occurred_at", (row) => safeDate(row.scoreDate || row.updatedAt), "date"], ["updated_at", (row) => safeTimestamp(row.updatedAt), "timestamptz"],
   ], periodAware: true },
   safetyRecords: { table: "safety_records", fields: [
-    ["period_id", (row) => row.periodId], ["area_id", (row) => row.areaId], ["issue_date", (row) => safeDate(row.issueDate || row.date), "date"],
+    ["period_id", (row) => row.periodId], ["area_id", (row) => row.areaId], ["issue_date", (row) => safeDate(row.issueDate || row.date || (row.issueDay && row.issueMonth ? `${row.periodYear || 2026}-${String(row.issueMonth).padStart(2, "0")}-${String(row.issueDay).padStart(2, "0")}` : null) || row.occurred_at || row.createdAt), "date"],
     ["issue_level", (row) => row.issueLevel], ["issue_type", (row) => row.issueType], ["record_status", (row) => row.issueStatus],
     ["note", (row) => row.note], ["improvement_content", (row) => row.improvementContent], ["action_owner", (row) => row.actionOwner],
     ["completion_date", (row) => safeDate(row.completionDate), "date"], ["issue_found_by", (row) => row.issueFoundBy],
@@ -632,8 +633,34 @@ class PostgresRepository {
     addFilter("period_id", filters.periodId);
     addFilter("area_id", filters.areaId);
     addFilter("record_status", filters.status);
-    if (filters.year !== undefined && filters.year !== "") addFilter("period_year", Number(filters.year));
-    if (filters.month !== undefined && filters.month !== "") addFilter("period_month", Number(filters.month));
+    if (collection === "safetyRecords") {
+      const addSafetyDatePartFilter = (datePart, value) => {
+        if (value === undefined || value === "") return;
+        values.push(Number(value));
+        const parameter = `$${values.length}`;
+        const resolvedPart = datePart === "year"
+          ? "COALESCE(EXTRACT(YEAR FROM issue_date)::int, EXTRACT(YEAR FROM occurred_at)::int, CASE WHEN data->>'issueDate' ~ '^\\d{4}-\\d{2}' THEN substring(data->>'issueDate' from 1 for 4)::int WHEN data->>'issueDate' ~ '^\\d{1,2}/\\d{1,2}/\\d{4}' THEN split_part(data->>'issueDate', '/', 3)::int WHEN data->>'date' ~ '^\\d{4}-\\d{2}' THEN substring(data->>'date' from 1 for 4)::int WHEN data->>'date' ~ '^\\d{1,2}/\\d{1,2}/\\d{4}' THEN split_part(data->>'date', '/', 3)::int END, EXTRACT(YEAR FROM created_at)::int, period_year)"
+          : "COALESCE(EXTRACT(MONTH FROM issue_date)::int, EXTRACT(MONTH FROM occurred_at)::int, CASE WHEN data->>'issueMonth' ~ '^[0-9]{1,2}$' THEN (data->>'issueMonth')::int WHEN data->>'issueDate' ~ '^\\d{4}-\\d{2}' THEN substring(data->>'issueDate' from 6 for 2)::int WHEN data->>'issueDate' ~ '^\\d{1,2}/\\d{1,2}/\\d{4}' THEN split_part(data->>'issueDate', '/', 2)::int WHEN data->>'date' ~ '^\\d{4}-\\d{2}' THEN substring(data->>'date' from 6 for 2)::int WHEN data->>'date' ~ '^\\d{1,2}/\\d{1,2}/\\d{4}' THEN split_part(data->>'date', '/', 2)::int WHEN data->>'createdAt' ~ '^\\d{4}-\\d{2}' THEN substring(data->>'createdAt' from 6 for 2)::int END, EXTRACT(MONTH FROM created_at)::int, period_month)";
+        conditions.push(`${resolvedPart} = ${parameter}`);
+      };
+      addSafetyDatePartFilter("year", filters.year);
+      addSafetyDatePartFilter("month", filters.month);
+    } else if (collection === "fiveSFindings") {
+      const addFindingDatePartFilter = (datePart, value) => {
+        if (value === undefined || value === "") return;
+        values.push(Number(value));
+        const parameter = `$${values.length}`;
+        const resolvedPart = datePart === "year"
+          ? "COALESCE(EXTRACT(YEAR FROM occurred_at)::int, CASE WHEN data->>'inspectionDate' ~ '^\\d{4}-\\d{2}' THEN substring(data->>'inspectionDate' from 1 for 4)::int WHEN data->>'inspectionDate' ~ '^\\d{1,2}/\\d{1,2}/\\d{4}' THEN split_part(data->>'inspectionDate', '/', 3)::int END, EXTRACT(YEAR FROM created_at)::int, period_year)"
+          : "COALESCE(EXTRACT(MONTH FROM occurred_at)::int, CASE WHEN data->>'inspectionDate' ~ '^\\d{4}-\\d{2}' THEN substring(data->>'inspectionDate' from 6 for 2)::int WHEN data->>'inspectionDate' ~ '^\\d{1,2}/\\d{1,2}/\\d{4}' THEN split_part(data->>'inspectionDate', '/', 2)::int END, EXTRACT(MONTH FROM created_at)::int, period_month)";
+        conditions.push(`${resolvedPart} = ${parameter}`);
+      };
+      addFindingDatePartFilter("year", filters.year);
+      addFindingDatePartFilter("month", filters.month);
+    } else {
+      if (filters.year !== undefined && filters.year !== "") addFilter("period_year", Number(filters.year));
+      if (filters.month !== undefined && filters.month !== "") addFilter("period_month", Number(filters.month));
+    }
     const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
     const count = await this.pool.query(`SELECT count(*)::int AS total FROM ${spec.table} ${where}`, values);
     const pageValues = [...values, pageSize, (page - 1) * pageSize];

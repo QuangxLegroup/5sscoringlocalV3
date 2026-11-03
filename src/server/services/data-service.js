@@ -345,20 +345,39 @@ function updateAtPath(root, targetPath, updates) {
 }
 
 const SCORE_COMPARE_FIELDS = [
-  "id", "periodId", "areaId", "itemId", "criterionId", "scoreSource", "score", "status",
-  "note", "photoDataUrl", "photoName", "issueType", "issueLevel", "issueStatus", "issueLocation",
+  "id", "periodId", "areaId", "itemId", "criterionId", "scoreSource", "scoreDate", "score", "status",
+  "note", "photoDataUrl", "photoName", "issueType", "issueLevel", "issueStatus", "issueLocation", "issueDate",
   "issueDay", "issueMonth", "issueCount", "issueFoundBy", "employeeCode", "issueItemLabel",
   "foundChannel", "improvementContent", "afterPhotoDataUrl", "afterPhotoName", "actionOwner",
   "actionPlan", "completionDate", "completionLevelConfirm", "completionStop6Confirm", "scorerName",
   "accountUsername", "createdAt", "updatedAt",
 ];
 
+const MULTI_DAY_SCORE_SOURCES = new Set(["at5s", "departmentHead"]);
+
+function normalizeScoreSource(source) {
+  const value = String(source || "").trim();
+  if (value === "self") return "self";
+  if (["at5s", "banAt5s", "committee5s", "ban-at-5s"].includes(value)) return "at5s";
+  if (["departmentHead", "deptHead", "department-head"].includes(value)) return "departmentHead";
+  return "assessor";
+}
+
+function normalizeScoreDateForSource(scoreDate, scoreSource) {
+  const normalizedSource = normalizeScoreSource(scoreSource);
+  if (!MULTI_DAY_SCORE_SOURCES.has(normalizedSource)) return "";
+  const text = String(scoreDate || "").trim();
+  return /^\d{4}-\d{2}-\d{2}$/.test(text) ? text : "";
+}
+
 function scoreForComparison(score) {
   if (!isPlainObject(score)) return null;
   const normalized = {};
+  const normalizedSource = normalizeScoreSource(score.scoreSource);
   SCORE_COMPARE_FIELDS.forEach((field) => {
     let value = score[field];
-    if (field === "scoreSource") value = value === "self" ? "self" : "assessor";
+    if (field === "scoreSource") value = normalizedSource;
+    else if (field === "scoreDate") value = normalizeScoreDateForSource(value, normalizedSource);
     else if (field === "score") value = value === null || value === undefined || value === "" ? null : Number(value);
     else if (field === "status") value = value === "crossed" ? "crossed" : "";
     else if (field === "issueCount") {
@@ -377,9 +396,11 @@ function scoreForComparison(score) {
       const channel = String(value || "").trim().toLowerCase().replace(/[\s_]+/g, "-");
       value = ["worker", "member", "cong-nhan", "công-nhân"].includes(channel)
         ? "worker"
-        : ["department-head", "internal-audit", "audit", "truong-bo-phan", "trưởng-bộ-phận", "to-truong", "tổ-trưởng"].includes(channel)
+        : ["department-head", "head", "internal-audit", "audit", "truong-bo-phan", "trưởng-bộ-phận", "to-truong", "tổ-trưởng"].includes(channel)
           ? "department-head"
-          : ["assessor", "lean", "(lean)"].includes(channel) ? "assessor" : "";
+          : ["at5s", "ban-at-5s", "ban-at5s", "an-toan-5s", "an-toàn-5s"].includes(channel)
+            ? "at5s"
+            : ["assessor", "lean", "(lean)"].includes(channel) ? "assessor" : "";
     } else {
       value = value ?? "";
     }
@@ -393,13 +414,16 @@ function sameScoreValue(left, right) {
 }
 
 function findScoreForSlot(root, slot = {}) {
+  const targetSource = normalizeScoreSource(slot.scoreSource);
+  const targetDate = normalizeScoreDateForSource(slot.scoreDate, targetSource);
   return Object.values(root?.scores || {}).find((score) => (
     score &&
     String(score.periodId || "") === String(slot.periodId || "") &&
     String(score.areaId || "") === String(slot.areaId || "") &&
     String(score.itemId || "") === String(slot.itemId || "") &&
     String(score.criterionId || "") === String(slot.criterionId || "") &&
-    (score.scoreSource === "self" ? "self" : "assessor") === (slot.scoreSource === "self" ? "self" : "assessor")
+    normalizeScoreSource(score.scoreSource) === targetSource &&
+    normalizeScoreDateForSource(score.scoreDate, score.scoreSource) === targetDate
   )) || null;
 }
 
@@ -913,8 +937,10 @@ class DataService {
       const scoreConflict = command.scoreConflict;
       if (scoreConflict) {
         const slotFields = ["periodId", "areaId", "itemId", "criterionId", "scoreSource"];
-        const validSlot = slotFields.every((field) => typeof scoreConflict.slot?.[field] === "string" && Boolean(scoreConflict.slot[field]));
-        if (!targetPath.startsWith("scores/") || !validSlot || !["self", "assessor"].includes(scoreConflict.slot.scoreSource)) {
+        const slotSource = normalizeScoreSource(scoreConflict.slot?.scoreSource);
+        const validSlot = slotFields.every((field) => typeof scoreConflict.slot?.[field] === "string" && Boolean(scoreConflict.slot[field]))
+          && (!MULTI_DAY_SCORE_SOURCES.has(slotSource) || /^\d{4}-\d{2}-\d{2}$/.test(String(scoreConflict.slot?.scoreDate || "").trim()));
+        if (!targetPath.startsWith("scores/") || !validSlot || !["self", "assessor", "at5s", "departmentHead"].includes(slotSource)) {
           throw createHttpError("Yêu cầu kiểm tra xung đột điểm không hợp lệ.", 400);
         }
         const currentScore = findScoreForSlot(currentRoot, scoreConflict.slot);

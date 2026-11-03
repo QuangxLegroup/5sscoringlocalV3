@@ -13,7 +13,16 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
-      <link rel="stylesheet" href="styles.css?v=2026103101">
+    <script>
+      (function() {
+        try {
+          var theme = localStorage.getItem("app_theme") || "dark";
+          document.documentElement.setAttribute("data-theme", theme);
+          document.documentElement.classList.add(theme === "light" ? "theme-light" : "theme-dark");
+        } catch (e) {}
+      })();
+    </script>
+      <link rel="stylesheet" href="styles.css?v=2026110302">
   </head>
   <body>
     <section class="loading-screen" id="loading-screen">
@@ -222,30 +231,46 @@
                 </div>
                 <div class="account-menu-divider admin-only"></div>
                 <button class="account-menu-item admin-only" type="button" data-go-tab="accounts">
-                  <span>👤</span>
+                  <i class="fa-solid fa-user-plus" aria-hidden="true"></i>
                   Cấp tài khoản
                 </button>
                 <button class="account-menu-item admin-only" type="button" data-go-tab="catalog">
-                  <span>🗂</span>
+                  <i class="fa-solid fa-folder-tree" aria-hidden="true"></i>
                   Danh mục
                 </button>
 
                 <button class="account-menu-item admin-only" type="button" data-go-tab="guide-setup" data-action="setup-user-guide">
-                  <span>❔</span>
+                  <i class="fa-regular fa-circle-question" aria-hidden="true"></i>
                   Thiết lập hướng dẫn
                 </button>
 
                 <button class="account-menu-item admin-only" type="button" data-go-tab="audit-log" data-action="show-edit-history">
-                  <span>🕘</span>
+                  <i class="fa-solid fa-clock-rotate-left" aria-hidden="true"></i>
                   Lịch sử chỉnh sửa
                 </button>
                 <button class="account-menu-item admin-only" type="button" data-action="show-problem-zone-emails">
-                  <span>📋</span>
+                  <i class="fa-regular fa-envelope" aria-hidden="true"></i>
                   Email báo cáo zone có vấn đề
                 </button>
+                <div class="account-menu-theme-row">
+                  <span class="account-menu-theme-label">
+                    <i class="fa-solid fa-circle-half-stroke" aria-hidden="true"></i>
+                    Giao diện:
+                  </span>
+                  <div class="account-menu-theme-toggle" role="group" aria-label="Chọn giao diện">
+                    <button type="button" class="theme-toggle-btn" data-theme-set="light" title="Giao diện Sáng">
+                      <i class="fa-solid fa-sun" aria-hidden="true"></i>
+                      <span>Sáng</span>
+                    </button>
+                    <button type="button" class="theme-toggle-btn" data-theme-set="dark" title="Giao diện Tối">
+                      <i class="fa-solid fa-moon" aria-hidden="true"></i>
+                      <span>Tối</span>
+                    </button>
+                  </div>
+                </div>
                 <div class="account-menu-divider"></div>
                 <button class="account-menu-logout" id="logout-button" type="button">
-                  <span>↪</span>
+                  <i class="fa-solid fa-arrow-right-from-bracket" aria-hidden="true"></i>
                   Đăng xuất
                 </button>
               </div>
@@ -276,6 +301,18 @@
                 <span>Vai trò chấm điểm</span>
                 <select id="assessor-score-source-select"></select>
               </label>
+              <label id="assessor-score-date-field" hidden>
+                <span>Ngày chấm</span>
+                <div class="assessor-score-date-editor">
+                  <input id="assessor-score-date-display" type="text" placeholder="dd/mm/yyyy" inputmode="numeric" maxlength="10" autocomplete="off" aria-label="Ngày chấm theo định dạng ngày/tháng/năm">
+                  <input id="assessor-score-date" type="date" aria-label="Chọn ngày chấm">
+                  <span class="assessor-date-calendar-icon" aria-hidden="true"><i class="fa-solid fa-calendar-days"></i></span>
+                </div>
+              </label>
+              <label id="assessor-scored-dates-field" hidden>
+                <span>Các ngày đã chấm</span>
+                <select id="assessor-scored-dates-select"></select>
+              </label>
               <div class="permission-note" id="assessor-progress"></div>
             </div>
 
@@ -303,8 +340,6 @@
               </label>
 
               <button class="btn-export-excel-gradient" id="export-excel-button" type="button"><i class="fa-solid fa-file-excel"></i> <span>Xuất Excel</span></button>
-              <button class="secondary-button admin-only" type="button" data-action="import-page-json" data-page="five-s">Import</button>
-              <button class="secondary-button admin-only" type="button" data-action="export-page-json" data-page="five-s">Export</button>
             </div>
 
             <section class="sheet-panel">
@@ -329,6 +364,8 @@
                 <select id="admin-score-sheet-source">
                   <option value="assessor">Assessor chấm</option>
                   <option value="self">Quản lý zone tự chấm</option>
+                  <option value="at5s">Ban AT - 5S chấm</option>
+                  <option value="departmentHead">Trưởng phòng chấm</option>
                 </select>
               </label>
               <label>
@@ -338,6 +375,12 @@
               <label>
                 <span>Zone đánh giá</span>
                 <select id="admin-score-sheet-area"></select>
+              </label>
+              <label id="admin-score-sheet-date-field">
+                <span>Ngày chấm</span>
+                <select id="admin-score-sheet-date">
+                  <option value="" selected>Trung bình tháng</option>
+                </select>
               </label>
               <button class="btn-export-excel-gradient" id="export-admin-score-sheet-button" type="button"><i class="fa-solid fa-file-excel"></i> <span>Xuất Excel</span></button>
             </div>
@@ -352,38 +395,41 @@
           </section>
           <section class="tab-panel safety-access-only" id="tab-safety">
             <div class="toolbar safety-toolbar">
-              <label>
-                <span>Kỳ đang đánh giá</span>
-                <select id="safety-period-select"></select>
-              </label>
-              <label>
-                <span>Năm báo cáo</span>
-                <select id="safety-year-filter"></select>
-              </label>
-              <label>
-                <span>Tháng báo cáo</span>
-                <select id="safety-month-filter"></select>
-              </label>
-              <label>
-                <span>Zone</span>
-                <select id="safety-area-filter"></select>
-              </label>
-              <label>
-                <span>Trạng thái</span>
-                <select id="safety-status-filter"></select>
-              </label>
-              <label>
-                <span>Bộ phận năm</span>
-                <select id="safety-department-filter"></select>
-              </label>
+              <div class="safety-filters-group">
+                <label>
+                  <span>Năm báo cáo</span>
+                  <select id="safety-year-filter"></select>
+                </label>
+                <label>
+                  <span>Tháng báo cáo</span>
+                  <select id="safety-month-filter"></select>
+                </label>
+                <label>
+                  <span>Zone</span>
+                  <select id="safety-area-filter"></select>
+                </label>
+                <label>
+                  <span>Trạng thái</span>
+                  <select id="safety-status-filter"></select>
+                </label>
+                <label id="safety-source-filter-field">
+                  <span>Nguồn đánh giá</span>
+                  <select id="safety-source-filter"></select>
+                </label>
+                <label>
+                  <span>Bộ phận năm</span>
+                  <select id="safety-department-filter"></select>
+                </label>
+              </div>
+
               <div class="safety-actions">
-                <button class="primary-button safety-access-only" id="add-safety-record-button" type="button">Thêm ĐG AT</button>
-                <span class="findings-readonly" id="safety-readonly-badge" hidden>Chỉ xem</span>
-                <button class="secondary-button admin-only" id="edit-safety-meta-button" type="button">Thiết lập báo cáo</button>
-                <button class="btn-export-excel-gradient" id="export-safety-excel-button" type="button"><i class="fa-solid fa-file-excel"></i> <span>Xuất ĐG AT</span></button>
-                <button class="secondary-button admin-only" type="button" data-action="import-page-json">Import</button>
-                <button class="secondary-button admin-only" type="button" data-action="export-page-json">Export</button>
-                <button class="primary-button admin-only" id="send-safety-mail-button" type="button">Gửi báo cáo</button>
+                <div class="safety-actions-primary">
+                  <button class="secondary-button admin-only" id="edit-safety-meta-button" type="button"><i class="fa-solid fa-sliders"></i> <span>Thiết lập báo cáo</span></button>
+                  <button class="primary-button admin-only" id="send-safety-mail-button" type="button"><i class="fa-solid fa-paper-plane"></i> <span>Gửi báo cáo</span></button>
+                  <button class="btn-export-excel-gradient" id="export-safety-excel-button" type="button"><i class="fa-solid fa-file-excel"></i> <span>Xuất ĐG AT</span></button>
+                  <button class="primary-button safety-access-only" id="add-safety-record-button" type="button"><i class="fa-solid fa-plus"></i> <span>Thêm ĐG AT</span></button>
+                  <span class="findings-readonly" id="safety-readonly-badge" hidden>Chỉ xem</span>
+                </div>
               </div>
             </div>
 
@@ -392,30 +438,22 @@
 
           <!-- TAB ISSUE STATS -->
           <section class="tab-panel admin-only" id="tab-issue-stats">
-            <div class="toolbar dashboard-toolbar">
+            <div class="toolbar issue-stats-filter-toolbar">
               <label>
-                <span>Kỳ đánh giá</span>
-                <select id="issue-stats-period-select"></select>
+                <span>Năm báo cáo</span>
+                <select id="issue-stats-year-filter"></select>
+              </label>
+              <label>
+                <span>Tháng báo cáo</span>
+                <select id="issue-stats-month-filter"></select>
+              </label>
+              <label>
+                <span>Ngày báo cáo</span>
+                <select id="issue-stats-day-filter"></select>
               </label>
             </div>
-
-            <section class="stats-grid" id="issue-stats-grid"></section>
-
-            <div class="stats-tables-grid">
-              <section class="panel">
-                <div class="section-heading">
-                  <h2>Vấn đề theo zone</h2>
-                </div>
-                <div class="compact-list" id="issue-zone-stats"></div>
-              </section>
-
-              <section class="panel">
-                <div class="section-heading">
-                  <h2>Vấn đề theo STOP 6</h2>
-                </div>
-                <div class="compact-list" id="issue-type-stats"></div>
-              </section>
-            </div>
+            <div class="issue-stats-kpi-container issue-stats-total-bar" id="issue-stats-total" role="status" aria-live="polite"></div>
+            <section id="issue-stats-dashboard" aria-label="Thống kê an toàn"></section>
           </section>
 
           <!-- TAB CATALOG -->
@@ -427,8 +465,7 @@
                   <section class="panel catalog-period-panel">
                     <div class="section-heading catalog-section-heading">
                       <div>
-                        <span class="section-step">Bước 1</span>
-                        <h2>Kỳ đánh giá</h2>
+                        <h2>Kỳ đánh giá 5S</h2>
                       </div>
                     </div>
                     <form class="form-grid split-period-form" id="period-5s-form">
@@ -450,30 +487,11 @@
                       <button class="primary-button full-span" type="submit">Tạo kỳ chấm 5S</button>
                     </form>
                     <div class="compact-list period-section-list" id="period-5s-list"></div>
-                    <form class="form-grid split-period-form" id="period-safety-form">
-                      <label class="full-span">
-                        <span>Ngày đánh giá an toàn</span>
-                        <span class="safety-date-editor">
-                          <input id="period-safety-date" type="text" placeholder="dd/mm/yyyy" pattern="[0-9]{2}/[0-9]{2}/[0-9]{4}" maxlength="10" required>
-                          <input id="period-safety-date-calendar" class="safety-date-calendar" aria-label="Chọn ngày đánh giá an toàn" type="date">
-                        </span>
-                      </label>
-                      <label class="full-span">
-                        <span>Danh mục người của kỳ mới</span>
-                        <select id="period-safety-catalog-mode">
-                          <option value="copy">Dùng danh mục kỳ đang mở</option>
-                          <option value="reset-people">Thiết lập lại người cho kỳ mới</option>
-                        </select>
-                      </label>
-                      <button class="primary-button full-span" type="submit">Tạo kỳ đánh giá an toàn</button>
-                    </form>
-                    <div class="compact-list period-section-list" id="period-safety-list"></div>
                   </section>
 
                   <section class="panel catalog-person-form-panel">
                     <div class="section-heading catalog-section-heading">
                       <div>
-                        <span class="section-step">Bước 2</span>
                         <h2>Thêm người mới</h2>
                       </div>
                     </div>
@@ -493,6 +511,7 @@
                           <label class="check-line"><input name="catalogPersonRoles" type="checkbox" value="assessor5s"><span>Assessor 5S</span></label>
                           <label class="check-line"><input name="catalogPersonRoles" type="checkbox" value="assessorSafety"><span>Assessor AT</span></label>
                           <label class="check-line"><input name="catalogPersonRoles" type="checkbox" value="departmentHead"><span>Trưởng phòng</span></label>
+                          <label class="check-line"><input name="catalogPersonRoles" type="checkbox" value="at5s"><span>Ban AT - 5S</span></label>
                         </div>
                       </div>
                       <div class="form-field" id="catalog-person-zones-field" hidden>
@@ -534,10 +553,19 @@
                     <div class="compact-list" id="department-head-list"></div>
                   </section>
 
+                  <section class="panel catalog-at5s-panel">
+                    <div class="section-heading catalog-section-heading">
+                      <div>
+                        <h2>Danh sách Ban AT - 5S</h2>
+                        <p class="field-hint">Thành viên Ban AT - 5S có quyền đánh giá trên tất cả các Zone 5S và An toàn.</p>
+                      </div>
+                    </div>
+                    <div class="compact-list" id="catalog-at5s-list"></div>
+                  </section>
+
                   <section class="panel catalog-area-panel">
                     <div class="section-heading catalog-section-heading">
                       <div>
-                        <span class="section-step">Bước 5</span>
                         <h2>Zone và trưởng phòng</h2>
                       </div>
                     </div>
@@ -578,7 +606,6 @@
                   <section class="panel department-head-email-panel">
                     <div class="section-heading catalog-section-heading">
                       <div>
-                        <span class="section-step">Bước 6</span>
                         <h2>Email trưởng phòng</h2>
                       </div>
                     </div>
@@ -703,6 +730,36 @@
                   </section>
                 </div>
               </section>
+              <section class="scope-detail-card" id="at5s-account-detail" aria-label="Tài khoản Ban AT - 5S" hidden>
+                <div class="accounts-grid at5s-accounts-grid">
+                  <section class="panel at5s-account-panel">
+                    <div class="section-heading">
+                      <h2>Cấp tài khoản Ban AT - 5S</h2>
+                    </div>
+                    <form class="stacked-form" id="at5s-account-form">
+                      <label>
+                        <span>Thành viên Ban AT - 5S</span>
+                        <select id="at5s-account-member" required></select>
+                      </label>
+                      <label>
+                        <span>Tài khoản</span>
+                        <input id="at5s-account-username" type="text" autocomplete="off" required>
+                      </label>
+                      <label>
+                        <span>Mật khẩu</span>
+                        <input id="at5s-account-password" type="password" autocomplete="new-password" required minlength="4">
+                      </label>
+                      <button class="primary-button" type="submit">Cấp tài khoản Ban AT - 5S</button>
+                    </form>
+                  </section>
+                  <section class="panel at5s-account-list-panel">
+                    <div class="section-heading">
+                      <h2>Danh sách tài khoản Ban AT - 5S</h2>
+                    </div>
+                    <div class="account-list" id="at5s-account-list"></div>
+                  </section>
+                </div>
+              </section>
             </div>
           </section>
           <!-- TAB THIẾT LẬP HƯỚNG DẪN -->
@@ -726,27 +783,27 @@
     </div>
 
     <div class="toast" id="toast" role="status" aria-live="polite"></div>
-    <script src="modules/local-data-api.js?v=2026102123"></script>
+    <script src="modules/local-data-api.js?v=2026110201"></script>
     <script src="modules/core/page-registry.js"></script>
-    <script src="modules/core/safety-timeline.js?v=2026102108"></script>
-      <script src="modules/core/image-circle-annotator.js?v=2026103002"></script>
+    <script src="modules/core/safety-timeline.js?v=2026103101"></script>
+      <script src="modules/core/image-circle-annotator.js?v=2026110201"></script>
       <script src="modules/core/form-draft-manager.js?v=2026102903"></script>
     <script src="modules/core/custom-dropdown.js?v=2026103101"></script>
-    <script src="modules/pages/admin-home-page.js?v=2026102113"></script>
+    <script src="modules/pages/admin-home-page.js?v=2026110210"></script>
     <script src="modules/pages/assessor-page.js"></script>
-    <script src="modules/pages/summary-page.js?v=2026101702"></script>
-    <script src="modules/pages/safety-page.js?v=2026102107"></script>
-    <script src="modules/pages/issue-stats-page.js"></script>
+    <script src="modules/pages/summary-page.js?v=2026103103"></script>
+    <script src="modules/pages/safety-page.js?v=2026110301"></script>
+    <script src="modules/pages/issue-stats-page.js?v=2026110203"></script>
     <script src="modules/pages/catalog-page.js"></script>
     <script src="modules/pages/accounts-page.js"></script>
     <script src="modules/pages/data-page.js"></script>
-    <script src="modules/pages/five-s-findings-page.js?v=2026102903"></script>
+    <script src="modules/pages/five-s-findings-page.js?v=2026110304"></script>
     <script src="modules/pages/user-guide-content.js?v=2026103001"></script>
-      <script src="modules/pages/mobile-prototype.js?v=2026102904"></script>
+    <script src="modules/pages/mobile-prototype.js?v=2026110304"></script>
     <script src="modules/pages/guide-setup-page.js?v=2026102903"></script>
     <script src="modules/pages/audit-log-page.js?v=2026102801"></script>
     <script src="standards.js"></script>
-    <script src="app.js?v=2026103104"></script>
+    <script src="app.js?v=2026110304"></script>
   
     <script>
       (() => {

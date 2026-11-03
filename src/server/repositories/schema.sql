@@ -106,6 +106,7 @@ CREATE TABLE IF NOT EXISTS safety_assessors (LIKE managers INCLUDING ALL);
 CREATE TABLE IF NOT EXISTS department_head_contacts (LIKE managers INCLUDING ALL);
 CREATE TABLE IF NOT EXISTS safety_department_head_contacts (LIKE managers INCLUDING ALL);
 CREATE TABLE IF NOT EXISTS safety_department_groups (LIKE managers INCLUDING ALL);
+CREATE TABLE IF NOT EXISTS at5s_members (LIKE managers INCLUDING ALL);
 
 CREATE TABLE IF NOT EXISTS scores (
   id text PRIMARY KEY,

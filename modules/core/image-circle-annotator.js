@@ -322,6 +322,19 @@
     return 18;
   }
 
+  function setFontSizeSelectValue(select, size) {
+    if (!select) return;
+    const value = String(parseFontSizeNumber(size));
+    if (![...select.options].some((option) => option.value === value)) {
+      const option = document.createElement("option");
+      option.value = value;
+      option.textContent = value;
+      const nextOption = [...select.options].find((candidate) => Number(candidate.value) > Number(value));
+      select.insertBefore(option, nextOption || null);
+    }
+    select.value = value;
+  }
+
   function getAnnotationFontSize(sizeName, minDim) {
     const s = String(sizeName || "18").toLowerCase();
     if (s === "small" || s === "nho") {
@@ -747,9 +760,7 @@
         btn.classList.toggle("is-active", btn.dataset.toolbarColor === activeTextColor);
       });
       const select = textToolbar.querySelector("[data-toolbar-size-select]");
-      if (select) {
-        select.value = String(curNum);
-      }
+      setFontSizeSelectValue(select, curNum);
       textToolbar.querySelectorAll("[data-toolbar-size]").forEach((btn) => {
         const btnNum = parseFontSizeNumber(btn.dataset.toolbarSize);
         btn.classList.toggle("is-active", btnNum === curNum);
@@ -874,13 +885,14 @@
 
       const popoverSelect = textPopover.querySelector(".popover-size-select");
       const syncPopoverSizeUI = () => {
-        if (popoverSelect) popoverSelect.value = String(selectedSize);
+        setFontSizeSelectValue(popoverSelect, selectedSize);
         textPopover.querySelectorAll(".opt-size").forEach((b) => {
           b.classList.toggle("is-active", Number(b.dataset.size) === selectedSize);
         });
         activeTextSize = selectedSize;
         updateToolbarTextOptions();
       };
+      syncPopoverSizeUI();
 
       popoverSelect?.addEventListener("change", (e) => {
         e.stopPropagation();

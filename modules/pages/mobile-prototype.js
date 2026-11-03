@@ -58,20 +58,34 @@
     }
   }
 
+  function scrollMobileTargetIntoView(resolveTarget) {
+    const scroll = () => {
+      const target = resolveTarget?.();
+      if (!target?.isConnected || typeof target.scrollIntoView !== "function") return;
+      target.scrollIntoView({ behavior: "smooth", block: "center" });
+    };
+    if (typeof window.requestAnimationFrame === "function") {
+      window.requestAnimationFrame(() => window.requestAnimationFrame(scroll));
+    } else {
+      window.setTimeout(scroll, 100);
+    }
+  }
+
   // State
   let activeTab = "safety"; // "safety" | "5s"
   let isFullWidth = false;
   let currentFiveSZoneId = "";
   let currentSafetyZoneId = "";
-  let currentSafetyHistoryPeriodId = "";
   let currentSafetyHistoryPage = 1;
-  let safetyHistoryPageData = null;
+  let currentSafetyMonthKey = "";
   let safetyHistoryPageKey = "";
   let safetyHistoryPageRequestId = 0;
+  let safetyHistoryPageData = null;
   let activeSectionFilter = "all";
   let currentFiveSScoreSource = "";
   let currentFiveSScoreSourceUserKey = null;
   let currentFiveSScoreSourceAreaKey = "";
+  let currentFiveSScoreDate = "";
   let mobileAccountKey = null;
   let uploadedSafetyPhotoData = "";
   let uploadedSafetyAfterPhotoData = "";
@@ -213,7 +227,64 @@
     return clean;
   }
 
+  function monthKeyFromDate(value) {
+    const text = String(value || "").trim();
+    const isoMatch = /^(\d{4})-(\d{1,2})/.exec(text);
+    if (isoMatch) return `${isoMatch[1]}-${String(Number(isoMatch[2])).padStart(2, "0")}`;
+    const displayMatch = /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/.exec(text);
+    if (displayMatch) return `${displayMatch[3]}-${String(Number(displayMatch[2])).padStart(2, "0")}`;
+    const monthYearMatch = /^(?:tháng\s*)?(\d{1,2})\/(\d{4})$/i.exec(text);
+    if (monthYearMatch) return `${monthYearMatch[2]}-${String(Number(monthYearMatch[1])).padStart(2, "0")}`;
+    return "";
+  }
+
+  function monthKeyFromPeriod(period) {
+    const year = Number(period?.year);
+    const month = Number(period?.month);
+    if (Number.isInteger(year) && year > 0 && Number.isInteger(month) && month >= 1 && month <= 12) {
+      return `${year}-${String(month).padStart(2, "0")}`;
+    }
+    const idMatch = /(?:5s|safety)-(\d{4})-(\d{1,2})/i.exec(String(period?.id || ""));
+    if (idMatch) return `${idMatch[1]}-${String(Number(idMatch[2])).padStart(2, "0")}`;
+    return monthKeyFromDate(period?.label);
+  }
+
+  function monthKeyForSafetyRecord(item, context) {
+    const explicitDate = context?.getSafetyRecordIssueDate?.(item, context?.getPeriod?.(item?.periodId)) || item?.issueDate || item?.date || "";
+    const dateKey = monthKeyFromDate(explicitDate);
+    if (dateKey) return dateKey;
+
+    const period = context?.getPeriod?.(item?.periodId);
+    const norm = getNormalizedSafetyIssueDate(item, period);
+    if (norm?.year && norm?.month) {
+      return norm.year + "-" + String(norm.month).padStart(2, "0");
+    }
+    if (item?.issueMonth && Number.isInteger(Number(item.issueMonth))) {
+      const m = Number(item.issueMonth);
+      const y = Number(item?.issueYear || norm?.year || period?.year || 2026);
+      if (m >= 1 && m <= 12) {
+        return y + "-" + String(m).padStart(2, "0");
+      }
+    }
+    if (item?.createdAt || item?.updatedAt) {
+      const createdKey = monthKeyFromDate(item.createdAt || item.updatedAt);
+      if (createdKey) return createdKey;
+    }
+    const periodKey = monthKeyFromPeriod(period);
+    if (periodKey) return periodKey;
+    return "";
+  }
+
   function getNormalizedSafetyIssueDate(item, safetyPeriod) {
+    const displayMatch = /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/.exec(String(item?.issueDate || item?.date || "").trim());
+    if (displayMatch) {
+      return { day: Number(displayMatch[1]), month: Number(displayMatch[2]), year: Number(displayMatch[3]) };
+    }
+    const explicitDate = String(item?.issueDate || item?.date || "").slice(0, 10);
+    if (/^\d{4}-\d{2}-\d{2}$/.test(explicitDate) && window.SafetyTimeline?.date(explicitDate)) {
+      const [year, month, day] = explicitDate.split("-").map(Number);
+      return { day, month, year };
+    }
     let day = Number(item?.issueDay) || 0;
     let month = Number(item?.issueMonth) || 0;
 
@@ -258,13 +329,6 @@
       }
     }
 
-    if (periodMonth && month && month === periodMonth - 1 && item?.createdAt) {
-      const createdDate = new Date(item.createdAt);
-      if (!Number.isNaN(createdDate.getTime()) && (createdDate.getMonth() + 1) === periodMonth) {
-        month = periodMonth;
-      }
-    }
-
     if (!month && periodMonth) month = periodMonth;
     if (!day && periodDay) day = periodDay;
 
@@ -273,11 +337,9 @@
 
   function parseSafetyIssueDateInput(dateStr, safetyPeriod) {
     if (!dateStr) {
-      const norm = getNormalizedSafetyIssueDate({}, safetyPeriod);
       const now = new Date();
-      const d = norm.day || now.getDate();
-      const m = norm.month || (now.getMonth() + 1);
-      return { day: String(d), month: String(m) };
+      const date = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+      return { day: date.slice(8, 10), month: date.slice(5, 7), year: date.slice(0, 4), date };
     }
     const str = String(dateStr).trim();
     let day = 0;
@@ -324,13 +386,17 @@
     }
 
     if (isIso && day && month) {
-      return { day: String(day), month: String(month) };
+      const year = Number(str.slice(0, 4));
+      const date = `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+      return { day: String(day), month: String(month), year: String(year), date: window.SafetyTimeline?.date(date) || "" };
     }
 
     const norm = getNormalizedSafetyIssueDate({ issueDay: day, issueMonth: month }, safetyPeriod);
     return {
       day: String(norm.day || day || ""),
       month: String(norm.month || month || ""),
+      year: String(norm.year || safetyPeriod?.year || new Date().getFullYear()),
+      date: "",
     };
   }
 
@@ -354,8 +420,10 @@
     const zoneLabel = itemArea ? `Zone ${itemArea.code} · ${itemArea.departmentHead || itemArea.responsibleName || ''}` : (item.issueLocation || "Zone");
     const canEditFull = canManageFullSafetyRecord(context, item);
     const canEditCountermeasure = canManageSafetyCountermeasure(context, item);
+    const canSave = canEditFull || canEditCountermeasure;
     const countermeasureOnly = canEditCountermeasure && !canEditFull;
     const lockedAttr = !canEditFull ? "disabled" : "";
+    const countermeasureLockedAttr = !canEditCountermeasure ? "disabled" : "";
     const todayValue = typeof context?.todayIsoDate === "function" ? context.todayIsoDate() : new Date().toISOString().slice(0, 10);
     const safetyPeriod = context?.getPeriod?.(item.periodId || fiveSPeriodId);
     let defaultIssueDate = "";
@@ -415,7 +483,7 @@
         
         <div class="detail-modal-header">
           <div class="detail-header-title">
-            <span>${countermeasureOnly ? "Cập Nhật Cải Tiến / Xử Lý" : "Sửa Báo Cáo Mối Nguy"}</span>
+            <span>${!canSave ? "Chi tiết báo cáo mối nguy" : countermeasureOnly ? "Cập Nhật Cải Tiến / Xử Lý" : "Sửa Báo Cáo Mối Nguy"}</span>
           </div>
           <button type="button" class="btn-close-modal" id="closeDetailModalBtn" aria-label="Đóng">
             <i class="fa-solid fa-xmark"></i>
@@ -491,24 +559,24 @@
                   <i class="fa-solid fa-image"></i>
                 </div>
                 <p class="photo-primary-prompt">Chụp / Đính kèm ảnh hiện trường</p>
-                <div class="photo-action-chip">
+                ${canEditFull ? `<div class="photo-action-chip">
                   <i class="fa-solid fa-plus"></i> Thêm / Tải ảnh mới
-                </div>
+                </div>` : '<p class="photo-primary-prompt">Chưa có ảnh hiện trường</p>'}
               </div>
 
               <div id="modalPhotoWrap1" class="photo-preview-wrap ${modalPhotoUrl ? '' : 'is-hidden'}">
                 <img id="modalPhotoImg1" src="${modalPhotoUrl || ''}" alt="Ảnh hiện trường" class="photo-preview-img cursor-pointer" data-preview-img="${modalPhotoUrl || ''}" data-safety-annotations="${escapeHtml(JSON.stringify(modalPhotoAnnotations))}" title="Chạm để xem phóng to">
                 <div class="photo-preview-actions">
-                  <button type="button" id="modalAnnotatePhotoBtn1" class="photo-btn annotate-btn" title="Vẽ nét & chú thích ảnh" aria-label="Vẽ nét & chú thích ảnh" ${modalPhotoUrl ? '' : 'hidden'}>
+                  <button type="button" id="modalAnnotatePhotoBtn1" class="photo-btn annotate-btn" title="Vẽ nét & chú thích ảnh" aria-label="Vẽ nét & chú thích ảnh" ${modalPhotoUrl && canEditFull ? '' : 'hidden'}>
                     <i class="fa-solid fa-pen-to-square"></i>
                   </button>
                   <button type="button" id="modalOpenPhotoBtn1" class="photo-btn open-btn" title="Mở ảnh lớn" aria-label="Mở ảnh hiện trường" ${modalPhotoUrl ? '' : 'hidden'}>
                     <i class="fa-solid fa-expand"></i>
                   </button>
-                  <button type="button" id="modalRetakePhotoBtn1" class="photo-btn retake-btn" title="Đổi ảnh" aria-label="Đổi ảnh hiện trường" ${lockedAttr}>
+                  <button type="button" id="modalRetakePhotoBtn1" class="photo-btn retake-btn" title="Đổi ảnh" aria-label="Đổi ảnh hiện trường" ${canEditFull ? "" : "hidden disabled"}>
                     <i class="fa-solid fa-arrows-rotate"></i>
                   </button>
-                  <button type="button" id="modalRemovePhotoBtn1" class="photo-btn delete-btn" title="Xóa ảnh" aria-label="Xóa ảnh hiện trường" ${lockedAttr}>
+                  <button type="button" id="modalRemovePhotoBtn1" class="photo-btn delete-btn" title="Xóa ảnh" aria-label="Xóa ảnh hiện trường" ${canEditFull ? "" : "hidden disabled"}>
                     <i class="fa-solid fa-trash-can"></i>
                   </button>
                 </div>
@@ -532,6 +600,7 @@
                 <option value="worker" ${item.foundChannel === 'worker' ? 'selected' : ''}>Công nhân</option>
                 <option value="head" ${item.foundChannel === 'head' ? 'selected' : ''}>Trưởng bộ phận</option>
                 <option value="assessor" ${item.foundChannel === 'assessor' ? 'selected' : ''}>Assessor</option>
+                <option value="at5s" ${item.foundChannel === 'at5s' ? 'selected' : ''}>Ban AT - 5S</option>
               </select>
             </div>
             <div class="modal-form-group">
@@ -547,45 +616,45 @@
             </div>
             <div class="modal-form-group">
               <label class="modal-form-label">Ngày dự kiến hoàn thành</label>
-              <input type="date" id="modalDetailCompletionDate" class="modal-form-input" value="${escapeHtml(item.completionDate ? item.completionDate.split('T')[0] : '')}">
+              <input type="date" id="modalDetailCompletionDate" class="modal-form-input" value="${escapeHtml(item.completionDate ? item.completionDate.split('T')[0] : '')}" ${countermeasureLockedAttr}>
             </div>
           </div>
 
           <!-- Improvement / Countermeasure Details -->
           <div class="modal-form-group">
             <label class="modal-form-label">Đối sách cải tiến, xử lý</label>
-            <textarea id="modalDetailImprovement" class="modal-form-textarea" rows="2" placeholder="Nội dung phương án cải tiến / xử lý...">${escapeHtml(item.improvementContent || '')}</textarea>
+            <textarea id="modalDetailImprovement" class="modal-form-textarea" rows="2" placeholder="Nội dung phương án cải tiến / xử lý..." ${countermeasureLockedAttr}>${escapeHtml(item.improvementContent || '')}</textarea>
           </div>
 
           <!-- Photo 2: Ảnh sau cải tiến (Edit, Add & Delete) -->
           <div class="modal-form-group">
             <label class="modal-form-label">Ảnh sau cải tiến (nếu có)</label>
             <div class="modal-photo-upload-box" id="modalPhotoBox2">
-              <input type="file" id="modalPhotoInput2" accept="image/*" class="photo-file-input ${modalAfterPhotoUrl ? 'is-hidden' : ''}">
+              <input type="file" id="modalPhotoInput2" accept="image/*" class="photo-file-input ${modalAfterPhotoUrl ? 'is-hidden' : ''}" ${countermeasureLockedAttr}>
               
               <div id="modalPhotoPlaceholder2" class="photo-placeholder ${modalAfterPhotoUrl ? 'is-hidden' : ''}">
                 <div class="photo-icon-circle">
                   <i class="fa-solid fa-image"></i>
                 </div>
                 <p class="photo-primary-prompt">Chụp / Đính kèm ảnh sau cải tiến</p>
-                <div class="photo-action-chip">
+                ${canEditCountermeasure ? `<div class="photo-action-chip">
                   <i class="fa-solid fa-plus"></i> Thêm ảnh đối sách
-                </div>
+                </div>` : '<p class="photo-primary-prompt">Chưa có ảnh đối sách</p>'}
               </div>
 
               <div id="modalPhotoWrap2" class="photo-preview-wrap ${modalAfterPhotoUrl ? '' : 'is-hidden'}">
                 <img id="modalPhotoImg2" src="${modalAfterPhotoUrl || ''}" alt="Ảnh sau cải tiến" class="photo-preview-img cursor-pointer" data-preview-img="${modalAfterPhotoUrl || ''}" data-safety-annotations="${escapeHtml(JSON.stringify(modalAfterPhotoAnnotations))}" title="Chạm để xem phóng to">
                 <div class="photo-preview-actions">
-                  <button type="button" id="modalAnnotatePhotoBtn2" class="photo-btn annotate-btn" title="Vẽ nét & chú thích ảnh" aria-label="Vẽ nét & chú thích ảnh" ${modalAfterPhotoUrl ? '' : 'hidden'}>
+                  <button type="button" id="modalAnnotatePhotoBtn2" class="photo-btn annotate-btn" title="Vẽ nét & chú thích ảnh" aria-label="Vẽ nét & chú thích ảnh" ${modalAfterPhotoUrl && canEditCountermeasure ? '' : 'hidden'}>
                     <i class="fa-solid fa-pen-to-square"></i>
                   </button>
                   <button type="button" id="modalOpenPhotoBtn2" class="photo-btn open-btn" title="Mở ảnh lớn" aria-label="Mở ảnh sau cải tiến" ${modalAfterPhotoUrl ? '' : 'hidden'}>
                     <i class="fa-solid fa-expand"></i>
                   </button>
-                  <button type="button" id="modalRetakePhotoBtn2" class="photo-btn retake-btn" title="Đổi ảnh" aria-label="Đổi ảnh sau cải tiến">
+                  <button type="button" id="modalRetakePhotoBtn2" class="photo-btn retake-btn" title="Đổi ảnh" aria-label="Đổi ảnh sau cải tiến" ${canEditCountermeasure ? "" : "hidden disabled"}>
                     <i class="fa-solid fa-arrows-rotate"></i>
                   </button>
-                  <button type="button" id="modalRemovePhotoBtn2" class="photo-btn delete-btn" title="Xóa ảnh" aria-label="Xóa ảnh sau cải tiến">
+                  <button type="button" id="modalRemovePhotoBtn2" class="photo-btn delete-btn" title="Xóa ảnh sau cải tiến" ${canEditCountermeasure ? "" : "hidden disabled"}>
                     <i class="fa-solid fa-trash-can"></i>
                   </button>
                 </div>
@@ -599,37 +668,38 @@
           <div class="modal-form-grid-2">
             <div class="modal-form-group">
               <label class="modal-form-label">Đảm nhiệm (PIC)</label>
-              <input type="text" id="modalDetailActionOwner" class="modal-form-input" value="${escapeHtml(item.actionOwner || "")}" placeholder="Người đảm nhiệm...">
+              <input type="text" id="modalDetailActionOwner" class="modal-form-input" value="${escapeHtml(item.actionOwner || "")}" placeholder="Người đảm nhiệm..." ${countermeasureLockedAttr}>
             </div>
             <div class="modal-form-group">
               <label class="modal-form-label">Kế hoạch</label>
-              <input type="text" id="modalDetailActionPlan" class="modal-form-input" value="${escapeHtml(item.actionPlan || '')}" placeholder="Kế hoạch xử lý...">
+              <input type="text" id="modalDetailActionPlan" class="modal-form-input" value="${escapeHtml(item.actionPlan || '')}" placeholder="Kế hoạch xử lý..." ${countermeasureLockedAttr}>
             </div>
           </div>
 
         </div>
 
         <!-- Action Buttons Footer -->
-        <div class="detail-modal-footer ${canEditFull ? "has-delete" : "countermeasure-only"}">
+        ${canSave ? `<div class="detail-modal-footer ${canEditFull ? "has-delete" : "countermeasure-only"}">
           ${canEditFull ? `<button type="button" class="btn-detail-delete" id="btnDetailDelete">
             XÓA BÁO CÁO
           </button>` : ""}
           <button type="button" class="btn-detail-save" id="btnDetailSave">
             LƯU THAY ĐỔI
           </button>
-        </div>
+        </div>` : ""}
 
       </div>
     `;
 
     document.body.appendChild(modal);
-    if (!canEditCountermeasure) {
-      modal.querySelectorAll("input, select, textarea").forEach((input) => { input.disabled = true; });
-      modal.querySelector(".detail-modal-footer")?.insertAdjacentHTML("beforebegin", '<p class="findings-readonly" role="status">Chỉ xem — bạn không có quyền thêm, sửa, xóa báo cáo này.</p>');
+    if (!canSave) {
+      modal.querySelector(".detail-modal-body")?.insertAdjacentHTML("beforeend", '<p class="findings-readonly" role="status">Chỉ xem — bạn không có quyền thêm, sửa, xóa báo cáo này.</p>');
     }
     modal.addEventListener("click", (event) => {
       const photoButton = event.target.closest(".photo-btn");
-      if (photoButton && (!canEditCountermeasure || (countermeasureOnly && photoButton.closest("#modalPhotoWrap1")))) {
+      const photoIsEditable = photoButton?.classList.contains("open-btn")
+        || (photoButton?.closest("#modalPhotoWrap1") ? canEditFull : canEditCountermeasure);
+      if (photoButton && !photoIsEditable) {
         event.preventDefault();
         event.stopImmediatePropagation();
         showMobileToast("Bạn không có quyền sửa, xóa ảnh này.", true);
@@ -940,8 +1010,8 @@
 
     // Save button click inside direct edit modal
     modal.querySelector("#btnDetailSave")?.addEventListener("click", async () => {
-      if (!canManageSafetyCountermeasure(context, item)) {
-        showMobileToast("Tài khoản của bạn không có quyền cập nhật phần cải tiến/xử lý cho zone này!", true);
+      if (!canManageSafetyCountermeasure(context, item) && !canManageFullSafetyRecord(context, item)) {
+        showMobileToast("Tài khoản của bạn không có quyền sửa báo cáo mối nguy này!", true);
         return;
       }
 
@@ -976,11 +1046,19 @@
       const completedDate = cleanDateStr(item.completedDate) || "";
       const issueDateValue = modal.querySelector("#modalDetailIssueDate")?.value || "";
 
-      let { day: issueDay, month: issueMonth } = parseSafetyIssueDateInput(issueDateValue, safetyPeriod);
+      let { day: issueDay, month: issueMonth, date: issueDate } = parseSafetyIssueDateInput(issueDateValue, safetyPeriod);
       if (!issueDay || !issueMonth) {
         const fallbackNorm = getNormalizedSafetyIssueDate(item, safetyPeriod);
         issueDay = issueDay || String(fallbackNorm.day || item.issueDay || "");
         issueMonth = issueMonth || String(fallbackNorm.month || item.issueMonth || "");
+      }
+      if (!issueDate && !countermeasureOnly) {
+        showMobileToast("Ngày đánh giá an toàn không hợp lệ.", true);
+        if (btnSave) {
+          btnSave.disabled = false;
+          btnSave.innerHTML = `<i class="fa-solid fa-floppy-disk"></i><span>Lưu Thay Đổi</span>`;
+        }
+        return;
       }
 
       if (!countermeasureOnly && !note) {
@@ -1042,6 +1120,7 @@
         : {
             ...item,
             createdAt: item.createdAt || item.updatedAt || now.toISOString(),
+            issueDate,
             issueDay: issueDay || item.issueDay || "",
             issueMonth: issueMonth || item.issueMonth || "",
             note,
@@ -1077,6 +1156,9 @@
         if (context?.state?.deletedSafetyRecords) {
           context.state.deletedSafetyRecords = context.state.deletedSafetyRecords.filter((r) => r.id !== item.id);
         }
+        currentSafetyHistoryPage = 1;
+        safetyHistoryPageKey = "";
+        safetyHistoryPageData = null;
         if (typeof context?.tryUnmarkSafetyRecordDeleted === "function") {
           await context.tryUnmarkSafetyRecordDeleted(item.id);
         }
@@ -1115,9 +1197,12 @@
         }
         if (context?.state?.safetyRecords) {
           context.state.safetyRecords = context.state.safetyRecords.filter((r) => r.id !== item.id);
+          safetyHistoryPageKey = "";
+          safetyHistoryPageData = null;
         }
         if (editingSafetyRecordId === item.id) {
           editingSafetyRecordId = "";
+          currentSafetyZoneId = "";
           uploadedSafetyPhotoData = "";
           uploadedSafetyAfterPhotoData = "";
         }
@@ -1149,6 +1234,9 @@
   function checkFiveSPermission(context) {
     const user = context?.currentUser;
     if (!user) return false;
+    if (typeof context?.isAdminAccount === "function" && context.isAdminAccount(user)) return true;
+    if (typeof context?.hasAt5sRole === "function" && context.hasAt5sRole(user)) return true;
+    if (typeof context?.isDepartmentHeadAccount === "function" && context.isDepartmentHeadAccount(user)) return true;
     if (typeof context?.isFiveSAssessor === "function") {
       return context.isFiveSAssessor(user);
     }
@@ -1196,6 +1284,23 @@
       || "assessor";
   }
 
+  function formatMobileDateDisplay(value) {
+    const match = String(value || "").trim().match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    return match ? `${match[3]}/${match[2]}/${match[1]}` : "";
+  }
+
+  function parseMobileDateDisplay(value) {
+    const match = String(value || "").trim().match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+    if (!match) return "";
+    const isoDate = `${match[3]}-${match[2]}-${match[1]}`;
+    const date = new Date(Number(match[3]), Number(match[2]) - 1, Number(match[1]));
+    return date.getFullYear() === Number(match[3])
+      && date.getMonth() === Number(match[2]) - 1
+      && date.getDate() === Number(match[1])
+      ? isoDate
+      : "";
+  }
+
   function canManageSafetyCountermeasure(context, record) {
     if (!record) return false;
     if (typeof context?.canManageSafetyCountermeasure === "function") {
@@ -1234,6 +1339,28 @@
     });
   }
 
+  function showMobileHelpDialog(overlay, context, sectionId = "5s") {
+    const helpDialog = overlay?.querySelector("#mobileHelpDialog");
+    if (!helpDialog) return false;
+
+    const currentContext = window.__GET_APP_CONTEXT__?.() || context;
+    const guideApi = window.UserGuideContent;
+    const guideSection = ["safety", "5s", "findings"].includes(sectionId) ? sectionId : "5s";
+    const helpTitle = helpDialog.querySelector("#mobileHelpDialogTitle");
+    const helpContent = helpDialog.querySelector("#mobileHelpContent");
+    const guide = guideApi?.getGuide(guideSection, currentContext?.state?.userGuides);
+
+    if (helpTitle) {
+      helpTitle.textContent = guide?.title ? `Hướng dẫn · ${guide.title}` : "Hướng dẫn phần đang mở";
+    }
+    if (helpContent && guideApi) {
+      helpContent.innerHTML = guideApi.renderGuide(guideSection, currentContext?.state?.userGuides);
+      currentContext?.hydrateAuthenticatedPhotos?.(helpContent);
+    }
+    if (!helpDialog.open) helpDialog.showModal();
+    return true;
+  }
+
   // Open Mobile Prototype View
   function openMobilePrototype(initialTab = "safety", passedContext = null, options = {}) {
     if (passedContext) {
@@ -1249,7 +1376,6 @@
       mobileAccountKey = nextAccountKey;
       currentFiveSZoneId = "";
       currentSafetyZoneId = "";
-      currentSafetyHistoryPeriodId = "";
       currentFiveSScoreSource = "";
       currentFiveSScoreSourceUserKey = nextAccountKey;
       currentFiveSScoreSourceAreaKey = "";
@@ -1260,6 +1386,7 @@
     const existingOverlay = document.getElementById("mobileProtoOverlay");
     if (existingOverlay && document.body.contains(existingOverlay)) {
       showMobilePane(existingOverlay, context);
+      if (options?.openHelp) showMobileHelpDialog(existingOverlay, context, activeTab);
       return;
     }
 
@@ -1279,7 +1406,6 @@
     // Close existing if open
     closeMobilePrototype();
 
-    currentSafetyHistoryPeriodId = "";
 
     const currentTheme = getMobileTheme();
     const overlay = document.createElement("div");
@@ -1294,6 +1420,7 @@
     // Initialize zones & handlers
     initMobilePrototype(overlay, context);
     context?.renderIssueNotificationControls?.();
+    if (options?.openHelp) showMobileHelpDialog(overlay, context, activeTab);
 
     // Update browser URL route
     const targetRoute = activeTab === "findings" ? "/mobile/5s-findings" : activeTab === "5s" ? "/mobile/5s" : "/mobile/safety";
@@ -1338,7 +1465,8 @@
 
     const isAdmin = typeof context?.isAdminAccount === "function" && context.isAdminAccount(user);
     const isZoneOwner = typeof context?.isZoneOwnerAccount === "function" && context.isZoneOwnerAccount(user);
-    const roleTitle = context?.isViewerAccount?.(user) ? "Người xem" : context?.isDepartmentHeadAccount?.(user) ? "Trưởng bộ phận" : isZoneOwner ? "Quản lý zone" : isAdmin ? "Admin" : "Assessor";
+    const isAt5sMember = typeof context?.hasAt5sRole === "function" && context.hasAt5sRole(user);
+    const roleTitle = context?.isViewerAccount?.(user) ? "Người xem" : context?.isDepartmentHeadAccount?.(user) ? "Trưởng bộ phận" : isZoneOwner ? "Quản lý zone" : isAdmin ? "Admin" : isAt5sMember ? "Ban AT - 5S" : "Assessor";
 
     return `
       <!-- Desktop Top Control Bar (Hidden on small mobile screens) -->
@@ -1492,26 +1620,9 @@
     }
     const helpDialog = overlay.querySelector("#mobileHelpDialog");
     const helpCloseBtn = overlay.querySelector("#mobileHelpCloseBtn");
-    const helpTitle = overlay.querySelector("#mobileHelpDialogTitle");
     const helpContent = overlay.querySelector("#mobileHelpContent");
-    const helpGuideByTab = {
-      safety: "safety",
-      "5s": "5s",
-      findings: "findings",
-    };
     helpBtn?.addEventListener("click", () => {
-      const guideSection = helpGuideByTab[activeTab] || helpGuideByTab.safety;
-      const currentContext = window.__GET_APP_CONTEXT__?.() || context;
-      const guideApi = window.UserGuideContent;
-      if (helpTitle) {
-        const guide = guideApi?.getGuide(guideSection, currentContext?.state?.userGuides);
-        helpTitle.textContent = guide?.title ? `Hướng dẫn · ${guide.title}` : "Hướng dẫn phần đang mở";
-      }
-      if (helpContent && guideApi) {
-        helpContent.innerHTML = guideApi.renderGuide(guideSection, currentContext?.state?.userGuides);
-        currentContext?.hydrateAuthenticatedPhotos?.(helpContent);
-      }
-      if (!helpDialog?.open) helpDialog?.showModal();
+      showMobileHelpDialog(overlay, context, activeTab);
     });
     helpCloseBtn?.addEventListener("click", () => helpDialog?.close());
     helpDialog?.addEventListener("click", (event) => {
@@ -1587,8 +1698,15 @@
     const switched = overlay.dataset.activePane !== activeTab;
     overlay.dataset.activePane = activeTab;
     const periodBadge = overlay.querySelector(".period-pill-text");
+    const fiveSPeriodId = context?.getActivePeriodId?.(context.FIVE_S_PERIOD_TYPE) || "";
+    const fiveSPeriod = context?.getPeriod?.(fiveSPeriodId);
     const periodType = activeTab === "safety" ? context.SAFETY_PERIOD_TYPE : context.FIVE_S_PERIOD_TYPE;
-    if (periodBadge) periodBadge.textContent = context.periodLabel(context.getPeriod(context.getActivePeriodId(periodType)));
+    const currentPeriod = context?.getPeriod?.(context?.getActivePeriodId?.(periodType));
+    if (periodBadge) {
+      periodBadge.textContent = (fiveSPeriod ? context?.periodLabel?.(fiveSPeriod) : "")
+        || (currentPeriod ? context?.periodLabel?.(currentPeriod) : "")
+        || "Kỳ đang mở";
+    }
     for (const [tab, suffix] of [["safety", "Safety"], ["5s", "5S"], ["findings", "Findings"]]) {
       const button = overlay.querySelector("#mobileTabBtn" + suffix);
       const pane = overlay.querySelector("#mobileScreen" + suffix);
@@ -1616,10 +1734,6 @@
     if (!screen) return;
 
     const safetyPeriodId = context?.getActivePeriodId?.(context.SAFETY_PERIOD_TYPE) || "";
-    const historyPeriods = context?.getPeriodsByType?.(context.SAFETY_PERIOD_TYPE) || [];
-    if (!historyPeriods.some((period) => period.id === currentSafetyHistoryPeriodId)) {
-      currentSafetyHistoryPeriodId = safetyPeriodId || historyPeriods[0]?.id || "";
-    }
     const allSafetyAreas = context ? context.getAreasForPeriod(safetyPeriodId) : [];
     const user = context?.currentUser;
     const isAdmin = typeof context?.isAdminAccount === "function" && context.isAdminAccount(user);
@@ -1642,38 +1756,31 @@
     }
 
     if (editingRecord) {
-      currentSafetyZoneId = editingRecord.areaId || currentSafetyZoneId;
+      currentSafetyZoneId = editingRecord.areaId || "";
       if (!uploadedSafetyPhotoData && editingRecord.photoDataUrl) {
         uploadedSafetyPhotoData = editingRecord.photoDataUrl;
       }
       if (!uploadedSafetyAfterPhotoData && editingRecord.afterPhotoDataUrl) {
         uploadedSafetyAfterPhotoData = editingRecord.afterPhotoDataUrl;
       }
+    } else {
+      currentSafetyZoneId = "";
     }
-    currentSafetyZoneId = resolveMobileAreaId(currentSafetyZoneId, availableSafetyAreas);
 
     const now = new Date();
     const safetyPeriod = context?.getPeriod?.(safetyPeriodId);
-    let defaultIssueDate = "";
+    const todayValue = context?.todayIsoDate?.()
+      || [now.getFullYear(), String(now.getMonth() + 1).padStart(2, "0"), String(now.getDate()).padStart(2, "0")].join("-");
+    let defaultIssueDate = todayValue;
     if (editingRecord) {
-      const normEdit = getNormalizedSafetyIssueDate(editingRecord, safetyPeriod);
-      if (normEdit.day && normEdit.month) {
-        const yr = normEdit.year || Number(safetyPeriod?.year) || now.getFullYear();
-        defaultIssueDate = `${yr}-${String(normEdit.month).padStart(2, "0")}-${String(normEdit.day).padStart(2, "0")}`;
-      }
-    }
-    if (!defaultIssueDate) {
-      const normPeriod = getNormalizedSafetyIssueDate({}, safetyPeriod);
-      const yr = normPeriod.year || Number(safetyPeriod?.year) || now.getFullYear();
-      const mo = normPeriod.month || Number(safetyPeriod?.month) || (now.getMonth() + 1);
-      const da = normPeriod.day || now.getDate();
-      defaultIssueDate = `${yr}-${String(mo).padStart(2, "0")}-${String(da).padStart(2, "0")}`;
+      defaultIssueDate = context?.getSafetyRecordIssueDate?.(editingRecord, safetyPeriod)
+        || editingRecord.issueDate
+        || todayValue;
     }
 
     const dateStr = `${String(now.getDate()).padStart(2, "0")}/${String(now.getMonth() + 1).padStart(2, "0")}/${now.getFullYear()} ${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
 
     const defaultFinder = editingRecord ? (editingRecord.issueFoundBy || "") : (context?.getAccountDisplayName?.(user, context.SAFETY_PERIOD_TYPE, safetyPeriodId) || user?.name || "");
-    const todayValue = typeof context?.todayIsoDate === "function" ? context.todayIsoDate() : new Date().toISOString().slice(0, 10);
 
     const mobileSafetyDraftKey = editingSafetyRecordId ? (`mob_safety_edit_${editingSafetyRecordId}`) : (`mob_safety_new_${safetyPeriodId}`);
     const draftManager = typeof window !== "undefined" ? window.FormDraftManager : null;
@@ -1690,10 +1797,15 @@
         pendingSafetyAfterPhotoAnnotations = savedSafetyDraft.afterPhotoAnnotations || [];
       }
     }
+    const restoredSafetyZoneId = savedSafetyDraft?.areaId || editingRecord?.areaId || "";
+    currentSafetyZoneId = availableSafetyAreas.some((area) => area.id === restoredSafetyZoneId)
+      ? restoredSafetyZoneId
+      : "";
 
     const activeStop6 = savedSafetyDraft?.stop6 !== undefined ? savedSafetyDraft.stop6 : (editingRecord?.issueType || "");
     const activeLevel = savedSafetyDraft?.level !== undefined ? savedSafetyDraft.level : (editingRecord?.issueLevel || "");
-    const activeFoundChannel = savedSafetyDraft?.foundChannel !== undefined ? savedSafetyDraft.foundChannel : (editingRecord?.foundChannel || (!editingRecord ? "assessor" : "worker"));
+    const defaultFoundChannel = context?.hasAt5sRole?.(context?.currentUser) ? "at5s" : (!editingRecord ? "assessor" : "worker");
+    const activeFoundChannel = savedSafetyDraft?.foundChannel !== undefined ? savedSafetyDraft.foundChannel : (editingRecord?.foundChannel || defaultFoundChannel);
     const activeIssueStatus = savedSafetyDraft?.issueStatus !== undefined ? savedSafetyDraft.issueStatus : (editingRecord?.issueStatus || "open");
     const activeFinder = savedSafetyDraft?.issueFoundBy !== undefined ? savedSafetyDraft.issueFoundBy : defaultFinder;
     const activeEmployeeCode = savedSafetyDraft?.employeeCode !== undefined ? savedSafetyDraft.employeeCode : (editingRecord?.employeeCode || "");
@@ -1703,6 +1815,25 @@
     const activeActionPlan = savedSafetyDraft?.actionPlan !== undefined ? savedSafetyDraft.actionPlan : (editingRecord?.actionPlan || "");
     const activeCompletionDate = savedSafetyDraft?.completionDate !== undefined ? savedSafetyDraft.completionDate : (editingRecord?.completionDate ? editingRecord.completionDate.split("T")[0] : "");
     const activeIssueCount = savedSafetyDraft?.issueCount !== undefined ? savedSafetyDraft.issueCount : (editingRecord?.issueCount || 1);
+
+    const activeMonthKey = monthKeyFromDate(context?.todayIsoDate?.() || new Date());
+
+    const monthOptions = new Map();
+    allRecords.forEach((r) => {
+      const key = monthKeyForSafetyRecord(r, context);
+      if (key) monthOptions.set(key, key);
+    });
+    if (activeMonthKey) {
+      monthOptions.set(activeMonthKey, activeMonthKey);
+    }
+    const sortedMonthKeys = [...monthOptions.keys()].sort((a, b) => b.localeCompare(a));
+    if (!sortedMonthKeys.includes(currentSafetyMonthKey)) {
+      currentSafetyMonthKey = activeMonthKey && sortedMonthKeys.includes(activeMonthKey) ? activeMonthKey : (sortedMonthKeys[0] || "");
+    }
+    const monthOptionsHtml = sortedMonthKeys.map((key) => {
+      const [year, month] = key.split("-");
+      return `<option value="${escapeHtml(key)}" ${key === currentSafetyMonthKey ? "selected" : ""}>Tháng ${Number(month)}/${year}</option>`;
+    }).join("");
 
     screen.innerHTML = `
       <div class="mobile-safety-container">
@@ -1740,7 +1871,7 @@
               <label class="form-label">Khu vực (Zone)<span class="required-star">*</span></label>
               <div class="select-wrapper">
                 <select id="mobileSafetyZoneSelect" required class="form-control form-select" ${availableSafetyAreas.length ? "" : "disabled"}>
-                  ${availableSafetyAreas.length ? '<option value="">-- Chọn Zone --</option>' : '<option value="" selected>Chưa được phân quyền Zone</option>'}
+                  ${availableSafetyAreas.length ? `<option value="" ${currentSafetyZoneId ? "" : "selected"} disabled>Chọn Zone AT</option>` : '<option value="" selected>Chưa được phân quyền Zone</option>'}
                   ${availableSafetyAreas.length ? availableSafetyAreas.map((area) => `
                     <option value="${escapeHtml(area.id)}" ${area.id === currentSafetyZoneId ? 'selected' : ''}>
                       Zone ${escapeHtml(area.code)} · ${escapeHtml(context?.getSafetyDepartmentForArea?.(area, safetyPeriodId) || area.departmentHead || area.responsibleName || "")}
@@ -1858,6 +1989,7 @@
                   <option value="worker" ${activeFoundChannel === 'worker' ? 'selected' : ''}>Công nhân</option>
                   <option value="head" ${activeFoundChannel === 'head' ? 'selected' : ''}>Trưởng bộ phận</option>
                   <option value="assessor" ${activeFoundChannel === 'assessor' ? 'selected' : ''}>Assessor</option>
+                  <option value="at5s" ${activeFoundChannel === 'at5s' ? 'selected' : ''}>Ban AT - 5S</option>
                 </select>
                 <i class="fa-solid fa-chevron-down select-chevron"></i>
               </div>
@@ -1967,7 +2099,7 @@
 
           <!-- Submit Button -->
           <div class="form-submit-row mobile-fixed-save">
-            <button type="button" id="mobileSubmitSafetyBtn" class="btn-primary-gradient">
+            <button type="submit" id="mobileSubmitSafetyBtn" class="btn-primary-gradient">
               <i class="fa-solid ${editingRecord ? 'fa-floppy-disk' : 'fa-paper-plane'}"></i>
               <span>${editingRecord ? 'CẬP NHẬT BÁO CÁO AN TOÀN' : 'LƯU BÁO CÁO AN TOÀN'}</span>
             </button>
@@ -1980,9 +2112,9 @@
             <div class="history-heading-filter">
               <h3 class="history-section-title">Danh sách mối nguy đã ghi nhận</h3>
               <label class="history-period-filter">
-                <span>Kỳ</span>
-                <select id="mobileSafetyHistoryPeriodSelect" aria-label="Lọc danh sách mối nguy theo kỳ đánh giá" ${historyPeriods.length ? "" : "disabled"}>
-                  ${historyPeriods.map((period) => `<option value="${escapeHtml(period.id)}" ${period.id === currentSafetyHistoryPeriodId ? "selected" : ""}>${escapeHtml(context.periodLabel(period))}</option>`).join("")}
+                <span>Tháng</span>
+                <select id="mobileSafetyMonthFilter" aria-label="Lọc mối nguy theo tháng" ${monthOptionsHtml ? "" : "disabled"}>
+                  ${monthOptionsHtml || '<option value="">Chưa có dữ liệu</option>'}
                 </select>
               </label>
             </div>
@@ -1995,7 +2127,7 @@
       </div>
     `;
 
-    renderSafetyHistory(screen, context, currentSafetyHistoryPeriodId, dateStr);
+    renderSafetyHistory(screen, context, "", dateStr);
     // Wire up events inside Safety form
     wireSafetyEvents(screen, context, safetyPeriodId, overlay, allowedAreaIds);
     wireSafetyHistory(screen, context, overlay);
@@ -2006,24 +2138,44 @@
     const count = screen.querySelector("#mobileSafetyHistoryCount");
     if (!list || !count) return;
 
-    const period = context?.getPeriod?.(periodId);
-    const periodAreas = context?.getAreasForPeriod?.(periodId) || [];
+    const catalogPeriodId = context?.getActivePeriodId?.(context.SAFETY_PERIOD_TYPE) || periodId || "";
+    const period = context?.getPeriod?.(catalogPeriodId);
+    const periodAreas = context?.getAreasForPeriod?.(catalogPeriodId) || [];
     const reportableAreas = periodAreas.filter((area) => String(area.templateCode || area.code || "").trim() !== "27");
-    const allRecords = (context?.state?.safetyRecords || [])
-      .filter((record) => !periodId || record.periodId === periodId)
-      .sort((a, b) => {
+    const sortByAssessmentDate = (a, b) => {
+        const dateA = context?.getSafetyRecordIssueDate?.(a, context?.getPeriod?.(a.periodId)) || "";
+        const dateB = context?.getSafetyRecordIssueDate?.(b, context?.getPeriod?.(b.periodId)) || "";
+        if (dateA !== dateB) return dateB.localeCompare(dateA);
         const timeA = String(a.createdAt || a.updatedAt || "");
         const timeB = String(b.createdAt || b.updatedAt || "");
         if (timeA !== timeB) return timeB.localeCompare(timeA);
         return String(b.id || "").localeCompare(String(a.id || ""));
-      });
-    const pageKey = `${periodId}:${currentSafetyHistoryPage}`;
+      };
+    const allRecords = (context?.state?.safetyRecords || []).slice().sort(sortByAssessmentDate);
+    const allMonthRecords = currentSafetyMonthKey
+      ? allRecords.filter((rec) => monthKeyForSafetyRecord(rec, context) === currentSafetyMonthKey)
+      : allRecords;
+
+    let selYear = 0;
+    let selMonth = 0;
+    if (currentSafetyMonthKey && currentSafetyMonthKey.includes("-")) {
+      const parts = currentSafetyMonthKey.split("-").map(Number);
+      selYear = parts[0] || 0;
+      selMonth = parts[1] || 0;
+    }
+
+    const pageKey = `${currentSafetyMonthKey || "all"}:${currentSafetyHistoryPage}`;
     if (typeof context?.loadCollectionPage === "function" && safetyHistoryPageKey !== pageKey) {
       const requestId = ++safetyHistoryPageRequestId;
       safetyHistoryPageKey = pageKey;
-      context.loadCollectionPage({ collection: "safetyRecords", periodId, page: currentSafetyHistoryPage, pageSize: 20 })
+      const pageFilters = { collection: "safetyRecords", page: currentSafetyHistoryPage, pageSize: 20 };
+      if (selYear && selMonth) {
+        pageFilters.year = selYear;
+        pageFilters.month = selMonth;
+      }
+      context.loadCollectionPage(pageFilters)
         .then((result) => {
-          if (requestId !== safetyHistoryPageRequestId || pageKey !== `${currentSafetyHistoryPeriodId}:${currentSafetyHistoryPage}`) return;
+          if (requestId !== safetyHistoryPageRequestId || pageKey !== `${currentSafetyMonthKey || "all"}:${currentSafetyHistoryPage}`) return;
           safetyHistoryPageData = { ...result, key: pageKey };
           renderSafetyHistory(screen, context, periodId, dateStr);
         })
@@ -2033,17 +2185,28 @@
         });
     }
     const serverPage = safetyHistoryPageData?.key === pageKey ? safetyHistoryPageData : null;
-    const recentRecords = serverPage?.items || allRecords.slice((currentSafetyHistoryPage - 1) * 20, currentSafetyHistoryPage * 20);
-    const totalRecords = serverPage?.total ?? allRecords.length;
-    const totalPages = Math.max(1, Math.ceil(totalRecords / 20));
+    const baseItems = serverPage?.items
+      ? (currentSafetyMonthKey
+          ? serverPage.items.filter((rec) => monthKeyForSafetyRecord(rec, context) === currentSafetyMonthKey)
+          : serverPage.items)
+      : allMonthRecords.slice((currentSafetyHistoryPage - 1) * 20, currentSafetyHistoryPage * 20);
+    const recentRecords = baseItems.slice().sort(sortByAssessmentDate);
+    const totalMonthRecords = currentSafetyMonthKey
+      ? (allMonthRecords.length || (serverPage?.key === pageKey ? serverPage.total : 0))
+      : (serverPage?.total ?? allMonthRecords.length);
+    const totalPages = Math.max(1, Math.ceil(totalMonthRecords / 20));
     currentSafetyHistoryPage = Math.min(currentSafetyHistoryPage, totalPages);
 
-    count.textContent = `${totalRecords} Mối nguy`;
+    count.textContent = `${totalMonthRecords} Mối nguy`;
+    count.title = currentSafetyMonthKey
+      ? `${totalMonthRecords} mối nguy trong tháng đã chọn`
+      : `${totalMonthRecords} mối nguy`;
+
     if (!recentRecords.length) {
       list.innerHTML = `
         <div class="history-empty-card">
           <i class="fa-solid fa-shield-check text-slate-500 text-2xl mb-1"></i>
-          <p>Chưa có báo cáo mối nguy nào được ghi nhận trong kỳ này.</p>
+          <p>Chưa có báo cáo mối nguy nào trong tháng này.</p>
         </div>
       `;
       return;
@@ -2061,10 +2224,13 @@
       const levelBadgeText = issueLevel ? (issueLevel.startsWith("CẤP") ? issueLevel : `Cấp ${issueLevel}`) : "Chưa phân loại";
       const rawStop6 = item.issueType || item.stop6 || item.stop_6 || item.issue_type || "";
       const stop6Text = String(rawStop6).trim();
+      const itemDateIso = context?.getSafetyRecordIssueDate?.(item, context?.getPeriod?.(item.periodId)) || item.issueDate || "";
       const { day: normDay, month: normMonth } = getNormalizedSafetyIssueDate(item, period);
-      const itemDate = normDay && normMonth
-        ? `${String(normDay).padStart(2, "0")}/${String(normMonth).padStart(2, "0")}`
-        : (item.updatedAt ? new Date(item.updatedAt).toLocaleDateString("vi-VN") : dateStr);
+      const itemDate = itemDateIso
+        ? formatIsoToVnDate(itemDateIso)
+        : normDay && normMonth
+          ? `${String(normDay).padStart(2, "0")}/${String(normMonth).padStart(2, "0")}`
+          : (item.updatedAt ? new Date(item.updatedAt).toLocaleDateString("vi-VN") : dateStr);
 
       return `
         <div class="history-card ${editingSafetyRecordId === item.id ? "is-editing" : ""}" data-action="open-safety-card-detail" data-id="${escapeHtml(item.id)}" role="button" tabindex="0" aria-label="Mở chi tiết mối nguy tại ${escapeHtml(zoneLabel)}" title="Chạm để xem chi tiết, sửa hoặc xóa">
@@ -2094,39 +2260,42 @@
     }).join("") + (totalPages > 1 ? `
       <div class="safety-table-pager" aria-label="Phân trang danh sách mối nguy">
         <button type="button" class="tiny-button" data-safety-history-page="${currentSafetyHistoryPage - 1}" ${currentSafetyHistoryPage <= 1 ? "disabled" : ""}>Trước</button>
-        <span>Trang ${currentSafetyHistoryPage}/${totalPages}</span>
+        <span>${recentRecords.length}/${totalMonthRecords} · Trang ${currentSafetyHistoryPage}/${totalPages}</span>
         <button type="button" class="tiny-button" data-safety-history-page="${currentSafetyHistoryPage + 1}" ${currentSafetyHistoryPage >= totalPages ? "disabled" : ""}>Sau</button>
       </div>` : "");
   }
 
   function wireSafetyHistory(screen, context, overlay) {
-    const filter = screen.querySelector("#mobileSafetyHistoryPeriodSelect");
     const list = screen.querySelector("#mobileSafetyHistoryList");
-    if (!filter || !list) return;
+    const monthSelect = screen.querySelector("#mobileSafetyMonthFilter");
+    if (!list) return;
 
-    filter.addEventListener("change", () => {
-      currentSafetyHistoryPeriodId = filter.value;
-      currentSafetyHistoryPage = 1;
-      safetyHistoryPageData = null;
-      safetyHistoryPageKey = "";
-      const now = new Date();
-      const dateStr = `${String(now.getDate()).padStart(2, "0")}/${String(now.getMonth() + 1).padStart(2, "0")}/${now.getFullYear()} ${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
-      renderSafetyHistory(screen, context, currentSafetyHistoryPeriodId, dateStr);
-    });
+    if (monthSelect) {
+      monthSelect.addEventListener("change", (event) => {
+        currentSafetyMonthKey = event.target.value;
+        currentSafetyHistoryPage = 1;
+        safetyHistoryPageKey = "";
+        safetyHistoryPageData = null;
+        const now = new Date();
+        const dateStr = `${String(now.getDate()).padStart(2, "0")}/${String(now.getMonth() + 1).padStart(2, "0")}/${now.getFullYear()} ${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
+        renderSafetyHistory(screen, context, "", dateStr);
+      });
+    }
 
     list.addEventListener("click", (event) => {
       const button = event.target.closest("[data-safety-history-page]");
       if (!button || !list.contains(button) || button.disabled) return;
       currentSafetyHistoryPage = Number(button.dataset.safetyHistoryPage) || 1;
-      safetyHistoryPageData = null;
       safetyHistoryPageKey = "";
+      safetyHistoryPageData = null;
       const now = new Date();
       const dateStr = `${String(now.getDate()).padStart(2, "0")}/${String(now.getMonth() + 1).padStart(2, "0")}/${now.getFullYear()} ${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
-      renderSafetyHistory(screen, context, currentSafetyHistoryPeriodId, dateStr);
+      renderSafetyHistory(screen, context, "", dateStr);
     });
 
     const openRecordFromCard = (card) => {
-      const record = (context?.state?.safetyRecords || []).find((item) => item.id === card.dataset.id);
+      const record = (safetyHistoryPageData?.items || []).find((item) => item.id === card.dataset.id)
+        || (context?.state?.safetyRecords || []).find((item) => item.id === card.dataset.id);
       if (!record) return;
       if (window.FormDraftManager?.hasAnyDirty()) {
         window.FormDraftManager.showUnsavedConfirmModal({
@@ -2208,6 +2377,7 @@
       cancelEditBtn.addEventListener("click", () => {
         const doCancelEdit = () => {
           editingSafetyRecordId = "";
+          currentSafetyZoneId = "";
           uploadedSafetyPhotoData = "";
           uploadedSafetyAfterPhotoData = "";
           renderSafetyScreen(overlay, context);
@@ -2495,14 +2665,9 @@
       form.addEventListener("change", markMobileSafetyDirty);
       if (!checkSafetyPermission(context)) {
         form.querySelectorAll("input, select, textarea").forEach((input) => { input.disabled = true; });
+        form.querySelector(".form-submit-row")?.remove();
+        form.querySelectorAll(".photo-action-chip, .photo-btn:not(.open-btn)").forEach((control) => control.remove());
         form.insertAdjacentHTML("afterbegin", '<p class="findings-readonly" role="status">Chỉ xem — tài khoản người xem không có quyền thêm, sửa, xóa đánh giá an toàn.</p>');
-        form.addEventListener("click", (event) => {
-          if (event.target.closest("button")) {
-            event.preventDefault();
-            event.stopImmediatePropagation();
-            showMobileToast("Tài khoản người xem không có quyền thêm, sửa, lưu hoặc xóa đánh giá an toàn.", true);
-          }
-        }, true);
       }
       let isSubmittingSafety = false;
       const handleSafetySubmit = async (e) => {
@@ -2511,10 +2676,6 @@
           e.stopPropagation?.();
         }
         if (isSubmittingSafety) return;
-
-        if (typeof document !== "undefined" && document.activeElement && typeof document.activeElement.blur === "function") {
-          document.activeElement.blur();
-        }
 
         if (!checkSafetyPermission(context)) {
           showMobileToast("Tài khoản của bạn không có quyền đánh giá An toàn!", true);
@@ -2594,7 +2755,11 @@
         const user = context?.currentUser;
         const area = context?.getAreasForPeriod?.(safetyPeriodId)?.find((a) => a.id === areaId);
 
-        const { day: issueDay, month: issueMonth } = parseSafetyIssueDateInput(issueDate, safetyPeriod);
+        const { day: issueDay, month: issueMonth, date: normalizedIssueDate } = parseSafetyIssueDateInput(issueDate, safetyPeriod);
+        if (!normalizedIssueDate) {
+          showMobileToast("Ngày đánh giá an toàn không hợp lệ.", true);
+          return;
+        }
         isSubmittingSafety = true;
         const submitBtn = screen.querySelector("#mobileSubmitSafetyBtn");
         if (submitBtn) {
@@ -2625,7 +2790,10 @@
         }
 
         const targetId = isEditing ? editingSafetyRecordId : (context?.makeId ? context.makeId("safety") : `safety-${Date.now()}`);
-        const ownerUsername = user?.username || "assessor";
+        const isSafetyRecordOwner = Boolean(existingRecord && context?.canManageSafetyRecord?.(existingRecord, user));
+        const ownerUsername = existingRecord && isSafetyRecordOwner && !context?.isAdminAccount?.(user)
+          ? (user?.username || existingRecord.accountUsername || "assessor")
+          : (existingRecord?.accountUsername || user?.username || "assessor");
         const ownerName = issueFoundBy || context?.getAccountDisplayName?.(user, context.SAFETY_PERIOD_TYPE, safetyPeriodId) || user?.name || ownerUsername;
 
         const payload = {
@@ -2633,6 +2801,7 @@
           id: targetId,
           periodId: safetyPeriodId,
           areaId: areaId,
+          issueDate: normalizedIssueDate,
           issueLocation: area ? `Zone ${area.code}` : "Zone",
           issueDay,
           issueMonth,
@@ -2662,6 +2831,9 @@
           scorerName: existingRecord?.scorerName || ownerName,
           accountUsername: existingRecord?.accountUsername || ownerUsername,
           createdBy: existingRecord?.createdBy || ownerUsername,
+          createdByAccountId: existingRecord?.createdByAccountId
+            || (!existingRecord || (isSafetyRecordOwner && !context?.isAdminAccount?.(user))
+              ? String(context?.currentUser?.id || "") : ""),
           createdAt: existingRecord?.createdAt || existingRecord?.updatedAt || now.toISOString(),
           updatedAt: now.toISOString(),
         };
@@ -2680,12 +2852,33 @@
           if (context?.state?.deletedSafetyRecords) {
             context.state.deletedSafetyRecords = context.state.deletedSafetyRecords.filter((r) => r.id !== targetId);
           }
+          const savedMonthKey = monthKeyForSafetyRecord(payload, context);
+          currentSafetyHistoryPage = 1;
+          if (savedMonthKey) {
+            currentSafetyMonthKey = savedMonthKey;
+            const savedMonthRecords = (context?.state?.safetyRecords || [])
+              .filter((record) => monthKeyForSafetyRecord(record, context) === savedMonthKey)
+              .sort((left, right) => {
+                const dateLeft = context?.getSafetyRecordIssueDate?.(left, context?.getPeriod?.(left.periodId)) || "";
+                const dateRight = context?.getSafetyRecordIssueDate?.(right, context?.getPeriod?.(right.periodId)) || "";
+                if (dateLeft !== dateRight) return dateRight.localeCompare(dateLeft);
+                const timeLeft = String(left.createdAt || left.updatedAt || "");
+                const timeRight = String(right.createdAt || right.updatedAt || "");
+                if (timeLeft !== timeRight) return timeRight.localeCompare(timeLeft);
+                return String(right.id || "").localeCompare(String(left.id || ""));
+              });
+            const savedRecordIndex = savedMonthRecords.findIndex((record) => record.id === targetId);
+            if (savedRecordIndex >= 0) currentSafetyHistoryPage = Math.floor(savedRecordIndex / 20) + 1;
+          }
+          safetyHistoryPageKey = "";
+          safetyHistoryPageData = null;
           if (typeof context?.tryUnmarkSafetyRecordDeleted === "function") {
             await context.tryUnmarkSafetyRecordDeleted(targetId);
           }
 
           // Reset form & state
           editingSafetyRecordId = "";
+          currentSafetyZoneId = "";
           uploadedSafetyPhotoData = "";
           uploadedSafetyAfterPhotoData = "";
           safetyAnnotationDraftId = null;
@@ -2698,6 +2891,10 @@
           draftManager?.unregisterDirtyForm(mobileSafetyDraftKey);
           showMobileToast(isEditing ? "Đã cập nhật báo cáo an toàn!" : "Đã lưu báo cáo an toàn thành công!");
           renderSafetyScreen(overlay, context);
+          if (!isEditing) {
+            scrollMobileTargetIntoView(() => Array.from(screen.querySelectorAll('#mobileSafetyHistoryList .history-card[data-action="open-safety-card-detail"]'))
+              .find((card) => card.dataset.id === String(targetId)));
+          }
         } catch (err) {
           showMobileToast(err?.message || "Không lưu được báo cáo. Vui lòng thử lại.", true);
           if (submitBtn) {
@@ -2711,9 +2908,7 @@
 
       form.addEventListener("submit", handleSafetySubmit);
       const submitBtn = screen.querySelector("#mobileSubmitSafetyBtn");
-      if (submitBtn) {
-        submitBtn.addEventListener("click", handleSafetySubmit);
-      }
+      window.bindTouchSubmitBeforeKeyboardDismiss?.(form, submitBtn);
     }
   }
 
@@ -2746,7 +2941,7 @@
     const scoreSourceAreaKey = `${fiveSPeriodId}:${selectedArea?.id || ""}`;
     const defaultScoreSource = getDefaultMobileFiveSScoreSource(context, user, fiveSPeriodId, selectedArea?.id || "");
     const availableScoreSources = isAdmin
-      ? [context?.SCORE_SOURCE_ASSESSOR || "assessor", context?.SCORE_SOURCE_SELF || "self"]
+      ? [context?.SCORE_SOURCE_ASSESSOR || "assessor", context?.SCORE_SOURCE_SELF || "self", context?.SCORE_SOURCE_AT5S || "at5s", context?.SCORE_SOURCE_DEPARTMENT_HEAD || "departmentHead"]
       : (context?.getAvailableFiveSScoreSources?.(user, fiveSPeriodId, selectedArea?.id || "") || [defaultScoreSource]);
     const userKey = String(user?.id || user?.username || "");
     if (currentFiveSScoreSourceUserKey !== userKey) {
@@ -2766,11 +2961,18 @@
       && Boolean(isAreaAllowed)
       && (typeof context?.canEditFiveSScoreSource !== "function" || context.canEditFiveSScoreSource(user, scoreSource, selectedArea?.id || "", fiveSPeriodId));
 
+    const isMultiDay = Boolean(context?.isMultiDayScoreSource?.(scoreSource));
+    const availableDates = isMultiDay ? (context?.getAvailableScoreDates?.(fiveSPeriodId, selectedArea?.id, scoreSource) || []) : [];
+    if (isMultiDay && !currentFiveSScoreDate) {
+      currentFiveSScoreDate = context?.defaultScoreDateForPeriod?.(fiveSPeriodId) || "";
+    }
+    const activeScoreDate = isMultiDay ? currentFiveSScoreDate : "";
+
     // Build flattened items list
     const flattenedCriteria = buildFlattened5SCriteria(context);
 
     // Calculate score statistics for selected area
-    const stat = calculateArea5SScoreStat(selectedArea, flattenedCriteria, context, fiveSPeriodId, scoreSource);
+    const stat = calculateArea5SScoreStat(selectedArea, flattenedCriteria, context, fiveSPeriodId, scoreSource, activeScoreDate);
 
     // Notice banner HTML
     let noticeBannerHtml = "";
@@ -2799,20 +3001,48 @@
       `;
     }
 
-    const scoreSourceLabel = scoreSource === (context?.SCORE_SOURCE_SELF || "self")
-      ? "Quản lý Zone tự đánh giá"
-      : "Assessor chấm";
+    const scoreSourceLabel = context?.getScoreSourceLabel
+      ? context.getScoreSourceLabel(scoreSource)
+      : (scoreSource === "self" ? "Quản lý Zone tự đánh giá" : (scoreSource === "at5s" ? "Ban AT - 5S chấm" : (scoreSource === "departmentHead" ? "Trưởng phòng chấm" : "Assessor chấm")));
     const scoreSourceFilterHtml = availableScoreSources.length > 1 ? `
       <div class="fives-score-source-filter" role="group" aria-label="Lọc nguồn điểm 5S">
         <span class="fives-score-source-label">Nguồn điểm</span>
         <div class="fives-score-source-options">
           ${availableScoreSources.map((source) => {
-            const isAssessor = source === (context?.SCORE_SOURCE_ASSESSOR || "assessor");
-            const label = isAssessor ? "Assessor chấm" : "Quản lý Zone tự chấm";
-            const activeClass = scoreSource === source ? (isAssessor ? "is-active-assessor" : "is-active-manager") : "";
-            return `<button type="button" class="fives-score-source-btn ${activeClass}" data-mobile-score-source="${escapeHtml(source)}" aria-pressed="${scoreSource === source}">${label}</button>`;
+            const label = context?.getScoreSourceLabel?.(source) || source;
+            const activeClass = scoreSource === source
+              ? (source === "self" ? "is-active-manager" : (source === "at5s" ? "is-active-at5s" : (source === "departmentHead" ? "is-active-department-head" : "is-active-assessor")))
+              : "";
+            return `<button type="button" class="fives-score-source-btn ${activeClass}" data-mobile-score-source="${escapeHtml(source)}" aria-pressed="${scoreSource === source}">${escapeHtml(label)}</button>`;
           }).join("")}
         </div>
+      </div>
+    ` : "";
+
+    const multiDayBarHtml = isMultiDay ? `
+      <div class="mobile-5s-multiday-bar${availableDates.length > 0 ? " has-history" : ""}">
+        <div class="mobile-5s-multiday-input-wrap">
+          <label for="mobileAuditScoreDate">Ngày chấm</label>
+          <div class="mobile-5s-date-entry">
+            <input type="text" id="mobileAuditScoreDate" class="mobile-5s-multiday-date" value="${escapeHtml(formatMobileDateDisplay(activeScoreDate))}" placeholder="dd/mm/yyyy" inputmode="numeric" maxlength="10" autocomplete="off">
+            <input type="date" id="mobileAuditScoreDateCalendar" class="mobile-5s-date-picker" value="${escapeHtml(activeScoreDate)}" aria-label="Chọn ngày chấm">
+            <span class="mobile-5s-calendar-icon" aria-hidden="true">
+              <i class="fa-solid fa-calendar-days"></i>
+            </span>
+          </div>
+        </div>
+        ${availableDates.length > 0 ? `
+          <div class="mobile-5s-multiday-select-wrap">
+            <label for="mobileAuditScoredDates">Ngày đã chấm</label>
+            <div class="select-wrapper-inline">
+              <select id="mobileAuditScoredDates" class="fives-zone-select mobile-5s-multiday-select">
+                <option value="">-- Các ngày đã chấm (${availableDates.length}) --</option>
+                ${availableDates.map((d) => `<option value="${escapeHtml(d)}" ${d === activeScoreDate ? "selected" : ""}>${escapeHtml(formatMobileDateDisplay(d))}</option>`).join("")}
+              </select>
+              <i class="fa-solid fa-chevron-down select-chevron-inline" aria-hidden="true"></i>
+            </div>
+          </div>
+        ` : ""}
       </div>
     ` : "";
 
@@ -2858,6 +3088,7 @@
             </div>
           </div>
         ${scoreSourceFilterHtml}
+        ${multiDayBarHtml}
         </div>
 
         <!-- Instruction Tip -->
@@ -2877,14 +3108,14 @@
 
         <!-- 5S Audit Category Items Card List -->
         <div class="fives-items-list" id="fivesItemsListContainer">
-          ${render5SItemCards(selectedArea, flattenedCriteria, context, fiveSPeriodId, scoreSource, canEditScore)}
+          ${render5SItemCards(selectedArea, flattenedCriteria, context, fiveSPeriodId, scoreSource, canEditScore, activeScoreDate)}
         </div>
 
       </div>
     `;
 
     // Wire up events inside 5S view
-    wireFiveSEvents(screen, overlay, context, fiveSPeriodId, scoreSource, canEditScore);
+    wireFiveSEvents(screen, overlay, context, fiveSPeriodId, scoreSource, canEditScore, activeScoreDate);
   }
 
   // Build flattened criteria list matching standards.js
@@ -3112,7 +3343,7 @@
   }
 
   // Calculate stats for selected area
-  function calculateArea5SScoreStat(area, criteriaList, context, periodId, scoreSource) {
+  function calculateArea5SScoreStat(area, criteriaList, context, periodId, scoreSource, scoreDate = "") {
     if (!area) return { completed: 0, total: criteriaList.length, avgText: "--", pct: 0 };
     let totalScore = 0;
     let scoredCount = 0;
@@ -3122,7 +3353,7 @@
       let scoreVal = null;
       let status = "";
       if (context && typeof context.getScoreRecord === "function") {
-        const rec = context.getScoreRecord(periodId, area.id, c.itemId, c.criterionId, scoreSource);
+        const rec = context.getScoreRecord(periodId, area.id, c.itemId, c.criterionId, scoreSource, scoreDate);
         if (rec) {
           status = rec.status || "";
           if (Number.isFinite(rec.score)) {
@@ -3151,12 +3382,12 @@
   }
 
   // Render Single 5S Category Card
-  function renderSingle5SCard(item, area, context, periodId, scoreSource, canEdit = true) {
+  function renderSingle5SCard(item, area, context, periodId, scoreSource, canEdit = true, scoreDate = "") {
     let record = null;
     let currentScore = null;
     let isNa = false;
     if (context && typeof context.getScoreRecord === "function") {
-      record = context.getScoreRecord(periodId, area.id, item.itemId, item.criterionId, scoreSource);
+      record = context.getScoreRecord(periodId, area.id, item.itemId, item.criterionId, scoreSource, scoreDate);
       if (record) {
         if (record.status === "na") {
           isNa = true;
@@ -3280,18 +3511,18 @@
   }
 
   // Render Category Item Cards
-  function render5SItemCards(area, criteriaList, context, periodId, scoreSource, canEdit = true) {
+  function render5SItemCards(area, criteriaList, context, periodId, scoreSource, canEdit = true, scoreDate = "") {
     if (!area) return '<div class="p-4 text-center text-slate-400 text-xs">Vui lòng chọn zone để đánh giá.</div>';
 
     const filtered = activeSectionFilter === "all"
       ? criteriaList
       : criteriaList.filter((c) => c.section === activeSectionFilter);
 
-    return filtered.map((item) => renderSingle5SCard(item, area, context, periodId, scoreSource, canEdit)).join("");
+    return filtered.map((item) => renderSingle5SCard(item, area, context, periodId, scoreSource, canEdit, scoreDate)).join("");
   }
 
   // Wire up 5S Events
-  function wireFiveSEvents(screen, overlay, context, fiveSPeriodId, scoreSource, canEditScore = true) {
+  function wireFiveSEvents(screen, overlay, context, fiveSPeriodId, scoreSource, canEditScore = true, scoreDate = "") {
     // Zone Select Change
     const zoneSelect = screen.querySelector("#mobileAuditZoneSelect");
     if (zoneSelect) {
@@ -3338,15 +3569,46 @@
       });
     }
 
+    const dateInput = screen.querySelector("#mobileAuditScoreDate");
+    if (dateInput) {
+      dateInput.addEventListener("change", (e) => {
+        const parsedDate = parseMobileDateDisplay(e.target.value);
+        if (!parsedDate) {
+          showMobileToast("Vui lòng nhập ngày theo định dạng dd/mm/yyyy.", true);
+          e.target.value = formatMobileDateDisplay(currentFiveSScoreDate);
+          return;
+        }
+        currentFiveSScoreDate = parsedDate;
+        renderFiveSScreen(overlay, context);
+      });
+    }
+    const dateCalendar = screen.querySelector("#mobileAuditScoreDateCalendar");
+    if (dateCalendar) {
+      dateCalendar.addEventListener("change", (e) => {
+        if (!e.target.value) return;
+        currentFiveSScoreDate = e.target.value;
+        renderFiveSScreen(overlay, context);
+      });
+    }
+    const scoredDatesSelect = screen.querySelector("#mobileAuditScoredDates");
+    if (scoredDatesSelect) {
+      scoredDatesSelect.addEventListener("change", (e) => {
+        if (e.target.value) {
+          currentFiveSScoreDate = e.target.value;
+          renderFiveSScreen(overlay, context);
+        }
+      });
+    }
+
     const selectedArea = context?.getAreasForPeriod?.(fiveSPeriodId)?.find((a) => a.id === currentFiveSZoneId);
     if (!selectedArea || !canEditScore) return;
 
     const flattenedCriteria = buildFlattened5SCriteria(context);
-    wireCardScoreClickHandlers(screen, overlay, context, fiveSPeriodId, scoreSource, selectedArea, flattenedCriteria);
+    wireCardScoreClickHandlers(screen, overlay, context, fiveSPeriodId, scoreSource, selectedArea, flattenedCriteria, scoreDate);
   }
 
   // Attach score click handlers to a screen or individual card container
-  function wireCardScoreClickHandlers(container, overlay, context, fiveSPeriodId, scoreSource, selectedArea, flattenedCriteria) {
+  function wireCardScoreClickHandlers(container, overlay, context, fiveSPeriodId, scoreSource, selectedArea, flattenedCriteria, scoreDate = "") {
     container.querySelectorAll("[data-action-score]").forEach((row) => {
       row.addEventListener("click", async (e) => {
         e.preventDefault();
@@ -3388,7 +3650,7 @@
         const item = context?.getItem?.(itemId) || { id: itemId, code: itemId.toUpperCase() };
         const criterion = context?.getCriterion?.(item, criterionId) || { id: criterionId, label: criterionId };
         
-        const currentRec = context?.getScoreRecord?.(fiveSPeriodId, selectedArea.id, itemId, criterionId, scoreSource);
+        const currentRec = context?.getScoreRecord?.(fiveSPeriodId, selectedArea.id, itemId, criterionId, scoreSource, scoreDate);
         const currentScore = currentRec && Number.isFinite(currentRec.score) ? currentRec.score : null;
         const currentStatus = currentRec?.status || "";
 
@@ -3431,12 +3693,13 @@
               score: newScore,
               status: newStatus,
               scoreSource,
+              scoreDate,
             });
           }
 
           // 3. Update header statistics in-place
           const screen = overlay.querySelector("#mobileScreen5S");
-          const stat = calculateArea5SScoreStat(selectedArea, flattenedCriteria, context, fiveSPeriodId, scoreSource);
+          const stat = calculateArea5SScoreStat(selectedArea, flattenedCriteria, context, fiveSPeriodId, scoreSource, scoreDate);
 
           const progressValEl = screen?.querySelector("#evaluatedProgressText");
           if (progressValEl) progressValEl.textContent = `${stat.completed} / ${stat.total} Hạng mục`;
@@ -3448,12 +3711,18 @@
           if (fillBarEl) fillBarEl.style.width = `${stat.pct}%`;
 
         } catch (err) {
+          renderFiveSScreen(overlay, context);
           if (err?.offlineDraftSaved) {
             showMobileToast("Mất kết nối: điểm đang lưu tạm trên máy, chưa đồng bộ.", true);
           } else if (err?.scoreConflictPending) {
             showMobileToast("Xung đột dữ liệu: điểm chưa đồng bộ. Kiểm tra trạng thái dữ liệu.", true);
           } else {
-            showMobileToast(err?.message || "Không lưu được điểm. Vui lòng thử lại.", true);
+            console.error("Lưu điểm 5S trên Mobile thất bại:", err);
+            const message = context?.getScoreSaveErrorMessage?.(err)
+              || err?.payload?.error
+              || err?.message
+              || "Không lưu được điểm. Vui lòng thử lại.";
+            showMobileToast(message, true);
           }
         }
       });

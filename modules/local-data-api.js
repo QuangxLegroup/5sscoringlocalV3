@@ -703,15 +703,15 @@
   }
 
   function publicApiErrorMessage(status, payload = null) {
-    if (status === 400) return "Dữ liệu gửi lên không hợp lệ. Vui lòng kiểm tra lại.";
+    const detail = String(payload?.error || "").trim();
+    if (status === 400) return detail ? detail.slice(0, 240) : "Dữ liệu gửi lên không hợp lệ. Vui lòng kiểm tra lại.";
     if (status === 401) return "Phiên đăng nhập không hợp lệ hoặc đã hết hạn. Vui lòng đăng nhập lại.";
     if (status === 403) {
-      const detail = String(payload?.error || "").trim();
       return detail ? detail.slice(0, 240) : "Bạn không có quyền thực hiện thao tác này.";
     }
     if (status === 404) return "Không tìm thấy nội dung yêu cầu.";
     if (status === 405) return "Thao tác này không được hỗ trợ.";
-    if (status === 409) return "Dữ liệu đã thay đổi hoặc bị xung đột. Vui lòng tải lại rồi thử lại.";
+    if (status === 409) return detail ? detail.slice(0, 240) : "Dữ liệu đã thay đổi hoặc bị xung đột. Vui lòng tải lại rồi thử lại.";
     if (status === 413) return "Dữ liệu gửi lên vượt quá giới hạn cho phép.";
     if (status === 429) return "Có quá nhiều yêu cầu. Vui lòng thử lại sau.";
     return "Hệ thống đang gặp sự cố. Vui lòng thử lại sau.";
@@ -1452,13 +1452,28 @@
         const rawDate = String(item?.inspectionDate || item?.issueDate || item?.date || item?.createdAt || "");
         const isoMatch = /^(\d{4})-(\d{1,2})/.exec(rawDate);
         const localMatch = /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/.exec(rawDate);
-        const year = Number(period?.year || isoMatch?.[1] || localMatch?.[3] || 0);
-        const month = Number(period?.month || isoMatch?.[2] || localMatch?.[2] || 0);
+        let year = Number(isoMatch?.[1] || localMatch?.[3] || period?.year || 0);
+        let month = Number(isoMatch?.[2] || localMatch?.[2] || period?.month || 0);
+        if (filters.collection === "safetyRecords") {
+          const explicitIssueDate = String(item?.issueDate || item?.date || "").trim();
+          const isoIssueMatch = /^(\d{4})-(\d{1,2})/.exec(explicitIssueDate);
+          const localIssueMatch = /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/.exec(explicitIssueDate);
+          if (isoIssueMatch) {
+            year = Number(isoIssueMatch[1]);
+            month = Number(isoIssueMatch[2]);
+          } else if (localIssueMatch) {
+            year = Number(localIssueMatch[3]);
+            month = Number(localIssueMatch[2]);
+          } else if (Number.isInteger(Number(item?.issueMonth)) && Number(item.issueMonth) >= 1 && Number(item.issueMonth) <= 12) {
+            month = Number(item.issueMonth);
+            year = Number(item?.issueYear || period?.year || isoMatch?.[1] || localMatch?.[3] || 2026);
+          }
+        }
         return (!filters.year || year === Number(filters.year)) && (!filters.month || month === Number(filters.month));
       });
     }
-    items.sort((left, right) => String(right?.inspectionDate || right?.createdAt || right?.updatedAt || "")
-      .localeCompare(String(left?.inspectionDate || left?.createdAt || left?.updatedAt || "")));
+    items.sort((left, right) => String(right?.inspectionDate || right?.issueDate || right?.date || right?.createdAt || right?.updatedAt || "")
+      .localeCompare(String(left?.inspectionDate || left?.issueDate || left?.date || left?.createdAt || left?.updatedAt || "")));
     const page = Math.max(1, Math.trunc(Number(filters.page) || 1));
     const pageSize = Math.min(100, Math.max(1, Math.trunc(Number(filters.pageSize) || 50)));
     const total = items.length;

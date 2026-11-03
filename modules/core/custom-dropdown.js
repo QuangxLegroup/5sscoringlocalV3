@@ -194,17 +194,16 @@
       updateLabel();
 
       const rect = trigger.getBoundingClientRect();
-      const isDark = Boolean(
-        selectEl.closest?.(".toolbar, .safety-toolbar, .assessor-toolbar, .compact-toolbar, .summary-toolbar, .findings-desktop-toolbar, .is-mobile-dark, .is-dark-theme, .cyber-filter-bar, .admin-filter-bar, header, [data-theme='dark']") ||
-        (selectEl.closest?.(".findings-mobile") && !selectEl.closest?.(".is-light-theme")) ||
-        selectEl.id === "admin-score-sheet-area" ||
-        selectEl.id === "assessor-area-select" ||
-        selectEl.id === "safety-area-filter" ||
-        selectEl.id === "admin-score-sheet-period" ||
-        selectEl.id === "admin-score-sheet-source" ||
-        selectEl.id === "assessor-period-select" ||
-        selectEl.id === "assessor-score-source-select"
+      const appTheme = (typeof window.getAppTheme === "function" ? window.getAppTheme() : document.documentElement.getAttribute("data-theme")) || "dark";
+      const isMobileLight = Boolean(
+        selectEl.closest?.(".is-light-theme") ||
+        document.querySelector(".mobile-responsive-overlay")?.classList?.contains("is-light-theme")
       );
+      const isMobileDark = Boolean(
+        selectEl.closest?.(".is-mobile-dark") ||
+        (selectEl.closest?.(".findings-mobile") && !selectEl.closest?.(".is-light-theme"))
+      );
+      const isDark = isMobileLight ? false : (isMobileDark ? true : appTheme === "dark");
 
       const menu = document.createElement("div");
       menu.className = "custom-dropdown-menu" + (isDark ? " is-dark" : "");

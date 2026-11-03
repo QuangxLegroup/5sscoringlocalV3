@@ -27,9 +27,11 @@
   function validate(record, previous = null, detectedYear = null, options = {}) {
     const started = date(record.countermeasureDate);
     const completed = date(record.completedDate);
+    if (record.issueDate && !date(record.issueDate)) return "Ngày đánh giá an toàn không hợp lệ.";
     if ((record.countermeasureDate && !started) || (record.completedDate && !completed)) return "Ngày thực tế không hợp lệ.";
     if (completed && (!started || completed < started)) return "Ngày hoàn thành thực tế phải từ ngày triển khai đối sách trở đi.";
-    const detected = date(`${detectedYear}-${String(record.issueMonth || "").padStart(2, "0")}-${String(record.issueDay || 1).padStart(2, "0")}`);
+    const detected = date(record.issueDate)
+      || date(`${detectedYear}-${String(record.issueMonth || "").padStart(2, "0")}-${String(record.issueDay || 1).padStart(2, "0")}`);
     if (started && detected && started < detected) return "Ngày triển khai đối sách không được trước ngày phát hiện.";
     const changed = !previous || record.issueStatus !== previous.issueStatus
       || (record.countermeasureDate || "") !== (previous.countermeasureDate || "")
@@ -45,8 +47,9 @@
     const start = `${year}-01-01`;
     for (const record of records) {
       const weight = Number(record.issueCount) > 0 ? Number(record.issueCount) : 1;
-      const detectedYear = Number(periodYear(record.periodId));
-      const month = Number(record.issueMonth);
+      const detectedDate = date(record.issueDate);
+      const detectedYear = detectedDate ? Number(detectedDate.slice(0, 4)) : Number(periodYear(record.periodId));
+      const month = detectedDate ? Number(detectedDate.slice(5, 7)) : Number(record.issueMonth);
       const implementation = date(record.countermeasureDate);
       const completion = record.issueStatus === "closed" ? date(record.completedDate) : "";
       if (detectedYear === Number(year) && Number.isInteger(month) && month >= 1 && month <= 12) result.detected[month - 1] += weight;

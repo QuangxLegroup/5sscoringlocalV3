@@ -8,6 +8,12 @@ const ROLE_ASSESSOR_SAFETY = "assessorSafety";
 const ROLE_ZONE_OWNER = "zoneOwner";
 const ROLE_VIEWER = "viewer";
 const ROLE_DEPARTMENT_HEAD = "departmentHead";
+const ROLE_AT5S = "at5s";
+const SCORE_SOURCE_ASSESSOR = "assessor";
+const SCORE_SOURCE_SELF = "self";
+const SCORE_SOURCE_AT5S = "at5s";
+const SCORE_SOURCE_DEPARTMENT_HEAD = "departmentHead";
+const MULTI_DAY_SCORE_SOURCES = new Set([SCORE_SOURCE_AT5S, SCORE_SOURCE_DEPARTMENT_HEAD]);
 const FIVE_S_PERIOD_TYPE = "5s";
 const SAFETY_PERIOD_TYPE = "safety";
 const LEGACY_PERIOD_TYPE = "both";
@@ -114,6 +120,7 @@ function normalizeAccountRole(role) {
   const value = String(role || "").trim();
   if (value === ROLE_ADMIN) return ROLE_ADMIN;
   if (["viewer", ROLE_VIEWER].includes(value)) return ROLE_VIEWER;
+  if (["at5s", "banAt5s", "committee5s", "ban-at-5s", ROLE_AT5S].includes(value)) return ROLE_AT5S;
   if (["departmentHead", "deptHead", ROLE_DEPARTMENT_HEAD].includes(value)) return ROLE_DEPARTMENT_HEAD;
   if (["safetyAssessor", ROLE_ASSESSOR_SAFETY].includes(value)) return ROLE_ASSESSOR_SAFETY;
   if (["manager", "scorer", ROLE_ZONE_OWNER].includes(value)) return ROLE_ZONE_OWNER;
@@ -131,7 +138,11 @@ function normalizePeriodType(type) {
 }
 
 function normalizeScoreSource(source) {
-  return source === "self" ? "self" : "assessor";
+  const value = String(source || "").trim();
+  if (value === SCORE_SOURCE_SELF) return SCORE_SOURCE_SELF;
+  if (["at5s", "banAt5s", "committee5s", "ban-at-5s", SCORE_SOURCE_AT5S].includes(value)) return SCORE_SOURCE_AT5S;
+  if (["departmentHead", "deptHead", "department-head", SCORE_SOURCE_DEPARTMENT_HEAD].includes(value)) return SCORE_SOURCE_DEPARTMENT_HEAD;
+  return SCORE_SOURCE_ASSESSOR;
 }
 
 function normalizeAccountAccessTypes(accessTypes, role = "") {
@@ -150,7 +161,9 @@ function normalizeAccountAccessTypes(accessTypes, role = "") {
 
   if (!values.length && Array.isArray(accessTypes)) return [];
   if (!values.length) {
-    if (normalizedRole === ROLE_DEPARTMENT_HEAD) return [FIVE_S_PERIOD_TYPE, SAFETY_PERIOD_TYPE];
+    if (normalizedRole === ROLE_DEPARTMENT_HEAD || normalizedRole === ROLE_AT5S) {
+      return [FIVE_S_PERIOD_TYPE, SAFETY_PERIOD_TYPE];
+    }
     values.push(normalizedRole === ROLE_ASSESSOR_SAFETY ? SAFETY_PERIOD_TYPE : FIVE_S_PERIOD_TYPE);
   }
 
@@ -161,6 +174,9 @@ function normalizeScopedAccountRole(role, type = FIVE_S_PERIOD_TYPE) {
   const normalizedRole = normalizeAccountRole(role);
   if (normalizedRole === ROLE_VIEWER) {
     return ROLE_VIEWER;
+  }
+  if (normalizedRole === ROLE_AT5S) {
+    return ROLE_AT5S;
   }
   if (normalizedRole === ROLE_DEPARTMENT_HEAD) {
     return ROLE_DEPARTMENT_HEAD;
@@ -194,7 +210,7 @@ function hasAccountAccessType(account, type = FIVE_S_PERIOD_TYPE, root = null, p
     ? root.activeSafetyPeriodId || ""
     : root.activeFiveSPeriodId || root.activePeriodId || "");
   return getAccountRoleAssignments(root, account, activePeriodId, catalogType).roles
-    .some((role) => [ROLE_ZONE_OWNER, ROLE_DEPARTMENT_HEAD, catalogType === SAFETY_PERIOD_TYPE ? ROLE_ASSESSOR_SAFETY : ROLE_ASSESSOR_5S].includes(role));
+    .some((role) => [ROLE_ZONE_OWNER, ROLE_DEPARTMENT_HEAD, ROLE_AT5S, catalogType === SAFETY_PERIOD_TYPE ? ROLE_ASSESSOR_SAFETY : ROLE_ASSESSOR_5S].includes(role));
 }
 
 function getAccountRoleForType(account, type = FIVE_S_PERIOD_TYPE) {
@@ -245,6 +261,10 @@ function isDepartmentHeadAccount(account) {
   return normalizeAccountRole(account?.role) === ROLE_DEPARTMENT_HEAD;
 }
 
+function isAt5sAccount(account) {
+  return normalizeAccountRole(account?.role) === ROLE_AT5S;
+}
+
 function getDepartmentHeadAccountName(account) {
   return String(account?.departmentHeadName || account?.name || account?.displayName || account?.username || "").trim();
 }
@@ -262,7 +282,7 @@ function isAreaManagedByDepartmentHead(area, account) {
 }
 
 function accountIdentityNames(account) {
-  return [...new Set([account?.name, isDepartmentHeadAccount(account) ? account?.departmentHeadName : ""]
+  return [...new Set([account?.name, account?.displayName, isDepartmentHeadAccount(account) ? account?.departmentHeadName : ""]
     .map((value) => String(value || "").trim())
     .filter(Boolean))];
 }
@@ -279,6 +299,10 @@ function getAccountRoleAssignments(root, account, periodId, type = FIVE_S_PERIOD
     ...collectionValues(catalogType === SAFETY_PERIOD_TYPE ? snapshot.safetyAssessors || snapshot.assessors : snapshot.assessors),
     ...collectionValues(catalogType === SAFETY_PERIOD_TYPE ? root?.safetyAssessors || root?.assessors : root?.assessors),
   ];
+  const at5sMembers = [
+    ...collectionValues(snapshot.at5sMembers),
+    ...collectionValues(root?.at5sMembers),
+  ];
   const areas = collectionValues(snapshot.areas).length
     ? collectionValues(snapshot.areas)
     : collectionValues(catalogType === SAFETY_PERIOD_TYPE ? root?.safetyAreas : root?.areas);
@@ -288,7 +312,7 @@ function getAccountRoleAssignments(root, account, periodId, type = FIVE_S_PERIOD
     .filter(Boolean))];
   const accountCode = employeeCodeKey(account?.employeeCode);
   const codesByName = new Map();
-  [...managers, ...assessors, ...areas.map((area) => ({ name: area?.departmentHead, employeeCode: area?.departmentHeadEmployeeCode }))]
+  [...managers, ...assessors, ...at5sMembers, ...areas.map((area) => ({ name: area?.departmentHead, employeeCode: area?.departmentHeadEmployeeCode }))]
     .forEach((person) => {
       const name = String(person?.name || "").trim().toLowerCase();
       const code = employeeCodeKey(person?.employeeCode);
@@ -309,6 +333,12 @@ function getAccountRoleAssignments(root, account, periodId, type = FIVE_S_PERIOD
   const roles = new Set();
   const primaryRole = getAccountRoleForType(account, catalogType);
   if (primaryRole) roles.add(primaryRole);
+  if (isAt5sAccount(account) || Object.values(account?.rolesByType || {}).some((r) => normalizeAccountRole(r) === ROLE_AT5S) || Boolean(account?.at5sMemberId)) {
+    roles.add(ROLE_AT5S);
+  }
+  if (at5sMembers.some((member) => (account?.at5sMemberId && member?.id === account.at5sMemberId) || matchesPerson(member))) {
+    roles.add(ROLE_AT5S);
+  }
   if (managers.some(matchesPerson)) roles.add(ROLE_ZONE_OWNER);
   const assessorRole = catalogType === SAFETY_PERIOD_TYPE ? ROLE_ASSESSOR_SAFETY : ROLE_ASSESSOR_5S;
   if (assessors.some(matchesPerson)) roles.add(assessorRole);
@@ -322,8 +352,10 @@ function getAccountRoleAssignments(root, account, periodId, type = FIVE_S_PERIOD
     roles: [...roles],
     managerIds: managers.filter((manager) => manager?.id && matchesPerson(manager)).map((manager) => manager.id),
     assessorIds: assessors.filter((assessor) => assessor?.id && matchesPerson(assessor)).map((assessor) => assessor.id),
+    at5sMemberIds: at5sMembers.filter((member) => member?.id && ((account?.at5sMemberId && member.id === account.at5sMemberId) || matchesPerson(member))).map((member) => member.id),
     areas,
     hasDepartmentHead: roles.has(ROLE_DEPARTMENT_HEAD),
+    hasAt5s: roles.has(ROLE_AT5S),
   };
 }
 
@@ -681,13 +713,16 @@ class AuthService {
     return type === SAFETY_PERIOD_TYPE ? SAFETY_PERIOD_TYPE : FIVE_S_PERIOD_TYPE;
   }
 
-  getFiveSPeriodForSafetyPeriod(root, safetyPeriodId) {
+  getFiveSPeriodForSafetyPeriod(root, safetyPeriodId, issueDate = "") {
     const periods = collectionValues(root?.periods);
     const safetyPeriod = periods.find((period) => period?.id === safetyPeriodId);
-    const candidates = safetyPeriod?.month && safetyPeriod?.year
+    const dateParts = /^(\d{4})-(\d{2})-\d{2}$/.exec(String(issueDate || ""));
+    const targetYear = dateParts ? Number(dateParts[1]) : Number(safetyPeriod?.year);
+    const targetMonth = dateParts ? Number(dateParts[2]) : Number(safetyPeriod?.month);
+    const candidates = targetMonth && targetYear
       ? periods.filter((period) => normalizePeriodType(period?.type) !== SAFETY_PERIOD_TYPE
-        && Number(period?.month) === Number(safetyPeriod.month)
-        && Number(period?.year) === Number(safetyPeriod.year))
+        && Number(period?.month) === targetMonth
+        && Number(period?.year) === targetYear)
       : [];
     const activeFiveSPeriodId = String(root?.activeFiveSPeriodId || "");
     const sameMonthPeriod = candidates.find((period) => period?.id === activeFiveSPeriodId) || candidates[0];
@@ -716,6 +751,9 @@ class AuthService {
       return new Set(areas.map((area) => area.id).filter(Boolean));
     }
     const assignments = getAccountRoleAssignments(root, account, periodId, type);
+    if (assignments.hasAt5s) {
+      return new Set(areas.map((area) => area.id).filter(Boolean));
+    }
     if (!hasAccountAccessType(account, type, root, periodId) && !assignments.hasDepartmentHead) {
       return new Set();
     }
@@ -752,7 +790,16 @@ class AuthService {
     const areas = this.getAreasForPeriod(root, periodId, FIVE_S_PERIOD_TYPE);
     if (isAdminAccount(account)) return new Set(areas.map((area) => area.id).filter(Boolean));
     const assignments = getAccountRoleAssignments(root, account, periodId, FIVE_S_PERIOD_TYPE);
-    if (normalizeScoreSource(source) === "self") {
+    const normalizedSource = normalizeScoreSource(source);
+    if (normalizedSource === SCORE_SOURCE_AT5S) {
+      if (!assignments.hasAt5s) return new Set();
+      return new Set(areas.map((area) => area.id).filter(Boolean));
+    }
+    if (normalizedSource === SCORE_SOURCE_DEPARTMENT_HEAD) {
+      if (!assignments.hasDepartmentHead) return new Set();
+      return new Set(areas.filter((area) => isAreaManagedByDepartmentHead(area, account)).map((area) => area.id).filter(Boolean));
+    }
+    if (normalizedSource === SCORE_SOURCE_SELF) {
       if (!assignments.roles.includes(ROLE_ZONE_OWNER)) return new Set();
       const managerIds = new Set(assignments.managerIds);
       if (getAccountRoleForType(account, FIVE_S_PERIOD_TYPE) === ROLE_ZONE_OWNER) {
@@ -789,12 +836,33 @@ class AuthService {
     const snapshotCollection = normalizedType === SAFETY_PERIOD_TYPE
       ? role === ROLE_ZONE_OWNER ? snapshot.safetyManagers || snapshot.managers : snapshot.safetyAssessors || snapshot.assessors
       : role === ROLE_ZONE_OWNER ? snapshot.managers : snapshot.assessors;
-    const people = [...collectionValues(snapshotCollection), ...collectionValues(rootCollection)];
-    const person = people.find((item) => item?.id && item.id === personId);
+    const people = [
+      ...collectionValues(snapshotCollection),
+      ...collectionValues(rootCollection),
+      ...collectionValues(snapshot.at5sMembers),
+      ...collectionValues(root?.at5sMembers),
+    ];
+    const at5sId = String(account?.at5sMemberId || "");
+    const accountCode = employeeCodeKey(account?.employeeCode);
+    const person = people.find((item) => item?.id && (item.id === personId || (at5sId && item.id === at5sId)))
+      || (accountCode ? people.find((item) => employeeCodeKey(item?.employeeCode) === accountCode) : null);
+    const accountNames = [account?.username, account?.name, account?.displayName]
+      .map((value) => String(value || "").trim())
+      .filter(Boolean);
+    const at5sNames = [
+      ...collectionValues(snapshot.at5sMembers),
+      ...collectionValues(root?.at5sMembers),
+    ].filter((member) => (
+      (at5sId && String(member?.id || "") === at5sId)
+      || (accountCode && employeeCodeKey(member?.employeeCode) === accountCode)
+      || (!accountCode && accountNames.some((name) => sameNormalizedText(name, member?.name)))
+    )).map((member) => member?.name);
     return [
       account?.username,
       account?.name,
+      account?.displayName,
       person?.name,
+      ...at5sNames,
     ].map((value) => String(value || "").trim()).filter(Boolean);
   }
 
@@ -806,15 +874,23 @@ class AuthService {
       return true;
     }
     const accountUsername = String(account?.username || "").trim();
-    const recordUsername = String(record?.accountUsername || record?.createdBy || "").trim();
-    if (recordUsername) {
-      return sameNormalizedText(recordUsername, accountUsername);
-    }
+    if (record?.createdByAccountId && String(record.createdByAccountId) === String(account?.id || "")) return true;
+    const recordUsername = String(record?.accountUsername || "").trim();
+    if (recordUsername && sameNormalizedText(recordUsername, accountUsername)) return true;
+    const recordOwnerAccount = recordUsername
+      ? collectionValues(root?.accounts).find((item) => sameNormalizedText(item?.username, recordUsername))
+      : null;
+    if (recordOwnerAccount) return String(recordOwnerAccount.id || "") === String(account?.id || "");
+    const legacyCreatedBy = String(record?.createdBy || "").trim();
+    if (legacyCreatedBy && sameNormalizedText(legacyCreatedBy, accountUsername)) return true;
+    const legacyCreatorAccount = legacyCreatedBy
+      ? collectionValues(root?.accounts).find((item) => sameNormalizedText(item?.username, legacyCreatedBy))
+      : null;
+    if (legacyCreatorAccount) return String(legacyCreatorAccount.id || "") === String(account?.id || "");
     const names = this.getAccountDisplayNameCandidates(root, account, record?.periodId || "", type);
-    if (record?.scorerName) {
-      return names.some((name) => sameNormalizedText(record.scorerName, name));
-    }
-    return names.some((name) => safetyRecordTextMatchesName(record?.issueFoundBy, name));
+    if (legacyCreatedBy && names.some((name) => sameNormalizedText(legacyCreatedBy, name))) return true;
+    return names.some((name) => sameNormalizedText(record?.scorerName, name))
+      || names.some((name) => safetyRecordTextMatchesName(record?.issueFoundBy, name));
   }
 
   isCountermeasureOnlySafetyUpdate(existingRecord, nextRecord) {
@@ -839,9 +915,9 @@ class AuthService {
       "updatedAt",
     ]);
     const immutableFields = new Set([
-      "id", "periodId", "areaId", "issueLocation", "issueDay", "issueMonth", "note",
+      "id", "periodId", "areaId", "issueDate", "issueLocation", "issueDay", "issueMonth", "note",
       "photoDataUrl", "photoName", "photoAnnotations", "issueCount", "issueType", "issueLevel",
-      "issueFoundBy", "employeeCode", "issueItemLabel", "foundChannel", "scorerName", "accountUsername",
+      "issueFoundBy", "employeeCode", "issueItemLabel", "foundChannel", "scorerName", "accountUsername", "createdByAccountId",
     ]);
     const isEmptyDefault = (value) => value === null || value === undefined || value === ""
       || (Array.isArray(value) && value.length === 0);
@@ -852,7 +928,8 @@ class AuthService {
         const value = String(record.foundChannel || record.issueFoundChannel || "")
           .trim().toLocaleLowerCase("vi").replace(/[\s_]+/g, "-");
         if (["worker", "member", "cong-nhan", "công-nhân"].includes(value)) return "worker";
-        if (["department-head", "internal-audit", "audit", "truong-bo-phan", "trưởng-bộ-phận", "to-truong", "tổ-trưởng"].includes(value)) return "department-head";
+        if (["department-head", "head", "internal-audit", "audit", "truong-bo-phan", "trưởng-bộ-phận", "to-truong", "tổ-trưởng"].includes(value)) return "department-head";
+        if (["at5s", "ban-at-5s", "ban-at5s", "an-toan-5s", "an-toàn-5s"].includes(value)) return "at5s";
         if (["assessor", "lean", "(lean)"].includes(value)) return "assessor";
         return "";
       }
@@ -944,7 +1021,7 @@ class AuthService {
     // Match by zone code so separate catalog IDs and stale Safety role links do not
     // prevent the assigned 5S manager/head from replying to this Safety Zone.
     const safetyZoneCode = String(area.templateCode || area.code || "").trim().toLocaleLowerCase("vi");
-    const fiveSPeriodId = this.getFiveSPeriodForSafetyPeriod(root, periodId);
+    const fiveSPeriodId = this.getFiveSPeriodForSafetyPeriod(root, periodId, record?.issueDate);
     if (safetyZoneCode && fiveSPeriodId) {
       const fiveSAssignments = getAccountRoleAssignments(root, account, fiveSPeriodId, FIVE_S_PERIOD_TYPE);
       const fiveSArea = fiveSAssignments.areas.find((item) => (
@@ -1023,15 +1100,24 @@ class AuthService {
     recordsToCheck.forEach((candidate) => {
       const periodId = String(candidate.periodId || "");
       const areaId = String(candidate.areaId || "");
-      if (!periodId || !areaId || !hasAccountAccessType(account, FIVE_S_PERIOD_TYPE, root, periodId)) {
+      const assignments = getAccountRoleAssignments(root, account, periodId, FIVE_S_PERIOD_TYPE);
+      if (!periodId || !areaId || (!hasAccountAccessType(account, FIVE_S_PERIOD_TYPE, root, periodId) && !assignments.hasDepartmentHead && !assignments.hasAt5s)) {
         throw createHttpError("Bạn không có quyền ghi điểm 5S.", 403);
       }
 
       const source = normalizeScoreSource(candidate.scoreSource);
-      const assignments = getAccountRoleAssignments(root, account, periodId, FIVE_S_PERIOD_TYPE);
-      const canWriteSource = source === "self"
+      if (MULTI_DAY_SCORE_SOURCES.has(source) && candidate === record && operation !== "remove") {
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(String(candidate.scoreDate || "").trim())) {
+          throw createHttpError("Vui lòng chọn ngày chấm hợp lệ.", 400);
+        }
+      }
+      const canWriteSource = source === SCORE_SOURCE_SELF
         ? assignments.roles.includes(ROLE_ZONE_OWNER)
-        : assignments.roles.includes(ROLE_ASSESSOR_5S);
+        : source === SCORE_SOURCE_AT5S
+          ? assignments.hasAt5s
+          : source === SCORE_SOURCE_DEPARTMENT_HEAD
+            ? assignments.hasDepartmentHead
+            : assignments.roles.includes(ROLE_ASSESSOR_5S);
       const sourceAreaIds = this.getFiveSScoreSourceAreaIds(root, account, periodId, source);
       if (!canWriteSource || !sourceAreaIds.has(areaId)) {
         throw createHttpError("Bạn không có quyền ghi điểm 5S cho ô này.", 403);
@@ -1081,6 +1167,7 @@ class AuthService {
       issueLocation: legacyScore.issueLocation || command.value?.issueLocation || "",
       issueDay: legacyScore.issueDay || "",
       issueMonth: legacyScore.issueMonth || "",
+      issueDate: legacyScore.issueDate || "",
       note: legacyScore.note || legacyScore.issueDescription || legacyScore.issueItemLabel || command.value?.note || "",
       photoDataUrl: legacyScore.photoDataUrl || "",
       photoName: legacyScore.photoName || "",
@@ -1109,6 +1196,8 @@ class AuthService {
       completionStop6Confirm: legacyScore.completionStop6Confirm || "",
       scorerName: legacyScore.scorerName || command.value?.scorerName || "",
       accountUsername: legacyScore.accountUsername || command.value?.accountUsername || "",
+      createdBy: legacyScore.createdBy || command.value?.createdBy || "",
+      createdByAccountId: legacyScore.createdByAccountId || command.value?.createdByAccountId || "",
       createdAt: legacyScore.createdAt || legacyScore.updatedAt || command.value?.createdAt || "",
       updatedAt: legacyScore.updatedAt || command.value?.updatedAt || "",
     } : null;
@@ -1125,6 +1214,12 @@ class AuthService {
       throw createHttpError("Dữ liệu đánh giá an toàn không hợp lệ.", 400);
     }
     if (operation !== "remove") {
+      const previousCreatorId = String(existingRecord?.createdByAccountId || "");
+      const nextCreatorId = String(record.createdByAccountId || "");
+      if ((previousCreatorId && previousCreatorId !== nextCreatorId)
+        || (!previousCreatorId && nextCreatorId && nextCreatorId !== String(account?.id || "") && !isAdminAccount(account))) {
+        throw createHttpError("Không thể thay đổi người tạo báo cáo an toàn.", 403);
+      }
       this.assertSafetyResponseAuthor(existingRecord || {}, record, account);
       if (existingRecord
         && this.hasSafetyCountermeasureChanges(existingRecord, record)
@@ -1134,6 +1229,16 @@ class AuthService {
     }
     if (existingRecord) this.assertSafetyPeriodWritable(root, existingRecord);
     this.assertSafetyPeriodWritable(root, record);
+
+    const safetyAssignments = getAccountRoleAssignments(root, account, record?.periodId || existingRecord?.periodId, SAFETY_PERIOD_TYPE);
+    const isDepartmentHeadOnlyScope = safetyAssignments.hasDepartmentHead
+      && !safetyAssignments.hasAt5s
+      && !safetyAssignments.roles.includes(ROLE_ASSESSOR_SAFETY);
+    if (isDepartmentHeadOnlyScope) {
+      if (existingRecord) this.assertDepartmentHeadSafetyScope(root, account, existingRecord);
+      this.assertDepartmentHeadSafetyScope(root, account, record);
+      return;
+    }
 
     if (operation === "set" && !existingRecord) {
       const recordId = String(recordIdFromPath || "");
@@ -1175,18 +1280,12 @@ class AuthService {
       return;
     }
 
-    const isDepartmentHead = getAccountRoleAssignments(root, account, record.periodId, SAFETY_PERIOD_TYPE).hasDepartmentHead;
-    if (isDepartmentHead) {
-      if (existingRecord) this.assertDepartmentHeadSafetyScope(root, account, existingRecord);
-      this.assertDepartmentHeadSafetyScope(root, account, record);
-    }
-
     if (isPlainObject(existingRecord) && !this.isRecordOwnedByAccount(root, existingRecord, account, SAFETY_PERIOD_TYPE)) {
       throw createHttpError("Bạn chỉ được sửa hoặc xóa đánh giá an toàn của mình.", 403);
     }
     const accountUsername = String(account.username || "").trim();
     const nextOwner = String(record.accountUsername || "").trim();
-    if (operation !== "remove" && (!nextOwner || nextOwner !== accountUsername)) {
+    if (operation !== "remove" && (!nextOwner || !sameNormalizedText(nextOwner, accountUsername))) {
       throw createHttpError("Bạn không có quyền ghi đánh giá an toàn cho tài khoản khác.", 403);
     }
 
@@ -1198,7 +1297,8 @@ class AuthService {
     recordsToCheck.forEach((candidate) => {
       const periodId = String(candidate.periodId || "");
       const areaId = String(candidate.areaId || "");
-      if (getAccountRoleAssignments(root, account, periodId, SAFETY_PERIOD_TYPE).hasDepartmentHead) {
+      const candidateAssignments = getAccountRoleAssignments(root, account, periodId, SAFETY_PERIOD_TYPE);
+      if (candidateAssignments.hasDepartmentHead && !candidateAssignments.hasAt5s && !candidateAssignments.roles.includes(ROLE_ASSESSOR_SAFETY)) {
         this.assertDepartmentHeadSafetyScope(root, account, candidate);
         return;
       }
@@ -1263,7 +1363,10 @@ class AuthService {
         return;
       }
       this.assertSafetyPeriodWritable(root, marker);
-      if (getAccountRoleAssignments(root, account, marker.periodId, SAFETY_PERIOD_TYPE).hasDepartmentHead) this.assertDepartmentHeadSafetyScope(root, account, marker);
+      const removeAssignments = getAccountRoleAssignments(root, account, marker.periodId, SAFETY_PERIOD_TYPE);
+      if (removeAssignments.hasDepartmentHead && !removeAssignments.hasAt5s && !removeAssignments.roles.includes(ROLE_ASSESSOR_SAFETY)) {
+        this.assertDepartmentHeadSafetyScope(root, account, marker);
+      }
       if (marker.deletedBy && !sameNormalizedText(marker.deletedBy, account?.username)) {
         throw createHttpError("Bạn không có quyền khôi phục đánh dấu xóa này.", 403);
       }
@@ -1290,14 +1393,12 @@ class AuthService {
     const legacyRecord = sourceScoreId ? this.findCollectionRecordById(root?.scores, sourceScoreId) : null;
     const record = existingRecord || legacyRecord || marker;
     this.assertSafetyPeriodWritable(root, record);
-    if (getAccountRoleAssignments(root, account, record?.periodId || marker.periodId, SAFETY_PERIOD_TYPE).hasDepartmentHead) {
+    const deleteAssignments = getAccountRoleAssignments(root, account, record?.periodId || marker.periodId, SAFETY_PERIOD_TYPE);
+    if (deleteAssignments.hasDepartmentHead && !deleteAssignments.hasAt5s && !deleteAssignments.roles.includes(ROLE_ASSESSOR_SAFETY)) {
       const existingMarker = valueAtPath(root, command.path);
       if (existingMarker) this.assertDepartmentHeadSafetyScope(root, account, existingMarker);
       this.assertDepartmentHeadSafetyScope(root, account, record);
       this.assertDepartmentHeadSafetyScope(root, account, marker);
-      if ((existingRecord || legacyRecord) && !this.isRecordOwnedByAccount(root, record, account, SAFETY_PERIOD_TYPE)) {
-        throw createHttpError("Bạn chỉ được xóa đánh giá an toàn do mình ghi nhận.", 403);
-      }
       return;
     }
     if (!record?.periodId || !record?.areaId || !hasAccountAccessType(account, SAFETY_PERIOD_TYPE, root, record.periodId)) {
@@ -1361,10 +1462,11 @@ class AuthService {
     const assignments = getAccountRoleAssignments(root, account, activePeriodId, FIVE_S_PERIOD_TYPE);
     const hasFiveSAssessorAccess = hasAccountAccessType(account, FIVE_S_PERIOD_TYPE, root, activePeriodId)
       && assignments.roles.includes(ROLE_ASSESSOR_5S);
+    const hasAt5sAccess = assignments.hasAt5s;
     const hasZoneOwnerAccess = hasAccountAccessType(account, FIVE_S_PERIOD_TYPE, root, activePeriodId)
       && assignments.roles.includes(ROLE_ZONE_OWNER);
-    if (!assignments.hasDepartmentHead && !hasZoneOwnerAccess && !hasFiveSAssessorAccess) {
-      throw createHttpError("Chỉ assessor 5S, quản lý Zone, Trưởng bộ phận và admin được thay đổi phiếu 5S.", 403);
+    if (!assignments.hasDepartmentHead && !hasZoneOwnerAccess && !hasFiveSAssessorAccess && !hasAt5sAccess) {
+      throw createHttpError("Chỉ assessor 5S, Ban AT - 5S, quản lý Zone, Trưởng bộ phận và admin được thay đổi phiếu 5S.", 403);
     }
     const parts = pathParts(command.path);
     // Scope checks require a complete record, never a collection or nested patch.

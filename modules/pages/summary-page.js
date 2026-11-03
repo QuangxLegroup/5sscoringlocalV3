@@ -79,7 +79,7 @@
       }
 
       return `<g>
-        <rect class="admin-chart-bar" fill="#12a8e8" x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${barWidth.toFixed(1)}" height="${Math.max(2, height).toFixed(1)}" rx="2"></rect>
+        <rect class="admin-chart-bar" fill="#2563eb" x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${barWidth.toFixed(1)}" height="${Math.max(2, height).toFixed(1)}" rx="2"></rect>
         <text class="admin-chart-value" fill="#1f2937" font-family="Arial, Helvetica, sans-serif" font-size="11" font-weight="750" text-anchor="middle" x="${xCenter.toFixed(1)}" y="${Math.max(plotTop + 12, y - 5).toFixed(1)}">${escapeHtml(valueLabel)}</text>
         <text class="admin-chart-x-label" fill="#1f2937" font-family="Arial, Helvetica, sans-serif" font-size="10" x="${labelX.toFixed(1)}" y="${labelY.toFixed(1)}" text-anchor="${labelAnchor}"${labelTransform}>${escapeHtml(compactLabel(row.label, "-", rotateLabels ? 42 : 18))}</text>
       </g>`;
@@ -123,7 +123,7 @@
         ${chartSvg({ rows, target, escapeHtml, valueDigits, grouped, rotateLabels })}
       </div>
       <div class="admin-card-chart-legend">
-        <span><i style="background: #12a8e8"></i>${escapeHtml(sourceLabel)}</span>
+        <span><i style="background: #2563eb"></i>${escapeHtml(sourceLabel)}</span>
         <span class="legend-target"><b style="background: #e11d48"></b>Target ${escapeHtml(target.toFixed(1))}</span>
       </div>
     </section>`;
@@ -193,6 +193,8 @@
     const {
       SCORE_SOURCE_ASSESSOR,
       SCORE_SOURCE_SELF,
+      SCORE_SOURCE_AT5S,
+      SCORE_SOURCE_DEPARTMENT_HEAD,
       areaAverage,
       escapeHtml,
       formatNumber,
@@ -204,11 +206,16 @@
     const areaRows = areas.map((area) => {
       const selfAverage = areaAverage(periodId, area, SCORE_SOURCE_SELF);
       const assessorAverage = areaAverage(periodId, area, SCORE_SOURCE_ASSESSOR);
+      const at5sAverage = areaAverage(periodId, area, SCORE_SOURCE_AT5S || "at5s");
+      const departmentHeadAverage = areaAverage(periodId, area, SCORE_SOURCE_DEPARTMENT_HEAD || "departmentHead");
+      const components = [selfAverage, assessorAverage, at5sAverage, departmentHeadAverage].filter(Number.isFinite);
       return {
         area,
         selfAverage,
         assessorAverage,
-        average: averageValues([selfAverage, assessorAverage]),
+        at5sAverage,
+        departmentHeadAverage,
+        average: components.length ? averageValues(components) : null,
       };
     });
     const rowByAreaId = new Map(areaRows.map((row) => [row.area.id, row]));
@@ -219,6 +226,8 @@
     const picCells = areas.map((area) => `<td>${escapeHtml(getAreaResponsibleNameForPeriod(periodId, area) || "")}</td>`).join("");
     const selfCells = areaRows.map((row) => valueCell(row.selfAverage)).join("");
     const assessorCells = areaRows.map((row) => valueCell(row.assessorAverage)).join("");
+    const at5sCells = areaRows.map((row) => valueCell(row.at5sAverage)).join("");
+    const departmentHeadCells = areaRows.map((row) => valueCell(row.departmentHeadAverage)).join("");
     const averageCells = areaRows.map((row) => valueCell(row.average)).join("");
     const groups = buildConsecutiveGroups(areas);
     const groupAverageCells = groups.map((group) => {
@@ -240,8 +249,10 @@
         <tr><th>PIC</th>${picCells}</tr>
       </thead>
       <tbody>
-        <tr><th>Điểm tự Đ.giá lần 1</th>${selfCells}</tr>
-        <tr><th>Điểm Đ.G theo lịch</th>${assessorCells}</tr>
+        <tr><th>Điểm các zone tự đánh giá</th>${selfCells}</tr>
+        <tr><th>Điểm Assessor đánh giá</th>${assessorCells}</tr>
+        <tr><th>Điểm Ban AT - 5S đánh giá</th>${at5sCells}</tr>
+        <tr><th>Điểm Trưởng phòng đánh giá</th>${departmentHeadCells}</tr>
         <tr><th>Điểm trung bình</th>${averageCells}</tr>
         <tr class="summary-average-group-score-row"><th></th>${groupAverageCells}</tr>
         <tr class="summary-average-group-label-row"><th></th>${groupLabelCells}</tr>
@@ -286,6 +297,8 @@
     const {
       SCORE_SOURCE_ASSESSOR,
       SCORE_SOURCE_SELF,
+      SCORE_SOURCE_AT5S,
+      SCORE_SOURCE_DEPARTMENT_HEAD,
       currentUser,
       escapeHtml,
       getScoreSourceLabel,
@@ -294,7 +307,7 @@
     } = context;
     const periodText = periodLabel(period);
     const canEditTarget = Boolean(isAdminAccount?.(currentUser));
-    const chartGroups = [
+    const allChartGroups = [
       {
         source: SCORE_SOURCE_ASSESSOR,
         title: "Điểm Assessor chấm",
@@ -307,7 +320,24 @@
         zoneTitle: "Tổng hợp điểm các zone tự đánh giá",
         itemTitle: "Điểm 5S các hạng mục - Quản lý zone tự đánh giá",
       },
+      {
+        source: SCORE_SOURCE_AT5S || "at5s",
+        title: "Điểm Ban AT - 5S chấm",
+        zoneTitle: "Tổng hợp điểm các zone - Ban AT - 5S chấm",
+        itemTitle: "Điểm 5S các hạng mục - Ban AT - 5S chấm",
+      },
+      {
+        source: SCORE_SOURCE_DEPARTMENT_HEAD || "departmentHead",
+        title: "Điểm Trưởng phòng chấm",
+        zoneTitle: "Tổng hợp điểm các zone - Trưởng phòng chấm",
+        itemTitle: "Điểm 5S các hạng mục - Trưởng phòng chấm",
+      },
     ];
+    const chartGroups = allChartGroups.filter((group) => {
+      if (group.source === SCORE_SOURCE_ASSESSOR || group.source === SCORE_SOURCE_SELF) return true;
+      const rows = getFiveSChartRows(context, period, group.source);
+      return (rows.zoneRows && rows.zoneRows.length > 0) || Boolean(isAdminAccount?.(currentUser));
+    });
     return `<section class="five-s-summary-chart-panel" id="summary-chart-dashboard">
       <div class="section-heading">
         <h2>Biểu đồ 5S</h2>
@@ -372,6 +402,9 @@
   function render(context) {
     const {
       SCORE_SOURCE_ASSESSOR,
+      SCORE_SOURCE_SELF,
+      SCORE_SOURCE_AT5S,
+      SCORE_SOURCE_DEPARTMENT_HEAD,
       SCORE_SOURCE_AVERAGE,
       SCORE_SOURCE_OPTIONS,
       buildMatrixTable,
@@ -387,6 +420,8 @@
       getScoreSourceForAccount,
       getScoreSourceLabel,
       isAdminAccount,
+      isViewerAccount,
+      hasAt5sRole,
       periodLabel,
       renderStandardReferenceTable,
       FIVE_S_PERIOD_TYPE,
@@ -396,7 +431,9 @@
     const period = getPeriod(elements.summaryPeriodSelect?.value || getActivePeriodId(FIVE_S_PERIOD_TYPE));
     const periodId = period?.id || "";
     const isAdmin = isAdminAccount(currentUser);
-    const availableSources = isAdmin
+    const isAt5s = typeof hasAt5sRole === "function" ? hasAt5sRole(currentUser) : false;
+    const isViewer = typeof isViewerAccount === "function" ? isViewerAccount(currentUser) : false;
+    const availableSources = (isAdmin || isAt5s || isViewer)
       ? SCORE_SOURCE_OPTIONS.map((option) => option.value)
       : (getAvailableFiveSScoreSources?.(currentUser, periodId) || []);
     const sourceOptions = SCORE_SOURCE_OPTIONS.filter((option) => availableSources.includes(option.value));
@@ -404,9 +441,11 @@
       ? getScoreSourceForAccount(currentUser)
       : SCORE_SOURCE_ASSESSOR;
     const selectedSource = elements.summaryScoreSource?.value || "";
-    const defaultSource = availableSources.includes(userScoreSource) ? userScoreSource : sourceOptions[0]?.value || SCORE_SOURCE_ASSESSOR;
+    const defaultSource = isAt5s && availableSources.includes(SCORE_SOURCE_AT5S)
+      ? SCORE_SOURCE_AT5S
+      : (availableSources.includes(userScoreSource) ? userScoreSource : sourceOptions[0]?.value || SCORE_SOURCE_ASSESSOR);
     const scoreSource = sourceOptions.some((option) => option.value === selectedSource) ? selectedSource : defaultSource;
-    const isAverageMode = isAdmin && scoreSource === SCORE_SOURCE_AVERAGE;
+    const isAverageMode = scoreSource === SCORE_SOURCE_AVERAGE;
     const allowedAreaIds = getAllowedAreaIds(currentUser, periodId);
     const assignedAreas = getAreasForPeriod(periodId).filter((area) => allowedAreaIds.has(area.id));
 
@@ -416,18 +455,25 @@
         .join("");
       elements.summaryScoreSource.value = scoreSource;
       const sourceField = elements.summaryScoreSource.closest(".source-toggle");
-      if (sourceField) sourceField.hidden = !isAdmin && sourceOptions.length < 2;
+      if (sourceField) sourceField.hidden = !isAdmin && !isAt5s && !isViewer && sourceOptions.length < 2 && !availableSources.includes(SCORE_SOURCE_AVERAGE);
     }
 
     elements.summaryTitle.textContent = isAverageMode
       ? `Điểm số trung bình tính KPI các bộ phận - ${periodLabel(period)}`
       : `Điểm Chi Tiết Theo Từng Hạng Mục - ${getScoreSourceLabel(scoreSource)} - ${periodLabel(period)}`;
     if (elements.assignedZoneSummary) {
-      elements.assignedZoneSummary.textContent = isAdmin
-        ? ""
-        : assignedAreas.length
-          ? `Zone được phép chấm: ${assignedAreas.map((area) => area.code).join(", ")}`
+      if (isAdmin || (isAt5s && scoreSource === SCORE_SOURCE_AT5S)) {
+        elements.assignedZoneSummary.textContent = "";
+      } else if (isAverageMode) {
+        elements.assignedZoneSummary.textContent = "";
+      } else {
+        const editableAreas = getAreasForPeriod(periodId).filter((area) =>
+          (getFiveSScoreSourceAreaIds?.(currentUser, periodId, scoreSource) || new Set()).has(area.id)
+        );
+        elements.assignedZoneSummary.textContent = editableAreas.length
+          ? `Zone được phép chấm: ${editableAreas.map((area) => area.code).join(", ")}`
           : "Không có zone được phân quyền chấm; bảng điểm đang ở chế độ chỉ xem.";
+      }
     }
 
     if (isAverageMode) {

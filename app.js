@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const DATA_VERSION = 4;
+  const DATA_VERSION = 5;
   const PAGE_JSON_FORMAT = "legroup-5s-page-json";
   const PAGE_JSON_VERSION = 1;
   const BENCHMARK = 3.3;
@@ -83,6 +83,7 @@
     { value: "worker", label: "Công nhân" },
     { value: "department-head", label: "Trưởng bộ phận" },
     { value: "assessor", label: "Assessor" },
+    { value: "at5s", label: "Ban AT - 5S" },
   ];
   const SAFETY_FOUND_COLUMNS = SAFETY_FOUND_OPTIONS.filter((option) => option.value);
   const ISSUE_STATUS_OPTIONS = [
@@ -101,7 +102,9 @@
     checkerDepartment: "",
     instruction: 'Đánh dấu "1" vào mục chọn',
     issueDate: "",
+    issueDateIsCustom: false,
     reportDate: "",
+    reportDateIsCustom: false,
   };
 
   const ROLE_ADMIN = "admin";
@@ -110,8 +113,10 @@
   const ROLE_ZONE_OWNER = "zoneOwner";
   const ROLE_VIEWER = "viewer";
   const ROLE_DEPARTMENT_HEAD = "departmentHead";
+  const ROLE_AT5S = "at5s";
   const ACCOUNT_VIEWER_SCOPE = "viewer";
   const ACCOUNT_DEPARTMENT_HEAD_SCOPE = "departmentHead";
+  const ACCOUNT_AT5S_SCOPE = "at5s";
   const FIVE_S_PERIOD_TYPE = "5s";
   const SAFETY_PERIOD_TYPE = "safety";
   const LEGACY_PERIOD_TYPE = "both";
@@ -123,10 +128,15 @@
   const PERIOD_CATALOG_TEMPLATE_RESET_PEOPLE = "reset-people";
   const SCORE_SOURCE_ASSESSOR = "assessor";
   const SCORE_SOURCE_SELF = "self";
+  const SCORE_SOURCE_AT5S = "at5s";
+  const SCORE_SOURCE_DEPARTMENT_HEAD = "departmentHead";
+  const MULTI_DAY_SCORE_SOURCES = new Set([SCORE_SOURCE_AT5S, SCORE_SOURCE_DEPARTMENT_HEAD]);
   const SCORE_SOURCE_AVERAGE = "average";
   const SCORE_SOURCE_OPTIONS = [
     { value: SCORE_SOURCE_ASSESSOR, label: "Assessor chấm" },
     { value: SCORE_SOURCE_SELF, label: "Quản lý zone tự đánh giá" },
+    { value: SCORE_SOURCE_AT5S, label: "Ban AT - 5S chấm" },
+    { value: SCORE_SOURCE_DEPARTMENT_HEAD, label: "Trưởng phòng chấm" },
     { value: SCORE_SOURCE_AVERAGE, label: "Điểm trung bình" },
   ];
   const SAFETY_DEPARTMENT_GROUPS = [
@@ -276,6 +286,11 @@
     assessorAreaSelect: document.getElementById("assessor-area-select"),
     assessorScoreSourceField: document.getElementById("assessor-score-source-field"),
     assessorScoreSourceSelect: document.getElementById("assessor-score-source-select"),
+    assessorScoreDateField: document.getElementById("assessor-score-date-field"),
+    assessorScoreDate: document.getElementById("assessor-score-date"),
+    assessorScoreDateDisplay: document.getElementById("assessor-score-date-display"),
+    assessorScoredDatesField: document.getElementById("assessor-scored-dates-field"),
+    assessorScoredDatesSelect: document.getElementById("assessor-scored-dates-select"),
     assessorProgress: document.getElementById("assessor-progress"),
     assessorTitle: document.getElementById("assessor-title"),
     assessorSheet: document.getElementById("assessor-sheet"),
@@ -286,17 +301,20 @@
     adminScoreSheetSource: document.getElementById("admin-score-sheet-source"),
     adminScoreSheetPeriod: document.getElementById("admin-score-sheet-period"),
     adminScoreSheetArea: document.getElementById("admin-score-sheet-area"),
+    adminScoreSheetDateField: document.getElementById("admin-score-sheet-date-field"),
+    adminScoreSheetDate: document.getElementById("admin-score-sheet-date"),
     adminScoreSheet: document.getElementById("admin-score-sheet"),
     adminScoreSheetTitle: document.getElementById("admin-score-sheet-title"),
     adminScoreSheetProgress: document.getElementById("admin-score-sheet-progress"),
     exportAdminScoreSheetButton: document.getElementById("export-admin-score-sheet-button"),
     exportExcelButton: document.getElementById("export-excel-button"),
-    safetyPeriodSelect: document.getElementById("safety-period-select"),
     safetyYearFilter: document.getElementById("safety-year-filter"),
     safetyMonthFilter: document.getElementById("safety-month-filter"),
     safetyAreaFilter: document.getElementById("safety-area-filter"),
     safetyStatusFilter: document.getElementById("safety-status-filter"),
     safetyDepartmentFilter: document.getElementById("safety-department-filter"),
+    safetySourceFilterField: document.getElementById("safety-source-filter-field"),
+    safetySourceFilter: document.getElementById("safety-source-filter"),
     safetyDashboard: document.getElementById("safety-dashboard"),
     safetyTable: document.getElementById("safety-table"),
     safetyAssessmentCaption: document.getElementById("safety-assessment-caption"),
@@ -305,10 +323,11 @@
     editSafetyMetaButton: document.getElementById("edit-safety-meta-button"),
     exportSafetyExcelButton: document.getElementById("export-safety-excel-button"),
     sendSafetyMailButton: document.getElementById("send-safety-mail-button"),
-    issueStatsPeriodSelect: document.getElementById("issue-stats-period-select"),
-    issueStatsGrid: document.getElementById("issue-stats-grid"),
-    issueZoneStats: document.getElementById("issue-zone-stats"),
-    issueTypeStats: document.getElementById("issue-type-stats"),
+    issueStatsYearFilter: document.getElementById("issue-stats-year-filter"),
+    issueStatsMonthFilter: document.getElementById("issue-stats-month-filter"),
+    issueStatsDayFilter: document.getElementById("issue-stats-day-filter"),
+    issueStatsTotal: document.getElementById("issue-stats-total"),
+    issueStatsDashboard: document.getElementById("issue-stats-dashboard"),
     periodForm: document.getElementById("period-5s-form"),
     periodMonth: document.getElementById("period-5s-month"),
     periodYear: document.getElementById("period-5s-year"),
@@ -319,11 +338,8 @@
     period5SYear: document.getElementById("period-5s-year"),
     period5SCatalogMode: document.getElementById("period-5s-catalog-mode"),
     period5SList: document.getElementById("period-5s-list"),
-    periodSafetyForm: document.getElementById("period-safety-form"),
-    periodSafetyDate: document.getElementById("period-safety-date"),
-    periodSafetyDateCalendar: document.getElementById("period-safety-date-calendar"),
-    periodSafetyCatalogMode: document.getElementById("period-safety-catalog-mode"),
-    periodSafetyList: document.getElementById("period-safety-list"),
+    catalogPeriodPanel: document.querySelector(".catalog-period-panel"),
+    catalogGrid: document.querySelector("#catalog-scope-detail .catalog-grid"),
     catalogScopeSwitch: document.getElementById("catalog-scope-switch"),
     catalogScopeDetail: document.getElementById("catalog-scope-detail"),
     accountScopeSwitch: document.getElementById("account-scope-switch"),
@@ -342,6 +358,7 @@
     departmentHeadEmailList: document.getElementById("department-head-email-list"),
     departmentHeadList: document.getElementById("department-head-list"),
     catalogAssessorList: document.getElementById("catalog-assessor-list"),
+    catalogAt5sList: document.getElementById("catalog-at5s-list"),
     areaForm: document.getElementById("area-form"),
     areaCode: document.getElementById("area-code"),
     areaHead: document.getElementById("area-head"),
@@ -362,6 +379,12 @@
     accountRole: document.getElementById("account-role"),
     viewerAccountDetail: document.getElementById("viewer-account-detail"),
     departmentHeadAccountDetail: document.getElementById("department-head-account-detail"),
+    at5sAccountDetail: document.getElementById("at5s-account-detail"),
+    at5sAccountForm: document.getElementById("at5s-account-form"),
+    at5sAccountMember: document.getElementById("at5s-account-member"),
+    at5sAccountUsername: document.getElementById("at5s-account-username"),
+    at5sAccountPassword: document.getElementById("at5s-account-password"),
+    at5sAccountList: document.getElementById("at5s-account-list"),
     accountAssessorField: document.getElementById("account-assessor-field"),
     accountManagerField: document.getElementById("account-manager-field"),
     accountAssessor: document.getElementById("account-assessor"),
@@ -531,6 +554,16 @@
 
   function createDefaultState() {
     const now = new Date().toISOString();
+    const [safetyCatalogYear, safetyCatalogMonth] = todayIsoDate().split("-").map(Number);
+    const safetyCatalogPeriod = {
+      id: "period-safety-catalog",
+      type: SAFETY_PERIOD_TYPE,
+      month: safetyCatalogMonth,
+      year: safetyCatalogYear,
+      label: "Danh mục AT",
+      createdAt: now,
+      archived: false,
+    };
     const managers = [];
     const managerIdsByName = new Map();
 
@@ -564,10 +597,10 @@
       version: DATA_VERSION,
       benchmark: BENCHMARK,
       fiveSChartTargets: { ...DEFAULT_FIVE_S_CHART_TARGETS },
-      activePeriodId: "",
+      activePeriodId: safetyCatalogPeriod.id,
       activeFiveSPeriodId: "",
-      activeSafetyPeriodId: "",
-      periods: [],
+      activeSafetyPeriodId: safetyCatalogPeriod.id,
+      periods: [safetyCatalogPeriod],
       managers,
       departmentHeadContacts,
       areas,
@@ -586,6 +619,7 @@
       ],
       assessors: [],
       safetyAssessors: [],
+      at5sMembers: [],
       safetyReport: { ...DEFAULT_SAFETY_REPORT },
       safetyMonthlyTargets: {},
       safetyIdentificationOverrides: {},
@@ -607,13 +641,40 @@
   }
 
   function normalizeScoreSource(source) {
-    return source === SCORE_SOURCE_SELF ? SCORE_SOURCE_SELF : SCORE_SOURCE_ASSESSOR;
+    if (source === SCORE_SOURCE_SELF) return SCORE_SOURCE_SELF;
+    if (source === SCORE_SOURCE_AT5S) return SCORE_SOURCE_AT5S;
+    if (source === SCORE_SOURCE_DEPARTMENT_HEAD) return SCORE_SOURCE_DEPARTMENT_HEAD;
+    if (source === SCORE_SOURCE_AVERAGE) return SCORE_SOURCE_AVERAGE;
+    return SCORE_SOURCE_ASSESSOR;
+  }
+
+  function isMultiDayScoreSource(source) {
+    return MULTI_DAY_SCORE_SOURCES.has(normalizeScoreSource(source));
+  }
+
+  function normalizeScoreDateForSource(date, source) {
+    if (!isMultiDayScoreSource(source)) return "";
+    const str = String(date || "").trim();
+    return /^\d{4}-\d{2}-\d{2}$/.test(str) ? str : "";
+  }
+
+  function defaultScoreDateForPeriod(periodId) {
+    const today = todayIsoDate();
+    const period = getPeriod(periodId);
+    if (!period || !period.year || !period.month) return today;
+    const [tYear, tMonth] = today.split("-").map(Number);
+    if (Number(period.year) === tYear && Number(period.month) === tMonth) return today;
+    const mm = String(period.month).padStart(2, "0");
+    return `${period.year}-${mm}-01`;
   }
 
   function getScoreSourceLabel(source) {
-    return SCORE_SOURCE_OPTIONS.find((option) => option.value === source)?.label
-      || SCORE_SOURCE_OPTIONS.find((option) => option.value === normalizeScoreSource(source))?.label
-      || SCORE_SOURCE_OPTIONS[0].label;
+    const norm = normalizeScoreSource(source);
+    if (norm === SCORE_SOURCE_AT5S) return "Ban AT - 5S chấm";
+    if (norm === SCORE_SOURCE_DEPARTMENT_HEAD) return "Trưởng phòng chấm";
+    if (norm === SCORE_SOURCE_SELF) return "Quản lý zone tự đánh giá";
+    if (norm === SCORE_SOURCE_AVERAGE) return "Điểm trung bình";
+    return "Assessor chấm";
   }
 
   function normalizeCatalogType(type) {
@@ -789,6 +850,7 @@
     if (value === ROLE_ADMIN) return ROLE_ADMIN;
     if (["viewer", ROLE_VIEWER].includes(value)) return ROLE_VIEWER;
     if (["departmentHead", "deptHead", ROLE_DEPARTMENT_HEAD].includes(value)) return ROLE_DEPARTMENT_HEAD;
+    if (["at5s", ROLE_AT5S, "ban-at-5s", "banAt5s"].includes(value)) return ROLE_AT5S;
     if (["safetyAssessor", ROLE_ASSESSOR_SAFETY].includes(value)) return ROLE_ASSESSOR_SAFETY;
     if (["manager", "scorer", ROLE_ZONE_OWNER].includes(value)) return ROLE_ZONE_OWNER;
     return ROLE_ASSESSOR_5S;
@@ -813,8 +875,9 @@
       .toLocaleLowerCase("vi")
       .replace(/[\s_]+/g, "-");
     if (["worker", "member", "cong-nhan", "công-nhân"].includes(normalizedText)) return "worker";
-    if (["department-head", "internal-audit", "audit", "truong-bo-phan", "trưởng-bộ-phận", "to-truong", "tổ-trưởng"].includes(normalizedText)) return "department-head";
+    if (["department-head", "head", "internal-audit", "audit", "truong-bo-phan", "trưởng-bộ-phận", "to-truong", "tổ-trưởng"].includes(normalizedText)) return "department-head";
     if (["assessor", "lean", "(lean)"].includes(normalizedText)) return "assessor";
+    if (["at5s", "ban-at-5s", "ban-an-toan-5s", "ban-at-va-5s"].includes(normalizedText)) return "at5s";
     return "";
   }
 
@@ -841,6 +904,7 @@
       id: record.id || makeId("safety"),
       periodId: record.periodId || "",
       areaId: record.areaId || "",
+      issueDate: toIsoDate(record.issueDate || record.date) || "",
       issueLocation: record.issueLocation || "",
       issueDay: record.issueDay || "",
       issueMonth: record.issueMonth || "",
@@ -872,6 +936,8 @@
       completionStop6Confirm: record.completionStop6Confirm || "",
       scorerName: record.scorerName || "",
       accountUsername: record.accountUsername || "",
+      createdBy: record.createdBy || "",
+      createdByAccountId: record.createdByAccountId || "",
       createdAt: record.createdAt || record.updatedAt || now,
       updatedAt: record.updatedAt || record.createdAt || now,
     };
@@ -887,6 +953,7 @@
     const fields = [
       "periodId",
       "areaId",
+      "issueDate",
       "issueLocation",
       "issueDay",
       "issueMonth",
@@ -947,6 +1014,7 @@
       safetyAssessors: snapshotToArray(raw.safetyAssessors),
       safetyAreas: snapshotToArray(raw.safetyAreas),
       safetyDepartmentGroups: snapshotToArray(raw.safetyDepartmentGroups),
+      at5sMembers: snapshotToArray(raw.at5sMembers),
       accounts: snapshotToArray(raw.accounts),
       safetyReport: { ...DEFAULT_SAFETY_REPORT, ...(raw.safetyReport || {}) },
       safetyMonthlyTargets: raw.safetyMonthlyTargets || {},
@@ -1028,7 +1096,20 @@
     const periodExists = (periodId) => normalized.periods.some((period) => period.id === periodId);
     const periodFromList = (periodId) => normalized.periods.find((period) => period.id === periodId) || null;
     const firstFiveSPeriod = normalized.periods.find((period) => [FIVE_S_PERIOD_TYPE, LEGACY_PERIOD_TYPE].includes(normalizePeriodType(period.type)));
-    const firstSafetyPeriod = normalized.periods.find((period) => [SAFETY_PERIOD_TYPE, LEGACY_PERIOD_TYPE].includes(normalizePeriodType(period.type)));
+    let firstSafetyPeriod = normalized.periods.find((period) => [SAFETY_PERIOD_TYPE, LEGACY_PERIOD_TYPE].includes(normalizePeriodType(period.type)));
+    if (!firstSafetyPeriod) {
+      const [year, month] = todayIsoDate().split("-").map(Number);
+      firstSafetyPeriod = {
+        id: "period-safety-catalog",
+        type: SAFETY_PERIOD_TYPE,
+        month,
+        year,
+        label: "Danh mục AT",
+        createdAt: new Date().toISOString(),
+        archived: false,
+      };
+      normalized.periods.push(firstSafetyPeriod);
+    }
 
     if (!normalized.activePeriodId || !periodExists(normalized.activePeriodId)) {
       normalized.activePeriodId = firstFiveSPeriod?.id || firstSafetyPeriod?.id || "";
@@ -1248,6 +1329,7 @@
       ...score,
       status: score.status === SCORE_CROSSED ? SCORE_CROSSED : "",
       scoreSource: normalizeScoreSource(score.scoreSource),
+      scoreDate: normalizeScoreDateForSource(score.scoreDate, score.scoreSource),
       note: score.note || "",
       photoDataUrl: score.photoDataUrl || "",
       photoName: score.photoName || "",
@@ -1379,6 +1461,7 @@
       safetyAssessors: toObj(s.safetyAssessors),
       safetyAreas: toObj(safetyAreas),
       safetyDepartmentGroups: toObj(safetyDepartmentGroups),
+      at5sMembers: toObj(s.at5sMembers || []),
       accounts: toObj(accounts),
       safetyReport: s.safetyReport || DEFAULT_SAFETY_REPORT,
       safetyMonthlyTargets: s.safetyMonthlyTargets || {},
@@ -1486,17 +1569,19 @@
   }
 
   function scoreSlotFor(score) {
+    const scoreSource = normalizeScoreSource(score?.scoreSource || "");
     return {
       periodId: String(score?.periodId || ""),
       areaId: String(score?.areaId || ""),
       itemId: String(score?.itemId || ""),
       criterionId: String(score?.criterionId || ""),
-      scoreSource: normalizeScoreSource(score?.scoreSource || ""),
+      scoreSource,
+      scoreDate: normalizeScoreDateForSource(score?.scoreDate, scoreSource),
     };
   }
 
   function scoreDraftId(slot, accountId = currentUser?.id || "") {
-    return `score:${[accountId, slot.periodId, slot.areaId, slot.itemId, slot.criterionId, slot.scoreSource].map(encodeURIComponent).join("|")}`;
+    return `score:${[accountId, slot.periodId, slot.areaId, slot.itemId, slot.criterionId, slot.scoreSource, slot.scoreDate || ""].map(encodeURIComponent).join("|")}`;
   }
 
   function isSameScoreSlot(score, slot) {
@@ -1505,7 +1590,8 @@
       && candidate.areaId === slot.areaId
       && candidate.itemId === slot.itemId
       && candidate.criterionId === slot.criterionId
-      && candidate.scoreSource === slot.scoreSource;
+      && candidate.scoreSource === slot.scoreSource
+      && (candidate.scoreDate || "") === (slot.scoreDate || "");
   }
 
   function applyScoreValueToState(slot, score) {
@@ -1544,13 +1630,32 @@
     return Number.isFinite(serverTimestamp) && serverTimestamp > (Number.isFinite(localTimestamp) ? localTimestamp : 0);
   }
 
+  function getScoreSaveErrorMessage(error) {
+    const fallbackMessages = new Set([
+      "Không lưu được điểm. Vui lòng thử lại.",
+      "Hệ thống đang gặp sự cố. Vui lòng thử lại sau.",
+    ]);
+    const detail = [error?.payload?.error, error?.message, typeof error === "string" ? error : ""]
+      .map((value) => String(value || "").trim())
+      .find((value) => value && !fallbackMessages.has(value));
+    if (detail) return detail.slice(0, 240);
+
+    const status = Number(error?.status);
+    if (status === 400) return "Dữ liệu điểm hoặc ngày chấm không hợp lệ. Vui lòng kiểm tra lại.";
+    if (status === 403) return "Bạn không có quyền ghi điểm 5S cho ô này.";
+    if (status === 409) return "Ô điểm đã thay đổi. Vui lòng tải lại rồi chấm lại.";
+    if (status >= 500) return "Máy chủ chưa lưu được điểm. Vui lòng thử lại sau.";
+    if (error?.name === "TypeError") return "Không kết nối được máy chủ. Điểm chưa được lưu.";
+    return "Không lưu được điểm. Vui lòng thử lại.";
+  }
+
   function showScoreSaveError(error) {
     if (error?.offlineDraftSaved) {
       showToast("Mất kết nối. Bản nháp điểm đã được giữ trên thiết bị, chưa lưu lên máy chủ.");
     } else if (error?.scoreConflictPending) {
       showToast("Bản nháp vẫn được giữ. Mở trạng thái dữ liệu để xử lý xung đột.", true);
     } else {
-      showToast("Không lưu được điểm. Vui lòng thử lại.", true);
+      showToast(getScoreSaveErrorMessage(error), true);
     }
   }
 
@@ -1716,6 +1821,7 @@
       auditTarget: target,
       auditChanges: details.map((detail) => ({ ...detail, section: "Chấm điểm 5S", scope: FIVE_S_PERIOD_TYPE, periodId: slot.periodId })),
       scoreSource: slot.scoreSource,
+      scoreDate: slot.scoreDate || "",
       scope: FIVE_S_PERIOD_TYPE,
     };
   }
@@ -3282,6 +3388,12 @@
       assessors,
       areas: areasWithoutLegacyEmails,
       safetyDepartmentGroups,
+      at5sMembers: snapshotToArray(snapshot.at5sMembers).map((m) => ({
+        id: m.id || makeStableId("at5s", m.name),
+        name: String(m.name || "").trim(),
+        employeeCode: m.employeeCode || "",
+        createdAt: m.createdAt || "",
+      })).filter((m) => m.id && m.name),
       safetyReport: { ...DEFAULT_SAFETY_REPORT, ...(snapshot.safetyReport || {}) },
     };
   }
@@ -3335,6 +3447,7 @@
       assessors,
       areas,
       safetyDepartmentGroups,
+      at5sMembers: (source?.at5sMembers || state.at5sMembers || []).map((m) => ({ ...m })),
       safetyReport: { ...DEFAULT_SAFETY_REPORT, ...(source?.safetyReport || {}) },
     };
   }
@@ -3356,17 +3469,14 @@
       managers: [],
       departmentHeadContacts: [],
       assessors: [],
+      at5sMembers: [],
       areas,
       safetyDepartmentGroups: normalizeSafetyDepartmentGroups(snapshot?.safetyDepartmentGroups, areas),
     };
   }
 
   function getNewPeriodCatalogTemplateMode(type = FIVE_S_PERIOD_TYPE) {
-    const catalogType = normalizeCatalogType(type);
-    const value = catalogType === SAFETY_PERIOD_TYPE
-      ? elements.periodSafetyCatalogMode?.value
-      : elements.period5SCatalogMode?.value;
-    return value === PERIOD_CATALOG_TEMPLATE_RESET_PEOPLE
+    return elements.period5SCatalogMode?.value === PERIOD_CATALOG_TEMPLATE_RESET_PEOPLE
       ? PERIOD_CATALOG_TEMPLATE_RESET_PEOPLE
       : PERIOD_CATALOG_TEMPLATE_COPY;
   }
@@ -3475,28 +3585,15 @@
   }
 
   function safetyPeriodDateLabel(period) {
+    if (period?.month && period?.year) {
+      return `Tháng ${period.month}/${period.year}`;
+    }
     const isoDate = toIsoDate(period?.createdAt);
     if (isoDate) {
       const [year, month, day] = isoDate.split("-");
       return `${day}/${month}/${year}`;
     }
-    return period?.month && period?.year ? `Tháng ${period.month}/${period.year}` : "";
-  }
-
-  function safetyPeriodInputDate(period) {
-    const createdAtDate = toIsoDate(period?.createdAt);
-    if (createdAtDate) {
-      return createdAtDate;
-    }
-    const label = stripSafetyPeriodLabelPrefix(period?.label || "");
-    const match = /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/.exec(label);
-    if (match) {
-      return `${match[3]}-${String(Number(match[2])).padStart(2, "0")}-${String(Number(match[1])).padStart(2, "0")}`;
-    }
-    if (period?.year && period?.month) {
-      return `${period.year}-${String(Number(period.month)).padStart(2, "0")}-01`;
-    }
-    return todayIsoDate();
+    return "";
   }
 
   function periodLabel(period) {
@@ -3704,6 +3801,8 @@
       [
         ...getPeriodCatalogManagers(type, periodId),
         ...getPeriodCatalogAssessors(type, periodId),
+        ...(state.at5sMembers || []),
+        ...snapshotToArray(getPeriod(periodId)?.settingsSnapshot?.at5sMembers),
         ...getDepartmentHeadRows(periodId),
       ].forEach((person) => {
         if (sameNormalizedText(person.name, name) && employeeCodeKey(person.employeeCode)) {
@@ -3861,17 +3960,37 @@
     return getAccountRolesForType(account, type).includes(ROLE_ZONE_OWNER);
   }
 
+  function hasAt5sRole(account = currentUser) {
+    if (!account || isAdminAccount(account)) return false;
+    if (normalizeAccountRole(account.role) === ROLE_AT5S) return true;
+    if (account.rolesByType && Object.values(account.rolesByType).includes(ROLE_AT5S)) return true;
+    const at5sList = [
+      ...(state.at5sMembers || []),
+    ];
+    if (account.at5sMemberId && at5sList.some((person) => person.id === account.at5sMemberId)) return true;
+    return at5sList.some((person) => accountMatchesCatalogPerson(account, person));
+  }
+
+  function isAt5sAccount(account) {
+    return hasAt5sRole(account);
+  }
+
+  function isAt5sDisplayAccount(account) {
+    if (!account || isAdminAccount(account) || isViewerAccount(account)) return false;
+    return hasAt5sRole(account);
+  }
+
   function isFiveSAssessor(account) {
-    return !isViewerAccount(account) && (isAdminAccount(account) || hasAccountAccessType(account, FIVE_S_PERIOD_TYPE));
+    return !isViewerAccount(account) && (isAdminAccount(account) || hasAt5sRole(account) || hasDepartmentHeadRole(account) || hasAccountAccessType(account, FIVE_S_PERIOD_TYPE));
   }
 
   function isSafetyAssessor(account) {
-    return !isViewerAccount(account) && hasAccountAccessType(account, SAFETY_PERIOD_TYPE)
-      && getAccountRolesForType(account, SAFETY_PERIOD_TYPE).some((role) => [ROLE_ZONE_OWNER, ROLE_ASSESSOR_SAFETY].includes(role));
+    return !isViewerAccount(account) && (hasAt5sRole(account) || (hasAccountAccessType(account, SAFETY_PERIOD_TYPE)
+      && getAccountRolesForType(account, SAFETY_PERIOD_TYPE).some((role) => [ROLE_ZONE_OWNER, ROLE_ASSESSOR_SAFETY].includes(role))));
   }
 
   function canUseSafety(account) {
-    return !isViewerAccount(account) && (isAdminAccount(account) || hasDepartmentHeadRole(account) || hasAccountAccessType(account, SAFETY_PERIOD_TYPE));
+    return !isViewerAccount(account) && (isAdminAccount(account) || hasAt5sRole(account) || hasDepartmentHeadRole(account) || hasAccountAccessType(account, SAFETY_PERIOD_TYPE));
   }
 
   function canAddSafetyEvaluation(account) {
@@ -3903,27 +4022,38 @@
       return true;
     }
     const username = String(account.username || "").trim();
-    const recordUsername = String(record.accountUsername || record.createdBy || "").trim();
-    if (recordUsername) {
-      return sameNormalizedText(recordUsername, username);
-    }
+    if (record.createdByAccountId && String(record.createdByAccountId) === String(account.id || "")) return true;
+    const recordUsername = String(record.accountUsername || "").trim();
+    if (recordUsername && sameNormalizedText(recordUsername, username)) return true;
+    const recordOwnerAccount = recordUsername
+      ? state.accounts.find((item) => sameNormalizedText(item.username, recordUsername))
+      : null;
+    if (recordOwnerAccount) return String(recordOwnerAccount.id || "") === String(account.id || "");
+    const legacyCreatedBy = String(record.createdBy || "").trim();
+    if (legacyCreatedBy && sameNormalizedText(legacyCreatedBy, username)) return true;
+    const legacyCreatorAccount = legacyCreatedBy
+      ? state.accounts.find((item) => sameNormalizedText(item.username, legacyCreatedBy))
+      : null;
+    if (legacyCreatorAccount) return String(legacyCreatorAccount.id || "") === String(account.id || "");
     const displayName = getAccountDisplayName(account, SAFETY_PERIOD_TYPE, record.periodId || getActivePeriodId(SAFETY_PERIOD_TYPE));
     const personId = getAccountPersonId(account, SAFETY_PERIOD_TYPE);
     const assessor = personId ? getPeriodCatalogAssessor(record.periodId || getActivePeriodId(SAFETY_PERIOD_TYPE), personId) : null;
     const assessorName = assessor?.name || "";
+    const at5sMembers = [
+      ...(state.at5sMembers || []),
+      ...snapshotToArray(getPeriod(record.periodId || getActivePeriodId(SAFETY_PERIOD_TYPE))?.settingsSnapshot?.at5sMembers),
+    ];
+    const at5sNames = at5sMembers
+      .filter((member) => (account.at5sMemberId && String(member.id) === String(account.at5sMemberId)) || accountMatchesCatalogPerson(account, member))
+      .map((member) => member.name)
+      .filter(Boolean);
 
-    if (record.scorerName) {
-      return Boolean(
-        (displayName && sameNormalizedText(record.scorerName, displayName)) ||
-        (assessorName && sameNormalizedText(record.scorerName, assessorName)) ||
-        (username && sameNormalizedText(record.scorerName, username))
-      );
-    }
+    if (legacyCreatedBy && [displayName, account.name, account.displayName, username, assessorName, ...at5sNames]
+      .some((name) => name && sameNormalizedText(legacyCreatedBy, name))) return true;
 
-    return Boolean(displayName) && (
-      safetyRecordTextMatchesName(record.issueFoundBy, displayName) ||
-      safetyRecordTextMatchesName(record.issueFoundBy, username)
-    );
+    const names = [displayName, assessorName, ...at5sNames, account.name, account.displayName, username].filter(Boolean);
+    return names.some((name) => sameNormalizedText(record.scorerName, name))
+      || names.some((name) => safetyRecordTextMatchesName(record.issueFoundBy, name));
   }
 
   function getSafetyRecordOwnerAccount(record) {
@@ -3978,23 +4108,26 @@
     );
   }
 
-  function getFiveSPeriodForSafetyPeriod(safetyPeriodId) {
+  function getFiveSPeriodForSafetyRecord(record) {
+    const safetyPeriodId = record?.periodId || "";
     const safetyPeriod = getPeriod(safetyPeriodId);
     const activeFiveSPeriod = getPeriod(getActivePeriodId(FIVE_S_PERIOD_TYPE));
+    const issueDate = getSafetyRecordIssueDate(record, safetyPeriod);
+    const [targetYear, targetMonth] = issueDate.split("-").map(Number);
     const isSameMonth = (period) => Boolean(
-      period?.month && period?.year && safetyPeriod?.month && safetyPeriod?.year
-      && Number(period.month) === Number(safetyPeriod.month)
-      && Number(period.year) === Number(safetyPeriod.year),
+      period?.month && period?.year && targetMonth && targetYear
+      && Number(period.month) === targetMonth
+      && Number(period.year) === targetYear,
     );
     const matchingFiveSPeriod = getPeriodsByType(FIVE_S_PERIOD_TYPE).find(isSameMonth);
     return isSameMonth(activeFiveSPeriod) ? activeFiveSPeriod : matchingFiveSPeriod || activeFiveSPeriod;
   }
 
-  function canManageSafetyCountermeasureFromFiveSAssignments(account, safetyArea, safetyPeriodId) {
+  function canManageSafetyCountermeasureFromFiveSAssignments(account, safetyArea, safetyRecord) {
     const safetyZoneCode = getSafetyAreaCode(safetyArea).toLocaleLowerCase("vi");
     if (!account || !safetyZoneCode) return false;
 
-    const fiveSPeriod = getFiveSPeriodForSafetyPeriod(safetyPeriodId);
+    const fiveSPeriod = getFiveSPeriodForSafetyRecord(safetyRecord);
     if (!fiveSPeriod) return false;
     const fiveSPeriodId = fiveSPeriod.id;
     const fiveSArea = getAreasForPeriod(fiveSPeriodId).find((area) => (
@@ -4027,7 +4160,7 @@
     const area = getAreasForPeriod(record.periodId).find((item) => item.id === record.areaId);
     if (!area) return false;
 
-    if (canManageSafetyCountermeasureFromFiveSAssignments(account, area, record.periodId)) return true;
+    if (canManageSafetyCountermeasureFromFiveSAssignments(account, area, record)) return true;
     if (!isZoneOwnerAccount(account, SAFETY_PERIOD_TYPE)) return false;
 
     const managerIds = new Set(getAccountPersonIdsForRole(account, SAFETY_PERIOD_TYPE, ROLE_ZONE_OWNER, record.periodId));
@@ -4070,35 +4203,28 @@
   }
 
   function getAvailableFiveSScoreSources(account = currentUser, periodId = getActivePeriodId(FIVE_S_PERIOD_TYPE), areaId = "") {
+    if (isAdminAccount(account)) return [SCORE_SOURCE_ASSESSOR, SCORE_SOURCE_SELF, SCORE_SOURCE_AT5S, SCORE_SOURCE_DEPARTMENT_HEAD];
     const roles = getAccountRolesForType(account, FIVE_S_PERIOD_TYPE, periodId);
     const sources = [];
-    const hasZoneOwnerRole = roles.includes(ROLE_ZONE_OWNER);
-    const hasAssessorRole = roles.includes(ROLE_ASSESSOR_5S);
-    if (hasZoneOwnerRole) sources.push(SCORE_SOURCE_SELF);
-    if (hasAssessorRole) sources.push(SCORE_SOURCE_ASSESSOR);
-    if (hasZoneOwnerRole || hasAssessorRole) {
-      sources.push(SCORE_SOURCE_ASSESSOR, SCORE_SOURCE_SELF);
-    }
-    if (isViewerAccount(account)) sources.push(SCORE_SOURCE_ASSESSOR, SCORE_SOURCE_SELF);
-    if (hasDepartmentHeadRole(account, periodId) && !sources.includes(SCORE_SOURCE_ASSESSOR)) {
-      sources.push(SCORE_SOURCE_ASSESSOR);
-    }
+    if (hasAt5sRole(account)) sources.push(SCORE_SOURCE_AT5S);
+    if (hasDepartmentHeadRole(account, periodId)) sources.push(SCORE_SOURCE_DEPARTMENT_HEAD);
+    if (roles.includes(ROLE_ZONE_OWNER)) sources.push(SCORE_SOURCE_SELF);
+    if (roles.includes(ROLE_ASSESSOR_5S)) sources.push(SCORE_SOURCE_ASSESSOR);
+    if (isViewerAccount(account)) return [SCORE_SOURCE_ASSESSOR, SCORE_SOURCE_SELF, SCORE_SOURCE_AT5S, SCORE_SOURCE_DEPARTMENT_HEAD];
     const uniqueSources = [...new Set(sources)];
-    if (isAdminAccount(account)) return [SCORE_SOURCE_ASSESSOR, SCORE_SOURCE_SELF];
-    if (!areaId || isViewerAccount(account)) return uniqueSources;
+    if (!areaId) return uniqueSources.length ? uniqueSources : [SCORE_SOURCE_ASSESSOR];
     if (!getAllowedAreaIds(account, periodId).has(areaId)) return [];
-    const hasScoringAssignment = [SCORE_SOURCE_ASSESSOR, SCORE_SOURCE_SELF]
-      .some((source) => canEditFiveSScoreSource(account, source, areaId, periodId));
     return uniqueSources.filter((source) => canEditFiveSScoreSource(account, source, areaId, periodId)
-      || (source === SCORE_SOURCE_ASSESSOR && hasDepartmentHeadRole(account, periodId))
-      || (hasScoringAssignment && [SCORE_SOURCE_ASSESSOR, SCORE_SOURCE_SELF].includes(source)));
+      || isViewerAccount(account));
   }
 
   function getDefaultFiveSScoreSource(account = currentUser, periodId = getActivePeriodId(FIVE_S_PERIOD_TYPE), areaId = "") {
     const sources = getAvailableFiveSScoreSources(account, periodId, areaId);
+    if (hasAt5sRole(account) && sources.includes(SCORE_SOURCE_AT5S)) return SCORE_SOURCE_AT5S;
+    if (hasDepartmentHeadRole(account, periodId) && sources.includes(SCORE_SOURCE_DEPARTMENT_HEAD)) return SCORE_SOURCE_DEPARTMENT_HEAD;
     const accountDefault = getScoreSourceForAccount(account);
-    if (isAdminAccount(account) && sources.includes(accountDefault)) return accountDefault;
-    const editableSource = [SCORE_SOURCE_SELF, SCORE_SOURCE_ASSESSOR]
+    if (sources.includes(accountDefault)) return accountDefault;
+    const editableSource = [SCORE_SOURCE_AT5S, SCORE_SOURCE_DEPARTMENT_HEAD, SCORE_SOURCE_SELF, SCORE_SOURCE_ASSESSOR]
       .find((source) => sources.includes(source) && canEditFiveSScoreSource(account, source, areaId, periodId));
     return editableSource || sources[0] || accountDefault;
   }
@@ -4107,6 +4233,12 @@
     const areas = getAreasForPeriod(periodId);
     if (isAdminAccount(account)) return new Set(areas.map((area) => area.id));
     const source = normalizeScoreSource(scoreSource);
+    if (source === SCORE_SOURCE_AT5S) {
+      return new Set(areas.map((area) => area.id));
+    }
+    if (source === SCORE_SOURCE_DEPARTMENT_HEAD) {
+      return getDepartmentHeadManagedAreaIds(account, periodId);
+    }
     if (source === SCORE_SOURCE_SELF) {
       const managerIds = new Set(getAccountPersonIdsForRole(account, FIVE_S_PERIOD_TYPE, ROLE_ZONE_OWNER, periodId));
       return new Set(areas.filter((area) => managerIds.has(area.scorerId)).map((area) => area.id));
@@ -4121,8 +4253,15 @@
   function canEditFiveSScoreSource(account, scoreSource, areaId = "", periodId = getActivePeriodId(FIVE_S_PERIOD_TYPE)) {
     if (isAdminAccount(account)) return true;
     if (isViewerAccount(account) || !isFiveSAssessor(account)) return false;
+    const source = normalizeScoreSource(scoreSource);
+    if (source === SCORE_SOURCE_AT5S) {
+      return hasAt5sRole(account) && (!areaId || getAllowedAreaIds(account, periodId).has(areaId));
+    }
+    if (source === SCORE_SOURCE_DEPARTMENT_HEAD) {
+      return hasDepartmentHeadRole(account, periodId) && (!areaId || getDepartmentHeadManagedAreaIds(account, periodId).has(areaId));
+    }
     const roles = getAccountRolesForType(account, FIVE_S_PERIOD_TYPE, periodId);
-    const hasRole = normalizeScoreSource(scoreSource) === SCORE_SOURCE_SELF
+    const hasRole = source === SCORE_SOURCE_SELF
       ? roles.includes(ROLE_ZONE_OWNER)
       : roles.includes(ROLE_ASSESSOR_5S);
     return hasRole && (!areaId || getFiveSScoreSourceAreaIds(account, periodId, scoreSource).has(areaId));
@@ -4131,6 +4270,12 @@
   function getFiveSAreaScoringRoleLabel(account = currentUser, areaId = "", periodId = getActivePeriodId(FIVE_S_PERIOD_TYPE)) {
     if (!account || isAdminAccount(account)) return "";
     const labels = [];
+    if (canEditFiveSScoreSource(account, SCORE_SOURCE_AT5S, areaId, periodId)) {
+      labels.push("Vai trò Ban AT - 5S");
+    }
+    if (canEditFiveSScoreSource(account, SCORE_SOURCE_DEPARTMENT_HEAD, areaId, periodId)) {
+      labels.push("Vai trò Trưởng phòng");
+    }
     if (canEditFiveSScoreSource(account, SCORE_SOURCE_ASSESSOR, areaId, periodId)) {
       labels.push("Vai trò assessor");
     }
@@ -4152,6 +4297,7 @@
     if (normalizedRole === ROLE_ADMIN) return "Admin hệ thống";
     if (normalizedRole === ROLE_VIEWER) return "Người xem";
     if (normalizedRole === ROLE_DEPARTMENT_HEAD) return "Trưởng phòng";
+    if (normalizedRole === ROLE_AT5S) return "Ban AT - 5S";
     if (normalizedRole === ROLE_ASSESSOR_SAFETY) return "Assessor an toàn";
     if (normalizedRole === ROLE_ZONE_OWNER) return "Người phụ trách zone";
     return "Assessor 5S";
@@ -4161,6 +4307,7 @@
     const scopedRole = normalizeScopedAccountRole(role, type);
     if (scopedRole === ROLE_VIEWER) return "Người xem";
     if (scopedRole === ROLE_DEPARTMENT_HEAD) return "Trưởng phòng";
+    if (scopedRole === ROLE_AT5S) return "Ban AT - 5S";
     if (scopedRole === ROLE_ZONE_OWNER) return "Người phụ trách zone";
     return normalizeCatalogType(type) === SAFETY_PERIOD_TYPE ? "Assessor AT" : "Assessor 5S";
   }
@@ -4457,7 +4604,7 @@
 
     const periodAreas = getAreasForPeriod(periodId);
     const catalogType = getCatalogTypeForPeriod(periodId);
-    if (isAdminAccount(account) || isViewerAccount(account)) {
+    if (isAdminAccount(account) || isViewerAccount(account) || hasAt5sRole(account)) {
       return new Set(periodAreas.map((area) => area.id));
     }
     const hasHeadRole = hasDepartmentHeadRole(account, periodId);
@@ -4497,35 +4644,112 @@
     scoreRecordIndex = null;
   }
 
-  function scoreRecordKey(periodId, areaId, itemId, criterionId, scoreSource = SCORE_SOURCE_ASSESSOR) {
+  function scoreRecordKey(periodId, areaId, itemId, criterionId, scoreSource = SCORE_SOURCE_ASSESSOR, scoreDate = "") {
+    const normSource = normalizeScoreSource(scoreSource);
+    const normDate = normalizeScoreDateForSource(scoreDate, normSource);
     return [
       String(periodId || ""),
       String(areaId || ""),
       String(itemId || ""),
       String(criterionId || ""),
-      normalizeScoreSource(scoreSource),
+      normSource,
+      normDate,
     ].join("\u001f");
   }
 
   function getScoreRecordIndex() {
     if (!scoreRecordIndex) {
       scoreRecordIndex = new Map();
+      const dailyRecordsBySlot = new Map();
+      const availableDatesByArea = new Map();
+
       (state.scores || []).forEach((score) => {
-        const key = scoreRecordKey(score.periodId, score.areaId, score.itemId, score.criterionId, score.scoreSource);
-        if (!scoreRecordIndex.has(key)) {
-          scoreRecordIndex.set(key, score);
+        const normSource = normalizeScoreSource(score.scoreSource);
+        const normDate = normalizeScoreDateForSource(score.scoreDate, normSource);
+        const exactKey = scoreRecordKey(score.periodId, score.areaId, score.itemId, score.criterionId, normSource, normDate);
+        if (!scoreRecordIndex.has(exactKey)) {
+          scoreRecordIndex.set(exactKey, score);
+        }
+
+        if (isMultiDayScoreSource(normSource)) {
+          const slotKey = [
+            String(score.periodId || ""),
+            String(score.areaId || ""),
+            String(score.itemId || ""),
+            String(score.criterionId || ""),
+            normSource,
+          ].join("\u001f");
+          if (!dailyRecordsBySlot.has(slotKey)) dailyRecordsBySlot.set(slotKey, []);
+          dailyRecordsBySlot.get(slotKey).push(score);
+
+          if (normDate) {
+            const areaDateKey = `${score.periodId}\u001f${score.areaId}\u001f${normSource}`;
+            if (!availableDatesByArea.has(areaDateKey)) availableDatesByArea.set(areaDateKey, new Set());
+            availableDatesByArea.get(areaDateKey).add(normDate);
+          }
         }
       });
+
+      scoreRecordIndex._dailyRecordsBySlot = dailyRecordsBySlot;
+      scoreRecordIndex._availableDatesByArea = availableDatesByArea;
     }
     return scoreRecordIndex;
   }
 
-  function getScoreRecord(periodId, areaId, itemId, criterionId, scoreSource = SCORE_SOURCE_ASSESSOR) {
-    return getScoreRecordIndex().get(scoreRecordKey(periodId, areaId, itemId, criterionId, scoreSource)) || null;
+  function getAvailableScoreDates(periodId, areaId, scoreSource) {
+    const normSource = normalizeScoreSource(scoreSource);
+    if (!isMultiDayScoreSource(normSource)) return [];
+    const index = getScoreRecordIndex();
+    const areaDateKey = `${periodId}\u001f${areaId}\u001f${normSource}`;
+    const dateSet = index._availableDatesByArea?.get(areaDateKey);
+    return dateSet ? [...dateSet].sort() : [];
   }
 
-  function getScoreValue(periodId, areaId, itemId, criterionId, scoreSource = SCORE_SOURCE_ASSESSOR) {
-    const record = getScoreRecord(periodId, areaId, itemId, criterionId, scoreSource);
+  function getScoreRecord(periodId, areaId, itemId, criterionId, scoreSource = SCORE_SOURCE_ASSESSOR, scoreDate = "") {
+    const normSource = normalizeScoreSource(scoreSource);
+    const normDate = normalizeScoreDateForSource(scoreDate, normSource);
+    const index = getScoreRecordIndex();
+
+    if (isMultiDayScoreSource(normSource) && !normDate) {
+      const slotKey = [
+        String(periodId || ""),
+        String(areaId || ""),
+        String(itemId || ""),
+        String(criterionId || ""),
+        normSource,
+      ].join("\u001f");
+      const dailyRecords = index._dailyRecordsBySlot?.get(slotKey) || [];
+      if (!dailyRecords.length) return null;
+
+      const numericScores = dailyRecords
+        .map((r) => r.score)
+        .filter((val) => Number.isFinite(val));
+      const hasCrossed = dailyRecords.some((r) => r.status === SCORE_CROSSED);
+
+      let avg = null;
+      let status = "";
+      if (numericScores.length > 0) {
+        avg = numericScores.reduce((sum, v) => sum + v, 0) / numericScores.length;
+      } else if (hasCrossed) {
+        status = SCORE_CROSSED;
+      }
+
+      return {
+        score: avg,
+        status,
+        isMonthlyAverage: true,
+        dailyCount: dailyRecords.length,
+        dailyRecords,
+        scorerName: dailyRecords[dailyRecords.length - 1]?.scorerName || "",
+        updatedAt: dailyRecords[dailyRecords.length - 1]?.updatedAt || "",
+      };
+    }
+
+    return index.get(scoreRecordKey(periodId, areaId, itemId, criterionId, normSource, normDate)) || null;
+  }
+
+  function getScoreValue(periodId, areaId, itemId, criterionId, scoreSource = SCORE_SOURCE_ASSESSOR, scoreDate = "") {
+    const record = getScoreRecord(periodId, areaId, itemId, criterionId, scoreSource, scoreDate);
     return Number.isFinite(record?.score) ? record.score : null;
   }
 
@@ -4554,43 +4778,43 @@
     return numbers.reduce((sum, value) => sum + value, 0) / numbers.length;
   }
 
-  function areaAverage(periodId, area, scoreSource = SCORE_SOURCE_ASSESSOR) {
+  function areaAverage(periodId, area, scoreSource = SCORE_SOURCE_ASSESSOR, scoreDate = "") {
     const values = [];
     DEFAULT_ITEMS.forEach((item) => {
       item.criteria.forEach((criterion) => {
         if (!isNotApplicable(item.id, criterion.id, area)) {
-          values.push(getScoreValue(periodId, area.id, item.id, criterion.id, scoreSource));
+          values.push(getScoreValue(periodId, area.id, item.id, criterion.id, scoreSource, scoreDate));
         }
       });
     });
     return average(values);
   }
 
-  function itemAverage(periodId, item, areas = getAreasForPeriod(periodId), scoreSource = SCORE_SOURCE_ASSESSOR) {
+  function itemAverage(periodId, item, areas = getAreasForPeriod(periodId), scoreSource = SCORE_SOURCE_ASSESSOR, scoreDate = "") {
     const values = [];
     areas.forEach((area) => {
       item.criteria.forEach((criterion) => {
         if (!isNotApplicable(item.id, criterion.id, area)) {
-          values.push(getScoreValue(periodId, area.id, item.id, criterion.id, scoreSource));
+          values.push(getScoreValue(periodId, area.id, item.id, criterion.id, scoreSource, scoreDate));
         }
       });
     });
     return average(values);
   }
 
-  function groupAverage(periodId, areas, scoreSource = SCORE_SOURCE_ASSESSOR) {
-    return average(areas.map((area) => areaAverage(periodId, area, scoreSource)));
+  function groupAverage(periodId, areas, scoreSource = SCORE_SOURCE_ASSESSOR, scoreDate = "") {
+    return average(areas.map((area) => areaAverage(periodId, area, scoreSource, scoreDate)));
   }
 
-  function overallAverage(periodId, areas = getAreasForPeriod(periodId), scoreSource = SCORE_SOURCE_ASSESSOR) {
-    return average(areas.map((area) => areaAverage(periodId, area, scoreSource)));
+  function overallAverage(periodId, areas = getAreasForPeriod(periodId), scoreSource = SCORE_SOURCE_ASSESSOR, scoreDate = "") {
+    return average(areas.map((area) => areaAverage(periodId, area, scoreSource, scoreDate)));
   }
 
-  function getCompletedCellCount(periodId, area, scoreSource = SCORE_SOURCE_ASSESSOR) {
+  function getCompletedCellCount(periodId, area, scoreSource = SCORE_SOURCE_ASSESSOR, scoreDate = "") {
     let count = 0;
     DEFAULT_ITEMS.forEach((item) => {
       item.criteria.forEach((criterion) => {
-        const record = getScoreRecord(periodId, area.id, item.id, criterion.id, scoreSource);
+        const record = getScoreRecord(periodId, area.id, item.id, criterion.id, scoreSource, scoreDate);
         if (!isNotApplicable(item.id, criterion.id, area) && (Number.isFinite(record?.score) || isScoreCrossed(record))) {
           count += 1;
         }
@@ -4621,7 +4845,8 @@
   }
 
   function formatScore(value) {
-    return Number.isFinite(value) ? String(value) : "";
+    if (!Number.isFinite(value)) return "";
+    return Number.isInteger(value) ? String(value) : value.toFixed(2);
   }
 
   function formatScoreRecord(record) {
@@ -4685,6 +4910,14 @@
       return "";
     }
 
+    const text = String(value).trim();
+    if (/^\d{4}-\d{2}-\d{2}$/.test(text)) {
+      return text;
+    }
+    const displayMatch = /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/.exec(text);
+    if (displayMatch) {
+      return `${displayMatch[3]}-${String(Number(displayMatch[2])).padStart(2, "0")}-${String(Number(displayMatch[1])).padStart(2, "0")}`;
+    }
     if (/^\d{4}-\d{2}-\d{2}$/.test(String(value))) {
       return String(value);
     }
@@ -4749,7 +4982,12 @@
   }
 
   function getReportDateValue(report, period, fieldName) {
-    return toIsoDate(report?.[fieldName]) || toIsoDate(period?.createdAt) || todayIsoDate();
+    const configuredDate = toIsoDate(report?.[fieldName]);
+    if (["issueDate", "reportDate"].includes(fieldName) && !report?.[`${fieldName}IsCustom`]) {
+      return todayIsoDate();
+    }
+    if (configuredDate) return configuredDate;
+    return toIsoDate(period?.createdAt) || todayIsoDate();
   }
 
   function escapeHtml(value) {
@@ -4856,7 +5094,7 @@
     const selected = new Set((selectedIds || []).filter(Boolean));
     const assessors = getPeriodCatalogAssessors(catalogType, periodId);
     if (!assessors.length) {
-      return '<p class="field-hint" style="padding: 10px 12px; margin: 0;">Chưa có assessor. Hãy thêm assessor ở Bước 3 trước.</p>';
+      return '<p class="field-hint" style="padding: 10px 12px; margin: 0;">Chưa có assessor. Hãy thêm assessor trước.</p>';
     }
 
     const allChecked = assessors.length > 0 && assessors.every((a) => selected.has(a.id));
@@ -5065,36 +5303,63 @@
       }))
       .filter((row) => row.area && isReportableSafetyArea(row.area) && (!areaId || row.area.id === areaId))
       .sort((a, b) => {
+        const dateA = getSafetyRecordIssueDate(a.score, getPeriod(a.score.periodId));
+        const dateB = getSafetyRecordIssueDate(b.score, getPeriod(b.score.periodId));
+        if (dateA !== dateB) {
+          return dateB.localeCompare(dateA);
+        }
         const timeA = String(a.score?.createdAt || a.score?.updatedAt || "");
         const timeB = String(b.score?.createdAt || b.score?.updatedAt || "");
-        if (timeA !== timeB) {
-          return timeB.localeCompare(timeA);
-        }
+        if (timeA !== timeB) return timeB.localeCompare(timeA);
         return String(b.score?.id || "").localeCompare(String(a.score?.id || ""));
       });
   }
 
   function getSafetyRowsForYear(year, options = {}) {
-    return getPeriodsByType(SAFETY_PERIOD_TYPE)
-      .filter((period) => Number(period.year) === Number(year))
-      .flatMap((period) => getIssueRecords(period.id, options));
+    const areaId = options.areaId || "";
+    return (state.safetyRecords || [])
+      .map((record) => ({
+        score: record,
+        area: getAreaForPeriod(record.periodId, record.areaId),
+        item: getItem(record.itemId),
+      }))
+      .filter((row) => row.area && isReportableSafetyArea(row.area)
+        && (!areaId || row.area.id === areaId)
+        && Number(getSafetyRecordIssueDate(row.score, getPeriod(row.score.periodId)).slice(0, 4)) === Number(year))
+      .sort((a, b) => {
+        const dateOrder = getSafetyRecordIssueDate(b.score, getPeriod(b.score.periodId))
+          .localeCompare(getSafetyRecordIssueDate(a.score, getPeriod(a.score.periodId)));
+        if (dateOrder) return dateOrder;
+        return String(b.score?.createdAt || b.score?.updatedAt || "").localeCompare(String(a.score?.createdAt || a.score?.updatedAt || ""));
+      });
   }
 
   function getSafetyTimeline(year, areaIds = null) {
-    const records = getPeriodsByType(SAFETY_PERIOD_TYPE).flatMap((period) => getIssueRecords(period.id))
-      .filter((row) => !areaIds || areaIds.has(row.area.id)).map((row) => ({ ...row.score, issueMonth: getSafetyIssueMonth(row) }));
+    const records = (state.safetyRecords || [])
+      .filter((record) => {
+        const area = getAreaForPeriod(record.periodId, record.areaId);
+        return area && isReportableSafetyArea(area) && (!areaIds || areaIds.has(area.id));
+      })
+      .map((record) => ({
+        ...record,
+        issueDate: getSafetyRecordIssueDate(record, getPeriod(record.periodId)),
+        issueMonth: Number(getSafetyRecordIssueDate(record, getPeriod(record.periodId)).slice(5, 7)) || getSafetyIssueMonth({ score: record }),
+      }));
     return window.SafetyTimeline.aggregate(records, year, (id) => getPeriod(id)?.year);
   }
 
   function getSafetyFilterYears(options = {}) {
-    const years = getPeriodsByType(SAFETY_PERIOD_TYPE)
-      .filter((period) => getIssueRecords(period.id, { areaId: options.areaId || "" }).length)
-      .map((period) => Number(period.year))
+    const years = (state.safetyRecords || [])
+      .filter((record) => {
+        const area = getAreaForPeriod(record.periodId, record.areaId);
+        return area && isReportableSafetyArea(area) && (!options.areaId || area.id === options.areaId);
+      })
+      .map((record) => Number(getSafetyRecordIssueDate(record, getPeriod(record.periodId)).slice(0, 4)))
       .filter((year) => Number.isInteger(year));
     const actualYears = (state.safetyRecords || []).filter((record) => !options.areaId || record.areaId === options.areaId)
       .flatMap((record) => [record.countermeasureDate, record.completedDate])
       .filter((value) => window.SafetyTimeline.date(value)).map((value) => Number(value.slice(0, 4)));
-    return [...new Set([...years, ...actualYears])].sort((a, b) => b - a);
+    return [...new Set([...years, ...actualYears, new Date().getFullYear()])].sort((a, b) => b - a);
   }
 
   function getSafetyFilterMonths(year, options = {}) {
@@ -5103,7 +5368,7 @@
       .filter((month) => Number.isInteger(month) && month >= 1 && month <= 12);
     const timeline = getSafetyTimeline(year, options.areaId ? new Set([options.areaId]) : null);
     const actualMonths = timeline.implemented.map((value, index) => value || timeline.completed[index] ? index + 1 : 0).filter(Boolean);
-    return [...new Set([...months, ...actualMonths])].sort((a, b) => a - b);
+    return [...new Set([...months, ...actualMonths])].sort((a, b) => b - a);
   }
 
   function getSafetyReportForPeriod(periodId) {
@@ -5127,6 +5392,12 @@
     return row.score.note ? (prefix ? prefix + ": " + row.score.note : row.score.note) : prefix;
   }
   function getNormalizedSafetyIssueDate(item, safetyPeriod) {
+    const explicitIssueDate = toIsoDate(item?.issueDate || item?.date);
+    if (isValidIsoDate(explicitIssueDate)) {
+      const [year, month, day] = explicitIssueDate.split("-").map(Number);
+      return { day, month, year };
+    }
+
     let day = Number(item?.issueDay) || 0;
     let month = Number(item?.issueMonth) || 0;
 
@@ -5171,13 +5442,6 @@
       }
     }
 
-    if (periodMonth && month && month === periodMonth - 1 && item?.createdAt) {
-      const createdDate = new Date(item.createdAt);
-      if (!Number.isNaN(createdDate.getTime()) && (createdDate.getMonth() + 1) === periodMonth) {
-        month = periodMonth;
-      }
-    }
-
     if (!month && periodMonth) month = periodMonth;
     if (!day && periodDay) day = periodDay;
 
@@ -5186,13 +5450,16 @@
 
   function parseSafetyIssueDateInput(dateStr, safetyPeriod) {
     if (!dateStr) {
-      const norm = getNormalizedSafetyIssueDate({}, safetyPeriod);
-      const now = new Date();
-      const d = norm.day || now.getDate();
-      const m = norm.month || (now.getMonth() + 1);
-      return { day: String(d), month: String(m) };
+      const date = todayIsoDate();
+      const [year, month, day] = date.split("-");
+      return { day, month, year, date };
     }
     const str = String(dateStr).trim();
+    const explicitDate = isValidIsoDate(str) ? str : parseDisplayDateToIso(str);
+    if (explicitDate) {
+      const [year, month, day] = explicitDate.split("-");
+      return { day, month, year, date: explicitDate };
+    }
     let day = 0;
     let month = 0;
     if (str.includes("-")) {
@@ -5233,9 +5500,15 @@
     }
 
     const norm = getNormalizedSafetyIssueDate({ issueDay: day, issueMonth: month }, safetyPeriod);
+    const fallbackYear = Number(norm.year) || new Date().getFullYear();
+    const fallbackDate = day && month
+      ? `${fallbackYear}-${String(norm.month || month).padStart(2, "0")}-${String(norm.day || day).padStart(2, "0")}`
+      : "";
     return {
       day: String(norm.day || day || ""),
       month: String(norm.month || month || ""),
+      year: String(fallbackYear),
+      date: isValidIsoDate(fallbackDate) ? fallbackDate : "",
     };
   }
 
@@ -5785,12 +6058,21 @@
   }
 
   function getSignatureName(periodId, area, scoreSource = SCORE_SOURCE_ASSESSOR) {
+    const normalizedSource = normalizeScoreSource(scoreSource);
+    if (normalizedSource === SCORE_SOURCE_DEPARTMENT_HEAD) {
+      return area?.departmentHead || "Trưởng phòng";
+    }
+    if (normalizedSource === SCORE_SOURCE_AT5S) {
+      const latest = state.scores
+        .filter((score) => score.periodId === periodId && score.areaId === area.id && Number.isFinite(score.score) && normalizeScoreSource(score.scoreSource) === SCORE_SOURCE_AT5S)
+        .sort((a, b) => String(b.updatedAt).localeCompare(String(a.updatedAt)))[0];
+      return latest?.scorerName || "Ban AT - 5S";
+    }
     const configuredAssessor = getAreaConfiguredAssessorNameForPeriod(periodId, area);
     if (configuredAssessor) {
       return configuredAssessor;
     }
 
-    const normalizedSource = normalizeScoreSource(scoreSource);
     const latest = state.scores
       .filter((score) => score.periodId === periodId && score.areaId === area.id && Number.isFinite(score.score) && normalizeScoreSource(score.scoreSource) === normalizedSource)
       .sort((a, b) => String(b.updatedAt).localeCompare(String(a.updatedAt)))[0];
@@ -6095,7 +6377,8 @@
           activeTab = routeTarget.tab;
         }
       } else {
-        activeTab = isTabAllowed(routeTarget.tab) ? routeTarget.tab : getFallbackTab();
+        const requestedTab = resolveTabForAccount(routeTarget.tab);
+        activeTab = isTabAllowed(requestedTab) ? requestedTab : getFallbackTab();
       }
       activeSafetyReport = activeTab === "safety" ? (normalizeSafetyReportId(routeTarget.safetyReport) || "assessment") : "";
     } else {
@@ -6428,6 +6711,7 @@
     if (!control || !popover) return;
     const open = popover.hidden;
     closeIssueNotificationPopovers();
+    if (open) closeAccountMenu();
     popover.hidden = !open;
     button.setAttribute("aria-expanded", String(open));
   }
@@ -6567,6 +6851,7 @@
     }
 
     const nextOpen = elements.accountMenu.hidden;
+    if (nextOpen) closeIssueNotificationPopovers();
     elements.accountMenu.hidden = !nextOpen;
     elements.accountMenuButton?.setAttribute("aria-expanded", String(nextOpen));
   }
@@ -6619,7 +6904,7 @@
       element.hidden = !isAdmin && !isReadOnlyPageAccess(element);
     });
     document.querySelectorAll("[data-tab='score-sheets'], #tab-score-sheets").forEach((element) => {
-      element.hidden = !isAdmin;
+      element.hidden = !isAdmin && !isViewer;
     });
 
     // 2. 5S: điều hướng được mở để xem, thao tác nghiệp vụ vẫn theo quyền.
@@ -6649,7 +6934,7 @@
       element.hidden = !currentUser || isViewer;
     });
 
-    if (isViewer || isDepartmentHead) {
+    if (isViewer || isDepartmentHead || isAt5sAccount(currentUser)) {
       document.querySelectorAll("[data-tab='catalog'], [data-tab='accounts'], [data-tab='audit-log'], [data-tab='guide-setup'], [data-go-tab='catalog'], [data-go-tab='accounts'], [data-go-tab='audit-log'], [data-go-tab='guide-setup'], #tab-catalog, #tab-accounts, #tab-audit-log, #tab-guide-setup").forEach((element) => {
         element.hidden = true;
       });
@@ -6692,15 +6977,16 @@
     if (!currentUser) {
       return false;
     }
-    if (tab === "score-sheets") return isAdminAccount(currentUser);
+    if (tab === "score-sheets") return isAdminAccount(currentUser) || isViewerAccount(currentUser);
     if (tab === "audit-log") return isAdminAccount(currentUser);
     if (tab === "guide-setup") return isAdminAccount(currentUser);
     if (["assessor", "summary", "mobile-5s"].includes(tab)) {
       const isAdmin = isAdminAccount(currentUser);
       const isViewer = isViewerAccount(currentUser);
       const hasFiveSAccess = isAdmin || hasAccountAccessType(currentUser, FIVE_S_PERIOD_TYPE)
-        || hasDepartmentHeadRole(currentUser, getActivePeriodId(FIVE_S_PERIOD_TYPE));
-      if (tab === "assessor") return !isAdmin && !isViewer && hasFiveSAccess;
+        || hasDepartmentHeadRole(currentUser, getActivePeriodId(FIVE_S_PERIOD_TYPE))
+        || hasAt5sRole(currentUser);
+      if (tab === "assessor") return !isAdmin && (isViewer || hasFiveSAccess);
       if (tab === "mobile-5s") return !isViewer && hasFiveSAccess;
       return hasFiveSAccess;
     }
@@ -6710,17 +6996,24 @@
       return ["home", "summary", "safety", "issue-stats"].includes(tab);
     }
     if (isDepartmentHeadAccount(currentUser)) {
-      return ["home", "assessor", "summary", "safety", "issue-stats", "mobile-safety"].includes(tab);
+      return ["home", "assessor", "summary", "safety", "five-s-findings", "issue-stats", "mobile-5s", "mobile-safety", "mobile-findings"].includes(tab);
+    }
+    if (hasAt5sRole(currentUser) && !isAdminAccount(currentUser)) {
+      return ["home", "assessor", "summary", "safety", "five-s-findings", "issue-stats", "mobile-5s", "mobile-safety", "mobile-findings"].includes(tab);
     }
 
     if (tab === "assessor" && isAdminAccount(currentUser)) {
       return false;
     }
-    return ["home", "assessor", "summary", "safety", "issue-stats", "catalog", "accounts", "audit-log", "guide-setup", "mobile-5s", "mobile-safety"].includes(tab);
+    return ["home", "assessor", "summary", "safety", "five-s-findings", "issue-stats", "catalog", "accounts", "audit-log", "guide-setup", "mobile-5s", "mobile-safety", "mobile-findings"].includes(tab);
   }
 
   function getFallbackTab() {
     return "home";
+  }
+
+  function resolveTabForAccount(tab, account = currentUser) {
+    return isViewerAccount(account) && tab === "assessor" ? "score-sheets" : tab;
   }
 
   function shouldDefaultToMobile(account = currentUser) {
@@ -6732,6 +7025,7 @@
   }
 
   function setActiveTab(tab, options = {}) {
+    tab = resolveTabForAccount(tab);
     const previousTab = activeTab;
     if (tab !== previousTab && !options.force && window.FormDraftManager?.hasAnyDirty()) {
       window.FormDraftManager.showUnsavedConfirmModal({
@@ -6842,7 +7136,7 @@
 
   function assertFiveSFindingAccess(sheet) {
     if (isAdminAccount(currentUser)) return;
-    if (!sheet || !(isDepartmentHeadAccount(currentUser) || isFiveSAssessor(currentUser) || (hasAccountAccessType(currentUser, FIVE_S_PERIOD_TYPE) && isZoneOwnerAccount(currentUser, FIVE_S_PERIOD_TYPE)))) {
+    if (!sheet || !(hasAt5sRole(currentUser) || isDepartmentHeadAccount(currentUser) || isFiveSAssessor(currentUser) || (hasAccountAccessType(currentUser, FIVE_S_PERIOD_TYPE) && isZoneOwnerAccount(currentUser, FIVE_S_PERIOD_TYPE)))) {
       throw new Error("Bạn không có quyền thay đổi phiếu 5S.");
     }
     const periodId = window.FiveSFindingsPage.resolvePeriodId(sheet, getPeriodsByType(FIVE_S_PERIOD_TYPE));
@@ -7006,10 +7300,21 @@
       SAFETY_PERIOD_TYPE,
       SAFETY_REPORT_OPTIONS,
       SAFETY_STOP6_COLUMNS,
+      ROLE_AT5S,
       SCORE_SOURCE_ASSESSOR,
       SCORE_SOURCE_SELF,
+      SCORE_SOURCE_AT5S,
+      SCORE_SOURCE_DEPARTMENT_HEAD,
       SCORE_SOURCE_AVERAGE,
       SCORE_SOURCE_OPTIONS,
+      MULTI_DAY_SCORE_SOURCES,
+      isMultiDayScoreSource,
+      hasAt5sRole,
+      isAt5sAccount,
+      isViewerAccount,
+      getAvailableScoreDates,
+      defaultScoreDateForPeriod,
+      normalizeScoreDateForSource,
       areaAverage,
       compareZoneCodesByOrder,
       buildMatrixTable,
@@ -7021,6 +7326,7 @@
       replaceRoute,
       setActiveTab,
       showToast,
+      getScoreSaveErrorMessage,
       TAB_ROUTES,
       canManageSafetyRecord,
       canManageSafetyCountermeasure,
@@ -7064,6 +7370,7 @@
       getSafetyReportForPeriod,
       getSafetyRowsForYear,
       getSafetyTimeline,
+      getSafetyRecordIssueDate,
       getSafetyReportRoute,
       getSafetyZoneTarget,
       getSafetyMonthlyTarget,
@@ -7125,13 +7432,13 @@
         // Rows already contain the merged annotations; avoid leaving a stale
         // row-index override after photos are replaced or findings reordered.
         delete sheet.photoAnnotationsByRow;
-        await dbRef(`fiveSFindings/${sheet.id}`).set(sheet);
         const area = getAreaForPeriod(sheet.periodId, sheet.areaId);
         const areaCode = area?.code || String(sheet.area || "").replace(/^zone\s*/i, "").trim();
         const details = getFiveSFindingAuditDetails(previous, sheet, areaCode);
+        const updates = { [`fiveSFindings/${sheet.id}`]: sheet };
         if (details.length) {
           const action = previous ? "Sửa" : "Thêm";
-          await logDetailedHistoryChange({
+          addDetailedHistoryChangeToUpdates({
             sectionLabel: "Vấn đề 5S",
             action,
             target: `Zone ${areaCode || "?"}`,
@@ -7143,15 +7450,16 @@
             areaId: sheet.areaId,
             areaCode,
             details,
-          });
+          }, updates);
         }
+        await dbRef().update(updates);
       },
       saveFiveSFindingsBatch: async (sheets) => {
         const previousById = new Map(sheets.map((sheet) => [sheet.id, cloneValue(state.fiveSFindings.find((item) => item.id === sheet.id) || null)]));
         sheets.forEach(stampFiveSFindingCountermeasureMetadata);
         sheets.forEach(validateFiveSFindingSave);
         sheets.forEach((sheet) => { delete sheet.photoAnnotationsByRow; });
-        await dbRef().update(Object.fromEntries(sheets.map((sheet) => [`fiveSFindings/${sheet.id}`, sheet])));
+        const updates = Object.fromEntries(sheets.map((sheet) => [`fiveSFindings/${sheet.id}`, sheet]));
         for (const sheet of sheets) {
           const previous = previousById.get(sheet.id) || null;
           const area = getAreaForPeriod(sheet.periodId, sheet.areaId);
@@ -7159,7 +7467,7 @@
           const details = getFiveSFindingAuditDetails(previous, sheet, areaCode);
           if (!details.length) continue;
           const action = previous ? "Sửa" : "Thêm";
-          await logDetailedHistoryChange({
+          addDetailedHistoryChangeToUpdates({
             sectionLabel: "Vấn đề 5S",
             action,
             target: `Zone ${areaCode || "?"}`,
@@ -7171,17 +7479,18 @@
             areaId: sheet.areaId,
             areaCode,
             details,
-          });
+          }, updates);
         }
+        await dbRef().update(updates);
       },
       deleteFiveSFinding: async (id) => {
         const existing = state.fiveSFindings.find((item) => item.id === id);
         assertFiveSFindingAccess(existing);
-        await dbRef(`fiveSFindings/${id}`).remove();
+        const updates = { [`fiveSFindings/${id}`]: null };
         if (existing) {
           const area = getAreaForPeriod(existing.periodId, existing.areaId);
           const areaCode = area?.code || String(existing.area || "").replace(/^zone\s*/i, "").trim();
-          await logDetailedHistoryChange({
+          addDetailedHistoryChangeToUpdates({
             sectionLabel: "Vấn đề 5S",
             action: "Xóa",
             target: `Zone ${areaCode || "?"}`,
@@ -7193,8 +7502,9 @@
             areaId: existing.areaId,
             areaCode,
             details: [{ action: "Xóa", label: "Phiếu vấn đề 5S", target: `Zone ${areaCode || "?"}`, before: `${(existing.rows || []).filter(findingRowHasAuditContent).length} dòng vấn đề`, after: "Đã xóa" }],
-          });
+          }, updates);
         }
+        await dbRef().update(updates);
       },
       legacyRenderers: {
         accounts: renderAccountsTab,
@@ -7230,21 +7540,12 @@
         .join("")
       : "<option value=\"\">Không có kỳ đánh giá đang mở</option>";
     const fiveSPeriods = getPeriodsByType(FIVE_S_PERIOD_TYPE);
-    const safetyPeriods = getPeriodsByType(SAFETY_PERIOD_TYPE);
     const fiveSActive = getActivePeriodId(FIVE_S_PERIOD_TYPE);
-    const safetyActive = getActivePeriodId(SAFETY_PERIOD_TYPE);
     const isAdmin = isAdminAccount(currentUser);
-    const canViewAllPeriods = isAdmin || isViewerAccount(currentUser) || hasDepartmentHeadRole(currentUser);
-    const canViewAllSafetyPeriods = canViewAllPeriods || canUseSafety(currentUser);
-
+    const canViewAllPeriods = isAdmin || isViewerAccount(currentUser) || hasDepartmentHeadRole(currentUser) || hasAt5sRole(currentUser);
     const visibleFiveSPeriods = canViewAllPeriods
       ? fiveSPeriods
       : fiveSPeriods.filter((period) => period.id === fiveSActive);
-    const visibleSafetyPeriods = canViewAllSafetyPeriods
-      ? safetyPeriods
-      : safetyPeriods.filter((period) => period.id === safetyActive);
-    const currentSafetyPeriods = safetyPeriods.filter((period) => period.id === safetyActive);
-
     [elements.assessorPeriodSelect, elements.summaryPeriodSelect].forEach((select) => {
       if (!select) return;
       select.innerHTML = makeOptions(visibleFiveSPeriods);
@@ -7252,7 +7553,7 @@
     });
     if (elements.adminScoreSheetPeriod) {
       const selectedPeriodId = elements.adminScoreSheetPeriod.value;
-      const adminPeriods = isAdmin ? fiveSPeriods : [];
+      const adminPeriods = isAdmin || isViewerAccount(currentUser) ? fiveSPeriods : [];
       elements.adminScoreSheetPeriod.innerHTML = makeOptions(adminPeriods);
       elements.adminScoreSheetPeriod.value = adminPeriods.some((period) => period.id === selectedPeriodId)
         ? selectedPeriodId
@@ -7260,40 +7561,10 @@
           ? fiveSActive
           : adminPeriods[0]?.id || "";
     }
-    if (elements.safetyPeriodSelect) {
-      const currentSelected = elements.safetyPeriodSelect.value;
-      const safetySelectPeriods = canViewAllSafetyPeriods ? visibleSafetyPeriods : currentSafetyPeriods;
-      elements.safetyPeriodSelect.innerHTML = safetySelectPeriods.length
-        ? makeOptions(safetySelectPeriods)
-        : "<option value=\"\">" + escapeHtml(currentDateDisplay()) + "</option>";
-      if (currentSelected && safetySelectPeriods.some((period) => period.id === currentSelected)) {
-        elements.safetyPeriodSelect.value = currentSelected;
-      } else {
-        elements.safetyPeriodSelect.value = safetySelectPeriods.some((period) => period.id === safetyActive) ? safetyActive : safetySelectPeriods[0]?.id || "";
-      }
-      elements.safetyPeriodSelect.disabled = !canViewAllSafetyPeriods;
-      elements.safetyPeriodSelect.title = canViewAllSafetyPeriods
-        ? "Chọn kỳ đánh giá an toàn để xem"
-        : currentSafetyPeriods[0]
-          ? "Kỳ đánh giá an toàn đang mở hiện tại"
-          : "Chưa có kỳ đánh giá an toàn đang mở";
-    }
-    if (elements.issueStatsPeriodSelect) {
-      const currentSelected = elements.issueStatsPeriodSelect.value;
-      elements.issueStatsPeriodSelect.innerHTML = makeOptions(visibleSafetyPeriods);
-      if (currentSelected && visibleSafetyPeriods.some((period) => period.id === currentSelected)) {
-        elements.issueStatsPeriodSelect.value = currentSelected;
-      } else {
-        elements.issueStatsPeriodSelect.value = visibleSafetyPeriods.some((period) => period.id === safetyActive) ? safetyActive : visibleSafetyPeriods[0]?.id || "";
-      }
-    }
-
     const today = todayIsoDate();
     const todayParts = today.split("-");
     if (elements.period5SMonth && !elements.period5SMonth.value) elements.period5SMonth.value = String(Number(todayParts[1]));
     if (elements.period5SYear && !elements.period5SYear.value) elements.period5SYear.value = todayParts[0];
-    if (elements.periodSafetyDate && !elements.periodSafetyDate.value) elements.periodSafetyDate.value = formatDateDisplay(today);
-    if (elements.periodSafetyDateCalendar && !elements.periodSafetyDateCalendar.value) elements.periodSafetyDateCalendar.value = today;
   }
   function populateAreaSelects() {
     const fiveSPeriodId = getActivePeriodId(FIVE_S_PERIOD_TYPE);
@@ -7492,7 +7763,11 @@
       { value: ROLE_ASSESSOR_SAFETY, type: SAFETY_PERIOD_TYPE, label: "Assessor AT", availableLabel: "Zone đánh giá an toàn", filter: { assessor: {} } },
       { value: ROLE_DEPARTMENT_HEAD, type: catalogType, label: "Trưởng phòng", availableLabel: "Zone chưa có trưởng phòng", filter: { departmentHead: {} } },
     ];
-    elements.catalogPersonZoneList.innerHTML = roleOptions
+    let at5sNoteHtml = "";
+    if (roles.includes(ROLE_AT5S)) {
+      at5sNoteHtml = '<div class="at5s-all-zones-note" style="margin-bottom: 12px; padding: 10px; background: rgba(59, 130, 246, 0.08); border-left: 3px solid #3b82f6; border-radius: 4px; font-size: 0.9rem;">Ban AT - 5S mặc định có quyền đánh giá trên tất cả các Zone 5S và An toàn (không cần chọn zone).</div>';
+    }
+    elements.catalogPersonZoneList.innerHTML = at5sNoteHtml + roleOptions
       .filter((option) => roles.includes(option.value))
       .map((option) => {
         const inputName = `areaIds-${option.value}`;
@@ -7769,7 +8044,7 @@
     const period = getPeriod(elements.assessorPeriodSelect?.value || getActivePeriodId(FIVE_S_PERIOD_TYPE));
     const periodId = period?.id || "";
 
-    if (!isAdminAccount(currentUser) && !hasDepartmentHeadRole(currentUser, periodId) && (!periodId || !isPeriodOpen(periodId, FIVE_S_PERIOD_TYPE))) {
+    if (!isAdminAccount(currentUser) && !isViewerAccount(currentUser) && !hasDepartmentHeadRole(currentUser, periodId) && (!periodId || !isPeriodOpen(periodId, FIVE_S_PERIOD_TYPE))) {
       elements.assessorTitle.textContent = "Phiếu chấm 5S";
       elements.assessorProgress.textContent = "Kỳ đánh giá này hiện không mở. Bạn chỉ có thể xem và chấm điểm kỳ đang mở.";
       elements.assessorSheet.innerHTML = '<div class="admin-card-chart-empty" style="padding: 40px; text-align: center; color: var(--text-muted, #64748b);">Kỳ đánh giá này hiện không mở. Bạn chỉ có thể xem và chấm điểm kỳ đang mở.</div>';
@@ -7800,7 +8075,13 @@
       : (availableScoreSources.includes(defaultScoreSource) ? defaultScoreSource : availableScoreSources[0] || SCORE_SOURCE_ASSESSOR);
     if (sourceSelect) {
       sourceSelect.innerHTML = availableScoreSources
-        .map((source) => `<option value="${escapeHtml(source)}">${source === SCORE_SOURCE_SELF ? "Quản lý zone tự chấm" : "Assessor chấm"}</option>`)
+        .map((source) => {
+          let label = "Assessor chấm";
+          if (source === SCORE_SOURCE_SELF) label = "Quản lý zone tự chấm";
+          else if (source === SCORE_SOURCE_AT5S) label = "Ban AT - 5S chấm";
+          else if (source === SCORE_SOURCE_DEPARTMENT_HEAD) label = "Trưởng phòng chấm";
+          return `<option value="${escapeHtml(source)}">${escapeHtml(label)}</option>`;
+        })
         .join("");
       sourceSelect.value = scoreSource;
       sourceSelect.dataset.areaKey = areaKey;
@@ -7815,18 +8096,40 @@
     }
 
     elements.assessorAreaSelect.value = selectedArea.id;
-    const completed = getCompletedCellCount(periodId, selectedArea, scoreSource);
+    const isMultiDay = isMultiDayScoreSource(scoreSource);
+    let currentScoreDate = "";
+    if (isMultiDay) {
+      if (elements.assessorScoreDateField) elements.assessorScoreDateField.hidden = false;
+      if (elements.assessorScoredDatesField) elements.assessorScoredDatesField.hidden = false;
+      const defaultDate = defaultScoreDateForPeriod(periodId);
+      currentScoreDate = elements.assessorScoreDate?.value || defaultDate;
+      if (elements.assessorScoreDate) elements.assessorScoreDate.value = currentScoreDate;
+      if (elements.assessorScoreDateDisplay) elements.assessorScoreDateDisplay.value = formatDateDisplay(currentScoreDate);
+
+      const scoredDates = getAvailableScoreDates(periodId, selectedArea.id, scoreSource);
+      if (elements.assessorScoredDatesSelect) {
+        elements.assessorScoredDatesSelect.innerHTML = `<option value="">-- Các ngày đã chấm (${scoredDates.length}) --</option>` +
+          scoredDates.map((d) => `<option value="${escapeHtml(d)}" ${d === currentScoreDate ? "selected" : ""}>Ngày ${escapeHtml(formatDateDisplay(d))}</option>`).join("");
+      }
+    } else {
+      if (elements.assessorScoreDateField) elements.assessorScoreDateField.hidden = true;
+      if (elements.assessorScoredDatesField) elements.assessorScoredDatesField.hidden = true;
+    }
+
+    const completed = getCompletedCellCount(periodId, selectedArea, scoreSource, currentScoreDate);
     const required = getRequiredCellsForArea(selectedArea);
     const scoringRole = getFiveSAreaScoringRoleLabel(currentUser, selectedArea.id, periodId);
-    elements.assessorTitle.textContent = `Phiếu chấm 5S - Zone ${selectedArea.code} - ${periodLabel(period)}`;
+    const dateTitleSuffix = isMultiDay && currentScoreDate ? ` - Ngày ${formatDateDisplay(currentScoreDate)}` : "";
+    elements.assessorTitle.textContent = `Phiếu chấm 5S - Zone ${selectedArea.code}${dateTitleSuffix} - ${periodLabel(period)}`;
     elements.assessorProgress.textContent = scoringRole === "Không có quyền chấm"
       ? `Không có quyền chấm Zone ${selectedArea.code}. Phiếu đang ở chế độ chỉ xem.`
-      : `Đã chấm ${completed}/${required} ô. Điểm TB zone: ${formatNumber(areaAverage(periodId, selectedArea, scoreSource), 2)}`;
+      : `Đã chấm ${completed}/${required} ô. Điểm TB zone: ${formatNumber(areaAverage(periodId, selectedArea, scoreSource, currentScoreDate), 2)}`;
     elements.assessorSheet.innerHTML = '<div class="assessor-4m-wrap" data-drag-scroll><table class="matrix-table standard-reference-table assessor-4m-table"></table></div>';
     renderAssessorFourMTable(elements.assessorSheet.querySelector(".assessor-4m-table"), {
       periodId,
       area: selectedArea,
       scoreSource,
+      scoreDate: currentScoreDate,
       editable: canEditFiveSScoreSource(currentUser, scoreSource, selectedArea.id, periodId) && !isPeriodArchived(periodId),
     });
   }
@@ -7849,8 +8152,31 @@
     const periodId = elements.adminScoreSheetPeriod?.value || "";
     const period = getPeriod(periodId);
     const scoreSource = normalizeScoreSource(elements.adminScoreSheetSource?.value || SCORE_SOURCE_ASSESSOR);
+    const isMultiDay = isMultiDayScoreSource(scoreSource);
     const areas = populateAdminScoreSheetAreas();
     const area = areas.find((entry) => entry.id === elements.adminScoreSheetArea?.value) || null;
+
+    let selectedDate = "";
+    if (elements.adminScoreSheetDateField) {
+      elements.adminScoreSheetDateField.hidden = false;
+    }
+    if (isMultiDay && area) {
+      if (elements.adminScoreSheetDate) {
+        elements.adminScoreSheetDate.disabled = false;
+        const scoredDates = getAvailableScoreDates(periodId, area.id, scoreSource);
+        const cur = elements.adminScoreSheetDate?.value || "";
+        elements.adminScoreSheetDate.innerHTML = '<option value="">Trung bình tháng</option>' +
+          scoredDates.map((d) => `<option value="${escapeHtml(d)}" ${d === cur ? "selected" : ""}>Ngày ${escapeHtml(formatDateDisplay(d))}</option>`).join("");
+      }
+      selectedDate = elements.adminScoreSheetDate?.value || "";
+    } else {
+      if (elements.adminScoreSheetDate) {
+        elements.adminScoreSheetDate.innerHTML = '<option value="" selected>Trung bình tháng</option>';
+        elements.adminScoreSheetDate.value = "";
+        elements.adminScoreSheetDate.disabled = true;
+      }
+      selectedDate = "";
+    }
 
     if (!period || !area) {
       elements.adminScoreSheetTitle.textContent = "Phiếu chấm 5S";
@@ -7862,15 +8188,17 @@
     const evaluatorName = scoreSource === SCORE_SOURCE_SELF
       ? getAreaResponsibleNameForPeriod(periodId, area)
       : getSignatureName(periodId, area, scoreSource) || "Chưa phân công";
-    const completed = getCompletedCellCount(periodId, area, scoreSource);
+    const completed = getCompletedCellCount(periodId, area, scoreSource, selectedDate);
     const required = getRequiredCellsForArea(area);
-    elements.adminScoreSheetTitle.textContent = `Phiếu chấm 5S - Zone ${area.code} - ${periodLabel(period)}`;
-    elements.adminScoreSheetProgress.textContent = `Đã chấm ${completed}/${required} ô. Điểm TB zone: ${formatNumber(areaAverage(periodId, area, scoreSource), 2)}`;
+    const dateTitleSuffix = isMultiDay && selectedDate ? ` - Ngày ${formatDateDisplay(selectedDate)}` : (isMultiDay ? " - Trung bình tháng" : "");
+    elements.adminScoreSheetTitle.textContent = `Phiếu chấm 5S - Zone ${area.code}${dateTitleSuffix} - ${periodLabel(period)}`;
+    elements.adminScoreSheetProgress.textContent = `Đã chấm ${completed}/${required} ô. Điểm TB zone: ${formatNumber(areaAverage(periodId, area, scoreSource, selectedDate), 2)}`;
     elements.adminScoreSheet.innerHTML = '<div class="assessor-4m-wrap" data-drag-scroll><table class="matrix-table standard-reference-table assessor-4m-table"></table></div>';
     renderAssessorFourMTable(elements.adminScoreSheet.querySelector(".assessor-4m-table"), {
       periodId,
       area,
       scoreSource,
+      scoreDate: selectedDate,
       editable: false,
       evaluatorName,
       evaluatorLabel: scoreSource === SCORE_SOURCE_SELF ? "Người phụ trách zone" : "Đánh giá viên",
@@ -7881,6 +8209,7 @@
     periodId,
     area,
     scoreSource = SCORE_SOURCE_ASSESSOR,
+    scoreDate = "",
     editable = false,
     evaluatorName = null,
     evaluatorLabel = "Đánh giá viên",
@@ -7891,11 +8220,13 @@
 
     const period = getPeriod(periodId);
     const normalizedSource = normalizeScoreSource(scoreSource);
+    const normalizedDate = normalizeScoreDateForSource(scoreDate, normalizedSource);
     const canEditTable = Boolean(editable) && getAllowedAreaIds(currentUser, periodId).has(area.id);
     table.innerHTML = "";
     table.dataset.periodId = periodId;
     table.dataset.areaId = area.id;
     table.dataset.scoreSource = normalizedSource;
+    table.dataset.scoreDate = normalizedDate;
 
     const colgroup = document.createElement("colgroup");
     ["76px", "148px", "68px", "58px", "154px", "154px", "170px", "154px", "154px"].forEach((width) => {
@@ -7911,12 +8242,13 @@
 
     const metaRow = document.createElement("tr");
     metaRow.appendChild(setColSpan(createCell("td", "Zone: " + area.code + "\n" + getAreaResponsibleNameForPeriod(periodId, area), "standard-reference-meta-cell assessor-4m-meta"), 2));
-    metaRow.appendChild(setColSpan(createCell("td", "Kỳ: " + periodLabel(period) + "\nNguồn: " + getScoreSourceLabel(normalizedSource), "standard-reference-meta-cell assessor-4m-meta"), 2));
+    const dateMetaText = normalizedDate ? (" · Ngày: " + formatDateDisplay(normalizedDate)) : "";
+    metaRow.appendChild(setColSpan(createCell("td", "Kỳ: " + periodLabel(period) + "\nNguồn: " + getScoreSourceLabel(normalizedSource) + dateMetaText, "standard-reference-meta-cell assessor-4m-meta"), 2));
     const displayedEvaluatorName = evaluatorName === null
       ? getAccountDisplayName(currentUser, FIVE_S_PERIOD_TYPE, periodId)
       : evaluatorName;
     metaRow.appendChild(setColSpan(createCell("td", evaluatorLabel + ":\n" + displayedEvaluatorName, "standard-reference-meta-cell assessor-4m-meta"), 3));
-    const metaAverageCell = setColSpan(createCell("td", "Điểm TB:\n" + formatNumber(areaAverage(periodId, area, normalizedSource), 2), "standard-reference-meta-cell assessor-4m-meta assessor-4m-average"), 2);
+    const metaAverageCell = setColSpan(createCell("td", "Điểm TB:\n" + formatNumber(areaAverage(periodId, area, normalizedSource, normalizedDate), 2), "standard-reference-meta-cell assessor-4m-meta assessor-4m-average"), 2);
     metaAverageCell.dataset.averageKind = "area";
     metaAverageCell.dataset.periodId = periodId;
     metaAverageCell.dataset.areaId = area.id;
@@ -7944,7 +8276,7 @@
 
         item.criteria.forEach((criterion, criterionIndex) => {
           const row = document.createElement("tr");
-          const record = getScoreRecord(periodId, area.id, item.id, criterion.id, normalizedSource);
+          const record = getScoreRecord(periodId, area.id, item.id, criterion.id, normalizedSource, normalizedDate);
           const selectedScore = isScoreCrossed(record) ? SCORE_CROSSED : Number.isFinite(record?.score) ? String(record.score) : "";
           const isNa = isNotApplicable(item.id, criterion.id, area);
           const canEditCell = canEditTable && !isNa;
@@ -7958,7 +8290,7 @@
           }
 
           row.appendChild(createCell("td", entry.hideCriterion ? "" : criterion.label, "standard-reference-criterion-cell"));
-          row.appendChild(createAssessorScoreInputCell({ periodId, area, item, criterion, scoreSource: normalizedSource, selectedScore, canEdit: canEditCell }));
+          row.appendChild(createAssessorScoreInputCell({ periodId, area, item, criterion, scoreSource: normalizedSource, scoreDate: normalizedDate, selectedScore, canEdit: canEditCell }));
 
           const levels = SCORE_GUIDE[item.id]?.[criterion.id] || [];
           for (let levelIndex = 0; levelIndex < 5; levelIndex += 1) {
@@ -7973,7 +8305,7 @@
 
     const averageRow = document.createElement("tr");
     averageRow.appendChild(createCell("td", "", "standard-reference-blank"));
-    const zoneAverageCell = setColSpan(createCell("td", "Điểm trung bình Zone " + area.code + ": " + formatNumber(areaAverage(periodId, area, normalizedSource), 2), "standard-reference-average-label"), 8);
+    const zoneAverageCell = setColSpan(createCell("td", "Điểm trung bình Zone " + area.code + ": " + formatNumber(areaAverage(periodId, area, normalizedSource, normalizedDate), 2), "standard-reference-average-label"), 8);
     zoneAverageCell.dataset.averageKind = "area";
     zoneAverageCell.dataset.periodId = periodId;
     zoneAverageCell.dataset.areaId = area.id;
@@ -7984,7 +8316,7 @@
     table.appendChild(averageRow);
   }
 
-  function createAssessorScoreInputCell({ periodId, area, item, criterion, scoreSource, selectedScore, canEdit }) {
+  function createAssessorScoreInputCell({ periodId, area, item, criterion, scoreSource, scoreDate = "", selectedScore, canEdit }) {
     const cell = createCell("td", "", "standard-reference-score-input-cell");
     if (!canEdit) {
       cell.textContent = selectedScore === SCORE_CROSSED ? "X" : selectedScore || "-";
@@ -7999,6 +8331,7 @@
     select.dataset.itemId = item.id;
     select.dataset.criterionId = criterion.id;
     select.dataset.scoreSource = normalizeScoreSource(scoreSource);
+    select.dataset.scoreDate = normalizeScoreDateForSource(scoreDate, scoreSource);
     select.dataset.savedValue = selectedScore;
     [
       { value: "", label: "-" },
@@ -8058,6 +8391,7 @@
 
   function normalizeScopeCardValue(scope) {
     if (scope === ACCOUNT_DEPARTMENT_HEAD_SCOPE) return ACCOUNT_DEPARTMENT_HEAD_SCOPE;
+    if (scope === ACCOUNT_AT5S_SCOPE) return ACCOUNT_AT5S_SCOPE;
     return scope === ACCOUNT_VIEWER_SCOPE ? ACCOUNT_VIEWER_SCOPE : normalizeCatalogType(scope);
   }
 
@@ -8080,7 +8414,8 @@
       const title = titlePrefix + " " + option.label;
       const periodText = isViewerScope || isDepartmentHeadScope ? "Toàn bộ bảng biểu" : period ? periodLabel(period) : currentDateDisplay();
       const iconText = option.icon || option.label;
-      const cardClass = isDepartmentHeadScope ? "department-head-card" : isViewerScope ? "viewer-card" : scope === SAFETY_PERIOD_TYPE ? "safety-card" : "score-card";
+      const isAt5sScope = scope === ACCOUNT_AT5S_SCOPE;
+      const cardClass = isDepartmentHeadScope ? "department-head-card" : isAt5sScope ? "at5s-card" : isViewerScope ? "viewer-card" : scope === SAFETY_PERIOD_TYPE ? "safety-card" : "score-card";
       return `<article class="admin-home-card dashboard-home-card simple-home-card scope-card ${cardClass}${activeClass}">
         <button class="scope-card-toggle" type="button" data-action="${escapeHtml(action)}" data-id="${escapeHtml(scope)}" aria-label="${escapeHtml(title)}" aria-expanded="${isActive ? "true" : "false"}">
           <span class="admin-home-card-icon">${escapeHtml(iconText)}</span>
@@ -8140,7 +8475,7 @@
   function setAccountScope(scope) {
     const nextScope = normalizeScopeCardValue(scope);
     expandedAccountScope = expandedAccountScope === nextScope ? "" : nextScope;
-    if (![ACCOUNT_VIEWER_SCOPE, ACCOUNT_DEPARTMENT_HEAD_SCOPE].includes(nextScope)) {
+    if (![ACCOUNT_VIEWER_SCOPE, ACCOUNT_DEPARTMENT_HEAD_SCOPE, ACCOUNT_AT5S_SCOPE].includes(nextScope)) {
       activeAccountScope = nextScope;
     }
     renderAll();
@@ -8181,6 +8516,7 @@
     syncCatalogPeriodFields();
     renderPeriodList();
     renderCatalogEmployeeList();
+    renderAt5sMemberList();
     renderScorerList();
     populateAreaDepartmentHeadSelect();
     renderDepartmentHeadList();
@@ -8195,10 +8531,10 @@
 
   function syncCatalogPeriodFields() {
     const isSafetyScope = normalizeCatalogType(activeCatalogScope) === SAFETY_PERIOD_TYPE;
+    if (elements.catalogGrid) elements.catalogGrid.classList.toggle("is-safety-scope", isSafetyScope);
+    if (elements.catalogPeriodPanel) elements.catalogPeriodPanel.hidden = isSafetyScope;
     if (elements.period5SForm) elements.period5SForm.hidden = isSafetyScope;
     if (elements.period5SList) elements.period5SList.hidden = isSafetyScope;
-    if (elements.periodSafetyForm) elements.periodSafetyForm.hidden = !isSafetyScope;
-    if (elements.periodSafetyList) elements.periodSafetyList.hidden = !isSafetyScope;
   }
 
   function renderPeriodList() {
@@ -8210,12 +8546,14 @@
         .map((period) => {
           const isActive = period.id === activeId;
           const activeBtnClass = isActive ? "tiny-button active-period-btn" : "tiny-button";
-          const activeText = isActive ? "Đang mở" : "Mở kỳ";
           const periodType = normalizePeriodType(period.type) === SAFETY_PERIOD_TYPE ? SAFETY_PERIOD_TYPE : FIVE_S_PERIOD_TYPE;
-          const meta = periodType === SAFETY_PERIOD_TYPE ? "Đánh giá an toàn" : "Chấm 5S";
-          const editAction = periodType === SAFETY_PERIOD_TYPE ? "edit-safety-period-date" : "edit-five-s-period-date";
-          const editLabel = "Sửa";
-          const editDateButton = "<button class=\"tiny-button\" type=\"button\" data-action=\"" + escapeHtml(editAction) + "\" data-id=\"" + escapeHtml(period.id) + "\">" + escapeHtml(editLabel) + "</button>";
+          const activeText = periodType === SAFETY_PERIOD_TYPE
+            ? isActive ? "Đang dùng" : "Dùng danh mục"
+            : isActive ? "Đang mở" : "Mở kỳ";
+          const meta = periodType === SAFETY_PERIOD_TYPE ? "Danh mục AT" : "Chấm 5S";
+          const editDateButton = periodType === FIVE_S_PERIOD_TYPE
+            ? "<button class=\"tiny-button\" type=\"button\" data-action=\"edit-five-s-period-date\" data-id=\"" + escapeHtml(period.id) + "\">Sửa</button>"
+            : "";
           return `<article class="compact-item catalog-period-item ${isActive ? "period-item-active" : ""}">
             <div class="compact-main">
               <div class="compact-title-row">
@@ -8234,7 +8572,6 @@
     };
 
     renderList(elements.period5SList || elements.periodList, FIVE_S_PERIOD_TYPE, "Chưa có kỳ chấm 5S.");
-    renderList(elements.periodSafetyList, SAFETY_PERIOD_TYPE, "Chưa có kỳ đánh giá an toàn.");
   }
   function renderDataTab() {}
 
@@ -8701,6 +9038,10 @@
         upsert(type, row, ROLE_DEPARTMENT_HEAD, areaIds);
       });
     });
+    (state.at5sMembers || []).forEach((member) => {
+      upsert(FIVE_S_PERIOD_TYPE, member, ROLE_AT5S, []);
+      upsert(SAFETY_PERIOD_TYPE, member, ROLE_AT5S, []);
+    });
     return [...profiles.values()]
       .map((profile) => ({
         ...profile,
@@ -8714,12 +9055,14 @@
     return [
       { key: "departmentHead", role: ROLE_DEPARTMENT_HEAD, scopes: [FIVE_S_PERIOD_TYPE, SAFETY_PERIOD_TYPE], label: "Trưởng phòng" },
       { key: "zoneOwner", role: ROLE_ZONE_OWNER, scopes: [FIVE_S_PERIOD_TYPE, SAFETY_PERIOD_TYPE], label: "Quản lý zone" },
+      { key: "at5s", role: ROLE_AT5S, scopes: [FIVE_S_PERIOD_TYPE, SAFETY_PERIOD_TYPE], label: "Ban AT - 5S", allZones: true },
       { key: "assessor5s", role: ROLE_ASSESSOR_5S, scopes: [FIVE_S_PERIOD_TYPE], label: "Assessor 5S" },
       { key: "assessorSafety", role: ROLE_ASSESSOR_SAFETY, scopes: [SAFETY_PERIOD_TYPE], label: "Assessor AT" },
     ];
   }
 
   function getCatalogEmployeeRoleRows(profile, type, role, periodId = getActivePeriodId(type)) {
+    if (role === ROLE_AT5S) return (state.at5sMembers || []).filter((person) => accountMatchesCatalogPerson(profile, person));
     if (role === ROLE_ZONE_OWNER) return getPeriodCatalogManagers(type, periodId).filter((person) => accountMatchesCatalogPerson(profile, person));
     if (role === ROLE_DEPARTMENT_HEAD) return getDepartmentHeadRows(periodId).filter((person) => accountMatchesDepartmentHeadPerson(profile, person));
     return getPeriodCatalogAssessors(type, periodId).filter((person) => accountMatchesCatalogPerson(profile, person));
@@ -8857,6 +9200,17 @@
     const roleOptions = getCatalogEmployeeRoleOptions();
     const renderRole = (option) => {
       const isChecked = option.scopes.some((type) => (profile.rolesByType[type] || []).includes(option.role));
+      if (option.key === "at5s") {
+        return `<div class="catalog-employee-role-editor">
+          <label class="check-line">
+            <input name="employeeRoles" type="checkbox" value="at5s" data-employee-role="at5s" ${isChecked ? "checked" : ""}>
+            <span>${escapeHtml(option.label)}</span>
+          </label>
+          <div class="catalog-person-role-zone" data-employee-role-zones="at5s" ${isChecked ? "" : "hidden"}>
+            <div class="at5s-all-zones-note" style="padding: 10px; background: rgba(59, 130, 246, 0.08); border-left: 3px solid #3b82f6; border-radius: 4px; font-size: 0.85rem;">Ban AT - 5S mặc định có quyền đánh giá trên tất cả các Zone 5S và An toàn (không cần chọn zone).</div>
+          </div>
+        </div>`;
+      }
       const sharedInputName = `employeeZones-${option.key}`;
       const scopeZonesHtml = option.scopes.length > 1
         ? sharedCatalogEmployeeZoneListHtml(profile, option.role, sharedInputName)
@@ -9433,6 +9787,110 @@
     return getDepartmentHeadRows(getActivePeriodId(scope));
   }
 
+  function populateAt5sAccountSelect() {
+    if (!elements.at5sAccountMember) return;
+    const members = state.at5sMembers || [];
+    elements.at5sAccountMember.innerHTML = members.map((m) => {
+      const existingAcc = (state.accounts || []).find((acc) => accountMatchesCatalogPerson(acc, m));
+      const status = existingAcc ? ` (đã có TK: ${existingAcc.username})` : "";
+      return `<option value="${escapeHtml(m.id)}">${escapeHtml(m.employeeCode ? `${m.employeeCode} · ${m.name}` : m.name)}${status}</option>`;
+    }).join("") || '<option value="">Chưa có thành viên Ban AT - 5S trong danh mục</option>';
+  }
+
+  function at5sAccountCardHtml(account) {
+    return `<article class="account-card">
+      <div>
+        <strong>${escapeHtml(account.username)}</strong>
+        <span>Ban AT - 5S: ${escapeHtml(account.name || account.displayName || account.username)}</span>
+        <span>Mã NV: ${escapeHtml(account.employeeCode || "chưa có")}</span>
+        <span>Hiển thị: ${escapeHtml(getAccountProfileName(account) || account.name || account.username)}</span>
+        <span>Quyền: Ban AT - 5S · Toàn quyền tất cả zone</span>
+      </div>
+      <div class="account-actions">
+        <button class="tiny-button" type="button" data-action="edit-account" data-id="${escapeHtml(account.id)}">Sửa</button>
+        <button class="tiny-button danger-text-button" type="button" data-action="delete-at5s-account" data-id="${escapeHtml(account.id)}">Xóa</button>
+      </div>
+    </article>`;
+  }
+
+  async function handleAt5sAccountSubmit(event) {
+    if (event?.preventDefault) event.preventDefault();
+    if (!requireAdminAction()) return;
+    const memberId = elements.at5sAccountMember?.value || "";
+    const member = (state.at5sMembers || []).find((m) => m.id === memberId);
+    const username = (elements.at5sAccountUsername?.value || "").trim();
+    const password = elements.at5sAccountPassword?.value || "";
+    if (!member || !username || !password) {
+      showToast("Vui lòng nhập đủ thông tin tài khoản Ban AT - 5S.", true);
+      return;
+    }
+    if (password.length < 4) {
+      showToast("Mật khẩu phải có ít nhất 4 ký tự.", true);
+      return;
+    }
+    const duplicate = (state.accounts || []).find((acc) => acc.username.toLowerCase() === username.toLowerCase());
+    if (duplicate) {
+      showToast("Tên tài khoản đã tồn tại.", true);
+      return;
+    }
+    const account = {
+      id: makeId("account"),
+      role: ROLE_AT5S,
+      accessTypes: [FIVE_S_PERIOD_TYPE, SAFETY_PERIOD_TYPE],
+      rolesByType: { [FIVE_S_PERIOD_TYPE]: ROLE_AT5S, [SAFETY_PERIOD_TYPE]: ROLE_AT5S },
+      name: member.name,
+      displayName: member.name,
+      employeeCode: member.employeeCode || "",
+      username,
+      password,
+      areaIds: [],
+      fiveSAreaIds: [],
+      safetyAreaIds: [],
+      createdAt: new Date().toISOString(),
+    };
+    state.accounts.push(account);
+    await Promise.all([
+      dbRef(`accounts/${account.id}`).set(account),
+      logAdminChange({
+        subjectLabel: "Tài khoản Ban AT - 5S",
+        afterLabel: describeAccountForScope(account, activeAccountScope),
+        changeLabel: `Thêm tài khoản Ban AT - 5S ${username} cho ${member.name}`,
+        scope: "",
+      }),
+    ]);
+    elements.at5sAccountForm?.reset();
+    populateAt5sAccountSelect();
+    showToast("Đã thêm tài khoản Ban AT - 5S.");
+    renderAll();
+  }
+
+  function deleteAt5sAccount(id) {
+    if (!requireAdminAction()) return;
+    const account = (state.accounts || []).find((acc) => acc.id === id);
+    if (!account) return;
+    openConfirmModal({
+      title: "Xóa tài khoản Ban AT - 5S",
+      message: `Xóa tài khoản ${account.username}? Thành viên trong Danh mục Ban AT - 5S vẫn được giữ.`,
+      confirmText: "Xóa tài khoản",
+      danger: true,
+      async onConfirm() {
+        state.accounts = (state.accounts || []).filter((acc) => acc.id !== id);
+        await Promise.all([
+          dbRef(`accounts/${id}`).remove(),
+          logAdminChange({
+            subjectLabel: "Tài khoản Ban AT - 5S",
+            beforeLabel: account.username,
+            afterLabel: "Đã xóa",
+            changeLabel: `Xóa tài khoản Ban AT - 5S ${account.username}`,
+            scope: "",
+          }),
+        ]);
+        showToast("Đã xóa tài khoản Ban AT - 5S.");
+        renderAll();
+      },
+    });
+  }
+
   function populateDepartmentHeadAccountSelect() {
     if (!elements.departmentHeadAccountName) {
       return;
@@ -9527,40 +9985,45 @@
       ...ACCOUNT_SCOPE_OPTIONS,
       { value: ACCOUNT_VIEWER_SCOPE, label: "Người xem", icon: "Xem" },
       { value: ACCOUNT_DEPARTMENT_HEAD_SCOPE, label: "Trưởng phòng", icon: "TP" },
+      { value: ACCOUNT_AT5S_SCOPE, label: "Ban AT - 5S", icon: "AT5S" },
     ];
     renderScopeSwitch(elements.accountScopeSwitch, expandedAccountScope, "set-account-scope", "Cấp tài khoản", null, accountScopeOptions);
-    if (expandedAccountScope === ACCOUNT_VIEWER_SCOPE || expandedAccountScope === ACCOUNT_DEPARTMENT_HEAD_SCOPE) {
+    const allSpecialDetails = [
+      { scope: ACCOUNT_VIEWER_SCOPE, el: elements.viewerAccountDetail },
+      { scope: ACCOUNT_DEPARTMENT_HEAD_SCOPE, el: elements.departmentHeadAccountDetail },
+      { scope: ACCOUNT_AT5S_SCOPE, el: elements.at5sAccountDetail },
+    ];
+
+    if ([ACCOUNT_VIEWER_SCOPE, ACCOUNT_DEPARTMENT_HEAD_SCOPE, ACCOUNT_AT5S_SCOPE].includes(expandedAccountScope)) {
       if (elements.accountScopeDetail) {
         if (elements.accountScopeSwitch?.contains(elements.accountScopeDetail)) {
           elements.accountScopeSwitch.after(elements.accountScopeDetail);
         }
         elements.accountScopeDetail.hidden = true;
       }
-      const detailCard = expandedAccountScope === ACCOUNT_VIEWER_SCOPE ? elements.viewerAccountDetail : elements.departmentHeadAccountDetail;
-      const otherDetailCard = expandedAccountScope === ACCOUNT_VIEWER_SCOPE ? elements.departmentHeadAccountDetail : elements.viewerAccountDetail;
-      if (otherDetailCard) {
-        if (elements.accountScopeSwitch?.contains(otherDetailCard)) {
-          elements.accountScopeSwitch.after(otherDetailCard);
+      allSpecialDetails.forEach(({ scope, el }) => {
+        if (!el) return;
+        if (scope === expandedAccountScope) {
+          mountScopeDetail(elements.accountScopeSwitch, el, expandedAccountScope);
+        } else {
+          if (elements.accountScopeSwitch?.contains(el)) {
+            elements.accountScopeSwitch.after(el);
+          }
+          el.hidden = true;
         }
-        otherDetailCard.hidden = true;
-      }
-      mountScopeDetail(elements.accountScopeSwitch, detailCard, expandedAccountScope);
+      });
     } else {
-      if (elements.viewerAccountDetail) {
-        if (elements.accountScopeSwitch?.contains(elements.viewerAccountDetail)) {
-          elements.accountScopeSwitch.after(elements.viewerAccountDetail);
+      allSpecialDetails.forEach(({ el }) => {
+        if (!el) return;
+        if (elements.accountScopeSwitch?.contains(el)) {
+          elements.accountScopeSwitch.after(el);
         }
-        elements.viewerAccountDetail.hidden = true;
-      }
-      if (elements.departmentHeadAccountDetail) {
-        if (elements.accountScopeSwitch?.contains(elements.departmentHeadAccountDetail)) {
-          elements.accountScopeSwitch.after(elements.departmentHeadAccountDetail);
-        }
-        elements.departmentHeadAccountDetail.hidden = true;
-      }
+        el.hidden = true;
+      });
       mountScopeDetail(elements.accountScopeSwitch, elements.accountScopeDetail, expandedAccountScope);
     }
     populateDepartmentHeadAccountSelect();
+    populateAt5sAccountSelect();
     populateAccountRoleOptions();
     populateAssessorSelects();
     populateManagerSelects();
@@ -9577,6 +10040,12 @@
       elements.departmentHeadAccountList.innerHTML = departmentHeadAccounts
         .map(departmentHeadAccountCardHtml)
         .join("") || `<article class="account-card account-empty-card"><div><strong>Chưa có tài khoản trưởng phòng</strong><span>Tạo tài khoản trưởng phòng để thêm, sửa, xóa đánh giá an toàn theo Zone quản lý.</span></div></article>`;
+    }
+    if (elements.at5sAccountList) {
+      const at5sAccounts = state.accounts.filter((acc) => hasAt5sRole(acc) && !isAdminAccount(acc));
+      elements.at5sAccountList.innerHTML = at5sAccounts
+        .map(at5sAccountCardHtml)
+        .join("") || `<article class="account-card account-empty-card"><div><strong>Chưa có tài khoản Ban AT - 5S</strong><span>Tạo tài khoản cho thành viên Ban AT - 5S để chấm điểm 5S và đánh giá an toàn toàn bộ các zone.</span></div></article>`;
     }
   }
 
@@ -9614,7 +10083,8 @@
       const routeTarget = getRouteTarget();
       const requestedTab = pendingRouteTab || (routeTarget.type === "tab" ? routeTarget.tab : "");
       const requestedSafetyReport = pendingRouteTab ? pendingSafetyReport : (routeTarget.type === "tab" ? routeTarget.safetyReport || "" : "");
-      activeTab = requestedTab && isTabAllowed(requestedTab) ? requestedTab : getFallbackTab();
+      const resolvedRequestedTab = resolveTabForAccount(requestedTab, account);
+      activeTab = resolvedRequestedTab && isTabAllowed(resolvedRequestedTab) ? resolvedRequestedTab : getFallbackTab();
       if (activeTab === "home" && shouldDefaultToMobile(account)) {
         activeTab = getDefaultMobileTab(account);
       }
@@ -9809,6 +10279,7 @@
     const item = getItem(select.dataset.itemId || "");
     const criterion = getCriterion(item, select.dataset.criterionId || "");
     const scoreSource = normalizeScoreSource(select.dataset.scoreSource || "");
+    const scoreDate = select.dataset.scoreDate || "";
     const rawScore = select.value;
     if (select.dataset.savingValue === rawScore || select.dataset.savedValue === rawScore) {
       return;
@@ -9861,6 +10332,7 @@
         score: nextScore,
         status: isCrossed ? SCORE_CROSSED : "",
         scoreSource,
+        scoreDate,
       });
       const effectiveRecord = getScoreRecord(periodId, area.id, item.id, criterion.id, scoreSource);
       const effectiveRawScore = result?.status === "server-kept"
@@ -9902,9 +10374,10 @@
     }
   }
 
-  function assessorScoreSelectSelector({ periodId, areaId, itemId, criterionId, scoreSource }) {
+  function assessorScoreSelectSelector({ periodId, areaId, itemId, criterionId, scoreSource, scoreDate = "" }) {
     const normalizedSource = normalizeScoreSource(scoreSource);
-    return `[data-assessor-score-select="true"][data-period-id="${cssSelectorValue(periodId)}"][data-area-id="${cssSelectorValue(areaId)}"][data-item-id="${cssSelectorValue(itemId)}"][data-criterion-id="${cssSelectorValue(criterionId)}"][data-score-source="${cssSelectorValue(normalizedSource)}"]`;
+    const dateAttr = scoreDate ? `[data-score-date="${cssSelectorValue(scoreDate)}"]` : "";
+    return `[data-assessor-score-select="true"][data-period-id="${cssSelectorValue(periodId)}"][data-area-id="${cssSelectorValue(areaId)}"][data-item-id="${cssSelectorValue(itemId)}"][data-criterion-id="${cssSelectorValue(criterionId)}"][data-score-source="${cssSelectorValue(normalizedSource)}"]${dateAttr}`;
   }
 
   function syncAssessorScoreSelectPreview({ periodId, areaId, itemId, criterionId, rawScore, scoreSource }) {
@@ -10549,8 +11022,11 @@
     return result;
   }
 
-  async function setScore({ periodId, area, item, criterion, score, status, scoreSource = SCORE_SOURCE_ASSESSOR, note = undefined, photoDataUrl = undefined, photoName = undefined }) {
+  async function setScore({ periodId, area, item, criterion, score, status, scoreSource = SCORE_SOURCE_ASSESSOR, scoreDate = "", note = undefined, photoDataUrl = undefined, photoName = undefined }) {
     const normalizedSource = normalizeScoreSource(scoreSource);
+    const normalizedDate = isMultiDayScoreSource(normalizedSource)
+      ? (normalizeScoreDateForSource(scoreDate, normalizedSource) || defaultScoreDateForPeriod(periodId))
+      : "";
     if (!periodId || !isPeriodOpen(periodId, FIVE_S_PERIOD_TYPE)) {
       showToast("Không có kỳ đánh giá 5S đang mở nên không thể nhập dữ liệu.", true);
       return;
@@ -10566,7 +11042,8 @@
         record.areaId === area.id &&
         record.itemId === item.id &&
         record.criterionId === criterion.id &&
-        normalizeScoreSource(record.scoreSource) === normalizedSource,
+        normalizeScoreSource(record.scoreSource) === normalizedSource &&
+        (normalizeScoreDateForSource(record.scoreDate, normalizedSource) || "") === (normalizedDate || ""),
     );
     const existing = existingIndex >= 0 ? state.scores[existingIndex] : null;
     const existingCopy = cloneValue(existing);
@@ -10661,6 +11138,7 @@
         itemId: item.id,
         criterionId: criterion.id,
         scoreSource: normalizedSource,
+        scoreDate: normalizedDate,
         score,
         status,
         note: note !== undefined ? note : (existing?.note || ""),
@@ -10711,6 +11189,7 @@
       itemId: item.id,
       criterionId: criterion.id,
       scoreSource: normalizedSource,
+      scoreDate: normalizedDate,
       areaCode: area.code,
       itemCode: item.code,
       criterionLabel: criterion.label,
@@ -10833,6 +11312,38 @@
       areaId,
       areaCode,
     });
+  }
+
+  function addDetailedHistoryChangeToUpdates(change, updates) {
+    const auditChanges = (change.details?.length ? change.details : [{
+      action: change.action,
+      label: change.summary,
+      before: change.before,
+      after: change.after,
+    }]).map((detail) => ({
+      section: detail.section || change.sectionLabel,
+      action: detail.action || change.action,
+      label: detail.label || change.summary,
+      target: detail.target || change.target || "",
+      before: detail.before ?? change.before ?? "",
+      after: detail.after ?? change.after ?? "",
+      scope: detail.scope || change.scope || "",
+      periodId: detail.periodId || change.periodId || "",
+    }));
+    addAdminChangeToUpdates({
+      subjectLabel: change.sectionLabel,
+      sectionLabel: change.sectionLabel,
+      action: change.action,
+      auditTarget: change.target || "",
+      auditChanges,
+      beforeLabel: change.before || "",
+      afterLabel: change.after || "",
+      changeLabel: change.summary,
+      scope: change.scope || "",
+      periodId: change.periodId || "",
+      areaId: change.areaId || "",
+      areaCode: change.areaCode || "",
+    }, updates);
   }
 
   // ─── Undo / Redo Manager ────────────────────────────────────────────────────
@@ -11043,7 +11554,7 @@
     isExecutingUndoRedo = true;
     try {
       if (action.type === "score") {
-        const { periodId, areaId, itemId, criterionId, scoreSource, before, after } = action;
+        const { periodId, areaId, itemId, criterionId, scoreSource, scoreDate, before, after } = action;
         if (isPeriodArchived(periodId)) {
           showToast("Kỳ này đã lưu trữ, không thể hoàn tác.", true);
           return;
@@ -11055,7 +11566,8 @@
             r.areaId === areaId &&
             r.itemId === itemId &&
             r.criterionId === criterionId &&
-            normalizeScoreSource(r.scoreSource) === normalizedSource,
+            normalizeScoreSource(r.scoreSource) === normalizedSource &&
+            (normalizeScoreDateForSource(r.scoreDate, normalizedSource) || "") === (normalizeScoreDateForSource(scoreDate, normalizedSource) || ""),
         );
         const currentValue = existingIndex >= 0 ? cloneValue(state.scores[existingIndex]) : null;
         let saveResult = null;
@@ -11160,7 +11672,7 @@
     isExecutingUndoRedo = true;
     try {
       if (action.type === "score") {
-        const { periodId, areaId, itemId, criterionId, scoreSource, before, after } = action;
+        const { periodId, areaId, itemId, criterionId, scoreSource, scoreDate, before, after } = action;
         if (isPeriodArchived(periodId)) {
           showToast("Kỳ này đã lưu trữ, không thể làm lại.", true);
           return;
@@ -11172,7 +11684,8 @@
             r.areaId === areaId &&
             r.itemId === itemId &&
             r.criterionId === criterionId &&
-            normalizeScoreSource(r.scoreSource) === normalizedSource,
+            normalizeScoreSource(r.scoreSource) === normalizedSource &&
+            (normalizeScoreDateForSource(r.scoreDate, normalizedSource) || "") === (normalizeScoreDateForSource(scoreDate, normalizedSource) || ""),
         );
         const currentValue = existingIndex >= 0 ? cloneValue(state.scores[existingIndex]) : null;
         let saveResult = null;
@@ -11279,7 +11792,44 @@
     }
   }
 
-  function openFormModal({ title, html, submitText = "Lưu", submitClass = "primary-button", extraActions = "", extraRightActions = "", modalClass = "", onSubmit, onError = null, onCancel = null, draftKey = null, getDraftSnapshot = null, isDraftDirty = null }) {
+  function bindTouchSubmitBeforeKeyboardDismiss(form, submitButton) {
+    if (!form || !submitButton) return;
+    let suppressNextClick = false;
+    let clearSuppressionTimer = 0;
+    const onPointerDown = (event) => {
+      if (event.type === "pointerdown" && (event.pointerType !== "touch" || event.isPrimary === false)) return;
+      if (event.type === "touchstart" && event.touches?.length !== 1) return;
+      if (submitButton.disabled || submitButton.form !== form) return;
+      const activeElement = document.activeElement;
+      const isTextEditor = activeElement && form.contains(activeElement) && activeElement.matches(
+        'textarea, input:not([type="button"]):not([type="submit"]):not([type="reset"]):not([type="checkbox"]):not([type="radio"]):not([type="file"]):not([type="hidden"]):not([type="date"]):not([type="time"]):not([type="month"]):not([type="week"])'
+      );
+      if (!isTextEditor) return;
+
+      // Submit before iPad Safari blurs the editor and shifts the page to hide its keyboard.
+      event.preventDefault();
+      suppressNextClick = true;
+      window.clearTimeout(clearSuppressionTimer);
+      clearSuppressionTimer = window.setTimeout(() => { suppressNextClick = false; }, 800);
+      if (typeof form.requestSubmit === "function") form.requestSubmit(submitButton);
+      else form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+    };
+    const onClickCapture = (event) => {
+      if (!suppressNextClick || !submitButton.contains(event.target)) return;
+      suppressNextClick = false;
+      window.clearTimeout(clearSuppressionTimer);
+      event.preventDefault();
+      event.stopImmediatePropagation();
+    };
+
+    if ("PointerEvent" in window) submitButton.addEventListener("pointerdown", onPointerDown, { passive: false });
+    else submitButton.addEventListener("touchstart", onPointerDown, { passive: false });
+    submitButton.addEventListener("click", onClickCapture, true);
+  }
+
+  window.bindTouchSubmitBeforeKeyboardDismiss = bindTouchSubmitBeforeKeyboardDismiss;
+
+  function openFormModal({ title, html, submitText = "Lưu", submitClass = "primary-button", extraActions = "", extraRightActions = "", modalClass = "", onSubmit, onError = null, onCancel = null, draftKey = null, getDraftSnapshot = null, isDraftDirty = null, autoFocus = true }) {
     modalPreviewDirty = false;
     modalSubmitSucceeded = false;
     modalCancelHandler = typeof onCancel === "function" ? onCancel : null;
@@ -11385,8 +11935,11 @@
     };
     form?.addEventListener("input", markModalDirty);
     form?.addEventListener("change", markModalDirty);
+    let modalSubmissionPending = false;
     form.addEventListener("submit", async (event) => {
       event.preventDefault();
+      if (modalSubmissionPending) return;
+      modalSubmissionPending = true;
       try {
         const shouldClose = await onSubmit(new FormData(form), form);
         if (shouldClose !== false && document.getElementById("modal-form") === form) {
@@ -11403,12 +11956,20 @@
       } catch (error) {
         if (typeof onError === "function") onError(error);
         else showToast("Không lưu được dữ liệu. Vui lòng thử lại.", true);
+      } finally {
+        modalSubmissionPending = false;
       }
     });
 
+    bindTouchSubmitBeforeKeyboardDismiss(form, elements.modalActions.querySelector('button[type="submit"]'));
+
     elements.modalBackdrop.hidden = false;
     const firstInput = elements.modalBody.querySelector("input, select, textarea, button");
-    firstInput?.focus();
+    if (autoFocus) {
+      firstInput?.focus();
+    } else {
+      elements.modalActions.querySelector('[data-action="modal-cancel"]')?.focus({ preventScroll: true });
+    }
   }
 
   function openConfirmModal({ title, message, confirmText = "Xác nhận", danger = false, renderAfter = true, onConfirm, onError = null }) {
@@ -11898,45 +12459,22 @@
       return;
     }
 
-    const normalizedType = normalizePeriodType(type) === SAFETY_PERIOD_TYPE ? SAFETY_PERIOD_TYPE : FIVE_S_PERIOD_TYPE;
-    const isSafetyPeriod = normalizedType === SAFETY_PERIOD_TYPE;
-    let month = 0;
-    let year = 0;
-    let label = "";
-    let id = "";
-    let createdAt = new Date().toISOString();
-    let period = null;
-
-    if (isSafetyPeriod) {
-      const isoDate = parseDisplayDateToIso(elements.periodSafetyDate?.value);
-      const date = new Date(isoDate + "T00:00:00");
-      if (Number.isNaN(date.getTime())) {
-        showToast("Ngày đánh giá an toàn không hợp lệ.", true);
-        return;
-      }
-      month = date.getMonth() + 1;
-      year = date.getFullYear();
-      const day = String(date.getDate()).padStart(2, "0");
-      const paddedMonth = String(month).padStart(2, "0");
-      id = "period-safety-" + year + "-" + paddedMonth + "-" + day;
-      label = day + "/" + paddedMonth + "/" + year;
-      createdAt = date.toISOString();
-      period = getPeriodsByType(SAFETY_PERIOD_TYPE).find((item) => item.id === id || toIsoDate(item.createdAt) === isoDate) || null;
-    } else {
-      month = Number(elements.period5SMonth?.value || elements.periodMonth?.value);
-      year = Number(elements.period5SYear?.value || elements.periodYear?.value);
-      if (!Number.isInteger(month) || month < 1 || month > 12 || !Number.isInteger(year) || year < 2020 || year > 2100) {
-        showToast("Tháng hoặc năm không hợp lệ.", true);
-        return;
-      }
-      const paddedMonth = String(month).padStart(2, "0");
-      id = "period-5s-" + year + "-" + paddedMonth;
-      label = "Tháng " + month + "/" + year;
-      period = getPeriodsByType(FIVE_S_PERIOD_TYPE).find((item) => item.id === id || (Number(item.month) === month && Number(item.year) === year)) || null;
+    if (normalizePeriodType(type) === SAFETY_PERIOD_TYPE) return;
+    const month = Number(elements.period5SMonth?.value || elements.periodMonth?.value);
+    const year = Number(elements.period5SYear?.value || elements.periodYear?.value);
+    if (!Number.isInteger(month) || month < 1 || month > 12 || !Number.isInteger(year) || year < 2020 || year > 2100) {
+      showToast("Tháng hoặc năm không hợp lệ.", true);
+      return;
     }
+    const normalizedType = FIVE_S_PERIOD_TYPE;
+    const paddedMonth = String(month).padStart(2, "0");
+    const id = "period-5s-" + year + "-" + paddedMonth;
+    const label = "Tháng " + month + "/" + year;
+    const createdAt = new Date().toISOString();
+    let period = getPeriodsByType(FIVE_S_PERIOD_TYPE).find((item) => item.id === id || (Number(item.month) === month && Number(item.year) === year)) || null;
 
     if (period) {
-      showToast(isSafetyPeriod ? "Đã có kỳ đánh giá an toàn này." : "Đã có kỳ chấm 5S này.", true);
+      showToast("Đã có kỳ chấm 5S này.", true);
       return;
     }
 
@@ -11959,7 +12497,7 @@
     setActivePeriodId(normalizedType, period.id);
     await saveMeta();
     await logAdminChange({
-      subjectLabel: isSafetyPeriod ? "Kỳ đánh giá an toàn" : "Kỳ chấm 5S",
+      subjectLabel: "Kỳ chấm 5S",
       afterLabel: periodLabel(period),
       changeLabel: "Tạo kỳ mới " + periodLabel(period),
       note: templateMode === PERIOD_CATALOG_TEMPLATE_RESET_PEOPLE
@@ -11968,7 +12506,7 @@
       scope: normalizedType,
       periodId: period.id,
     });
-    (isSafetyPeriod ? elements.periodSafetyForm : elements.period5SForm || elements.periodForm)?.reset();
+    (elements.period5SForm || elements.periodForm)?.reset();
     showToast("Đã tạo kỳ mới.");
     renderAll();
   }
@@ -11999,6 +12537,8 @@
         saved = await handleAssessorSubmit(event, input, roleScope);
       } else if (role === ROLE_DEPARTMENT_HEAD) {
         saved = await handleDepartmentHeadSubmit(event, input, roleScope);
+      } else if (role === ROLE_AT5S) {
+        saved = await handleAt5sMemberSubmit(event, input);
       }
       if (!saved) return;
     }
@@ -12006,6 +12546,96 @@
     elements.catalogPersonForm.reset();
     renderCatalogPersonZoneList();
     catalogPersonSelectedAreaIdsByRole = {};
+  }
+
+  async function handleAt5sMemberSubmit(event, input = {}) {
+    if (event?.preventDefault) event.preventDefault();
+    if (!requireAdminAction()) return false;
+    const name = String(input.name || "").trim();
+    const employeeCode = String(input.employeeCode || "").trim();
+    if (!name || !employeeCode) {
+      showToast("Vui lòng nhập mã nhân viên và tên thành viên Ban AT - 5S.", true);
+      return false;
+    }
+    const existing = (state.at5sMembers || []).find((m) => sameEmployeeCode(m.employeeCode, employeeCode) || sameNormalizedText(m.name, name));
+    if (existing) {
+      existing.name = name;
+      existing.employeeCode = employeeCode;
+      await dbRef(`at5sMembers/${existing.id}`).set(existing);
+      return true;
+    }
+    const member = {
+      id: makeId("at5s-member"),
+      employeeCode,
+      name,
+      createdAt: new Date().toISOString(),
+    };
+    state.at5sMembers = [...(state.at5sMembers || []), member];
+    await dbRef(`at5sMembers/${member.id}`).set(member);
+    await logAdminChange({
+      subjectLabel: "Ban AT - 5S",
+      afterLabel: `${employeeCode} · ${name}`,
+      changeLabel: `Thêm thành viên Ban AT - 5S: ${name}`,
+      scope: "",
+    });
+    return true;
+  }
+
+  function renderAt5sMemberList() {
+    if (!elements.catalogAt5sList) return;
+    const members = state.at5sMembers || [];
+    elements.catalogAt5sList.innerHTML = members.map((member) => {
+      const accountBadge = catalogAccountBadgeHtml(member);
+      return `<article class="compact-item at5s-member-item">
+        <div class="compact-main">
+          <div class="compact-title-row">
+            <strong>${escapeHtml(member.name)}</strong>
+            <span class="catalog-meta-pill">Mã NV: ${escapeHtml(member.employeeCode || "chưa có")}</span>
+            ${accountBadge}
+            <span class="catalog-meta-pill" style="background: rgba(59, 130, 246, 0.15); color: #3b82f6;">Tất cả zone</span>
+          </div>
+        </div>
+        <div class="compact-actions">
+          <button class="tiny-button" type="button" data-action="edit-at5s-member" data-id="${escapeHtml(member.id)}">Sửa</button>
+          <button class="tiny-button danger-text-button" type="button" data-action="delete-at5s-member" data-id="${escapeHtml(member.id)}">Xóa</button>
+        </div>
+      </article>`;
+    }).join("") || '<article class="compact-item"><span>Chưa có thành viên nào trong Ban AT - 5S.</span></article>';
+  }
+
+  function deleteAt5sMember(id) {
+    if (!requireAdminAction()) return;
+    const member = (state.at5sMembers || []).find((m) => m.id === id);
+    if (!member) return;
+    openConfirmModal({
+      title: "Xóa thành viên Ban AT - 5S",
+      message: `Xóa thành viên ${member.name} khỏi Ban AT - 5S? Tài khoản nếu có sẽ mất quyền chấm của Ban AT - 5S.`,
+      confirmText: "Xóa",
+      danger: true,
+      async onConfirm() {
+        state.at5sMembers = (state.at5sMembers || []).filter((m) => m.id !== id);
+        await dbRef(`at5sMembers/${id}`).remove();
+        (state.accounts || []).forEach((acc) => {
+          if (acc && accountMatchesCatalogPerson(acc, member)) {
+            if (acc.role === ROLE_AT5S) acc.role = "unassigned";
+            if (acc.rolesByType) {
+              if (acc.rolesByType[FIVE_S_PERIOD_TYPE] === ROLE_AT5S) delete acc.rolesByType[FIVE_S_PERIOD_TYPE];
+              if (acc.rolesByType[SAFETY_PERIOD_TYPE] === ROLE_AT5S) delete acc.rolesByType[SAFETY_PERIOD_TYPE];
+            }
+            dbRef(`accounts/${acc.id}`).set(acc).catch(() => {});
+          }
+        });
+        await logAdminChange({
+          subjectLabel: "Ban AT - 5S",
+          beforeLabel: `${member.employeeCode || ""} · ${member.name}`,
+          afterLabel: "Đã xóa",
+          changeLabel: `Xóa thành viên Ban AT - 5S: ${member.name}`,
+          scope: "",
+        });
+        showToast("Đã xóa thành viên Ban AT - 5S.");
+        renderAll();
+      },
+    });
   }
 
   async function handleScorerSubmit(event, input = {}, catalogTypeOverride = activeCatalogScope) {
@@ -14741,151 +15371,11 @@
       await ensurePeriodSnapshot(id);
       setActivePeriodId(periodType, id);
       await saveMeta();
-      showToast("Đã đổi kỳ đánh giá.");
+      showToast(periodType === SAFETY_PERIOD_TYPE ? "Đã đổi danh mục AT đang dùng." : "Đã đổi kỳ chấm 5S.");
       renderAll();
     } catch (error) {
       showToast("Lỗi khi lưu kỳ đánh giá.", true);
     }
-  }
-
-  function editSafetyPeriodDate(id) {
-    if (!requireAdminAction()) {
-      return;
-    }
-
-    const period = getPeriod(id);
-    if (!period || normalizePeriodType(period.type) !== SAFETY_PERIOD_TYPE) {
-      showToast("Không tìm thấy kỳ đánh giá an toàn.", true);
-      return;
-    }
-
-    const currentDate = safetyPeriodInputDate(period);
-    openFormModal({
-      title: "Sửa ngày chấm an toàn",
-      submitText: "Lưu ngày",
-      html: "<div class=\"modal-context\">" +
-          "<span><strong>Kỳ hiện tại:</strong> " + escapeHtml(periodLabel(period)) + "</span>" +
-        "</div>" +
-        "<label>" +
-          "<span>Ngày đánh giá an toàn</span>" +
-          "<span class=\"safety-date-editor\">" +
-            "<input name=\"safetyDate\" type=\"text\" placeholder=\"dd/mm/yyyy\" pattern=\"[0-9]{2}/[0-9]{2}/[0-9]{4}\" maxlength=\"10\" value=\"" + escapeHtml(formatDateDisplay(currentDate)) + "\" required>" +
-            "<input class=\"safety-date-calendar\" aria-label=\"Chọn ngày đánh giá an toàn\" type=\"date\" value=\"" + escapeHtml(currentDate) + "\">" +
-          "</span>" +
-        "</label>",
-      async onSubmit(formData) {
-        const isoDate = parseDisplayDateToIso(formData.get("safetyDate"));
-        if (!isoDate) {
-          showToast("Ngày đánh giá an toàn không hợp lệ.", true);
-          return false;
-        }
-
-        const date = new Date(isoDate + "T00:00:00");
-        const month = date.getMonth() + 1;
-        const year = date.getFullYear();
-        const day = String(date.getDate()).padStart(2, "0");
-        const paddedMonth = String(month).padStart(2, "0");
-        const nextId = "period-safety-" + year + "-" + paddedMonth + "-" + day;
-
-        const duplicate = getPeriodsByType(SAFETY_PERIOD_TYPE).find((item) => (
-          item.id !== period.id && (item.id === nextId || safetyPeriodInputDate(item) === isoDate)
-        ));
-        if (duplicate) {
-          showToast("Đã có kỳ đánh giá an toàn cùng ngày này.", true);
-          return false;
-        }
-
-        const oldId = period.id;
-        const beforeLabel = periodLabel(period);
-        period.type = SAFETY_PERIOD_TYPE;
-        period.month = month;
-        period.year = year;
-        period.label = day + "/" + paddedMonth + "/" + year;
-        period.createdAt = date.toISOString();
-        period.updatedAt = new Date().toISOString();
-
-        if (nextId !== oldId) {
-          period.id = nextId;
-
-          const affectedSafetyRecords = (state.safetyRecords || []).filter((record) => record.periodId === oldId);
-          affectedSafetyRecords.forEach((record) => {
-            record.periodId = nextId;
-          });
-
-          const affectedDeletedMarkers = (state.deletedSafetyRecords || []).filter((marker) => marker.periodId === oldId);
-          affectedDeletedMarkers.forEach((marker) => {
-            marker.periodId = nextId;
-          });
-
-          let migratedOverrides = false;
-          if (state.safetyIdentificationOverrides && state.safetyIdentificationOverrides[oldId]) {
-            state.safetyIdentificationOverrides[nextId] = state.safetyIdentificationOverrides[oldId];
-            delete state.safetyIdentificationOverrides[oldId];
-            migratedOverrides = true;
-          }
-
-          if (state.activeSafetyPeriodId === oldId) {
-            state.activeSafetyPeriodId = nextId;
-          }
-          if (state.activePeriodId === oldId) {
-            state.activePeriodId = nextId;
-          }
-
-          const updates = {
-            ["periods/" + oldId]: null,
-            ["periods/" + nextId]: period,
-            activePeriodId: state.activePeriodId || "",
-            activeFiveSPeriodId: state.activeFiveSPeriodId || "",
-            activeSafetyPeriodId: state.activeSafetyPeriodId || "",
-            benchmark: state.benchmark,
-            fiveSChartTargets: normalizeFiveSChartTargets(state.fiveSChartTargets),
-          };
-          affectedSafetyRecords.forEach((record) => {
-            updates["safetyRecords/" + record.id] = record;
-          });
-          affectedDeletedMarkers.forEach((marker) => {
-            updates["deletedSafetyRecords/" + marker.id] = marker;
-          });
-          if (migratedOverrides) {
-            updates["safetyIdentificationOverrides/" + oldId] = null;
-            updates["safetyIdentificationOverrides/" + nextId] = state.safetyIdentificationOverrides[nextId];
-          }
-          (state.history || []).forEach((entry) => {
-            if (entry && entry.periodId === oldId) {
-              entry.periodId = nextId;
-              entry.periodLabel = periodLabel(period);
-              updates["history/" + entry.id] = entry;
-            }
-          });
-
-          await updateRootWithOptionalRenderSuppression(updates, { suppressRender: true });
-        } else {
-          await dbRef("periods/" + period.id).set(period);
-        }
-
-        await logAdminChange({
-          subjectLabel: "Kỳ đánh giá an toàn",
-          beforeLabel,
-          afterLabel: periodLabel(period),
-          changeLabel: "Sửa ngày chấm an toàn",
-          note: "Cập nhật ngày đánh giá trong phần danh mục",
-          scope: SAFETY_PERIOD_TYPE,
-          periodId: period.id,
-        });
-        showToast("Đã cập nhật ngày chấm an toàn.");
-        renderAll();
-        return true;
-      },
-    });
-    const dateText = elements.modalBody.querySelector('[name="safetyDate"]');
-    const calendar = elements.modalBody.querySelector(".safety-date-calendar");
-    calendar.addEventListener("change", () => {
-      dateText.value = formatDateDisplay(calendar.value);
-    });
-    dateText.addEventListener("input", () => {
-      const parts = dateText.value.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
-      calendar.value = parts ? `${parts[3]}-${parts[2]}-${parts[1]}` : "";
-    });
   }
 
   function editFiveSPeriodDate(id) {
@@ -15114,6 +15604,8 @@
     const report = getSafetyReportForPeriod(periodId);
     const beforeSignature = JSON.stringify(report);
     const isSnapshotEdit = shouldEditPeriodSnapshot(periodId);
+    const issueDateValue = getReportDateValue(report, period, "issueDate");
+    const reportDateValue = getReportDateValue(report, period, "reportDate");
     openFormModal({
       title: "Thiết lập báo cáo đánh giá an toàn",
       submitText: "Lưu thiết lập",
@@ -15149,15 +15641,27 @@
         '<div class="form-grid">' +
           '<label>' +
             '<span>Issue Date</span>' +
-            '<input name="issueDate" type="date" value="' + escapeHtml(getReportDateValue(report, period, "issueDate")) + '">' +
+            '<span class="safety-date-editor">' +
+              '<input name="issueDate" type="text" data-report-date placeholder="dd/mm/yyyy" inputmode="numeric" maxlength="10" pattern="[0-9]{2}/[0-9]{2}/[0-9]{4}" value="' + escapeHtml(formatDateDisplay(issueDateValue)) + '" required autocomplete="off">' +
+              '<input type="date" class="safety-date-calendar" data-report-date-calendar="issueDate" aria-label="Chọn Issue Date" value="' + escapeHtml(issueDateValue) + '">' +
+            '</span>' +
           '</label>' +
           '<label>' +
             '<span>Report date</span>' +
-            '<input name="reportDate" type="date" value="' + escapeHtml(getReportDateValue(report, period, "reportDate")) + '">' +
+            '<span class="safety-date-editor">' +
+              '<input name="reportDate" type="text" data-report-date placeholder="dd/mm/yyyy" inputmode="numeric" maxlength="10" pattern="[0-9]{2}/[0-9]{2}/[0-9]{4}" value="' + escapeHtml(formatDateDisplay(reportDateValue)) + '" required autocomplete="off">' +
+              '<input type="date" class="safety-date-calendar" data-report-date-calendar="reportDate" aria-label="Chọn Report date" value="' + escapeHtml(reportDateValue) + '">' +
+            '</span>' +
           '</label>' +
         '</div>',
       async onSubmit(formData) {
         const beforeLabel = report.performer + " · " + report.checker + " · " + report.department;
+        const issueDate = parseDisplayDateToIso(String(formData.get("issueDate") || "").trim());
+        const reportDate = parseDisplayDateToIso(String(formData.get("reportDate") || "").trim());
+        if (!issueDate || !reportDate) {
+          showToast("Vui lòng nhập ngày theo định dạng dd/mm/yyyy.", true);
+          return false;
+        }
         const nextReport = {
           performer: String(formData.get("performer") || "").trim() || DEFAULT_SAFETY_REPORT.performer,
           performerTitle: String(formData.get("performerTitle") || "").trim(),
@@ -15166,8 +15670,10 @@
           checkerTitle: String(formData.get("checkerTitle") || "").trim(),
           checkerDepartment: String(formData.get("checkerDepartment") || "").trim(),
           instruction: String(formData.get("instruction") || "").trim() || DEFAULT_SAFETY_REPORT.instruction,
-          issueDate: String(formData.get("issueDate") || "").trim(),
-          reportDate: String(formData.get("reportDate") || "").trim(),
+          issueDate,
+          issueDateIsCustom: issueDate !== todayIsoDate(),
+          reportDate,
+          reportDateIsCustom: reportDate !== todayIsoDate(),
         };
         const afterSignature = JSON.stringify(nextReport);
         if (beforeSignature === afterSignature) {
@@ -15200,17 +15706,38 @@
         return true;
       },
     });
+    const modalForm = elements.modalBody?.querySelector("form");
+    ["issueDate", "reportDate"].forEach((fieldName) => {
+      const textInput = modalForm?.querySelector(`[name="${fieldName}"][data-report-date]`);
+      const calendarInput = modalForm?.querySelector(`[data-report-date-calendar="${fieldName}"]`);
+      if (!textInput || !calendarInput) return;
+      calendarInput.addEventListener("change", () => {
+        textInput.value = formatDateDisplay(calendarInput.value);
+        textInput.dispatchEvent(new Event("input", { bubbles: true }));
+      });
+      textInput.addEventListener("input", () => {
+        const isoDate = parseDisplayDateToIso(textInput.value);
+        if (isoDate) calendarInput.value = isoDate;
+      });
+    });
   }
 
-  function getSafetyAreaOptions(periodId, selectedAreaId = "", allowedIds = getAllowedAreaIds(currentUser, periodId)) {
-    return getAreasForPeriod(periodId)
+  function getSafetyAreaOptions(periodId, selectedAreaId = "", allowedIds = getAllowedAreaIds(currentUser, periodId), placeholderLabel = "") {
+    const areas = getAreasForPeriod(periodId)
       .filter((area) => isReportableSafetyArea(area) && (!allowedIds || allowedIds.has(area.id)))
-      .sort(compareZoneCodesByOrder)
+      .sort(compareZoneCodesByOrder);
+    const placeholder = placeholderLabel
+      ? "<option value=\"\" " + (!selectedAreaId ? "selected" : "") + " disabled>" + escapeHtml(placeholderLabel) + "</option>"
+      : "";
+    return placeholder + areas
       .map((area) => "<option value=\"" + escapeHtml(area.id) + "\" " + (area.id === selectedAreaId ? "selected" : "") + ">Zone " + escapeHtml(area.code) + " · " + escapeHtml(getSafetyDepartmentForArea(area, periodId)) + "</option>")
       .join("");
   }
 
   function getSafetyRecordIssueDate(record, period) {
+    if (!record) return todayIsoDate();
+    const explicitDate = toIsoDate(record.issueDate || record.date);
+    if (isValidIsoDate(explicitDate)) return explicitDate;
     const norm = getNormalizedSafetyIssueDate(record, period);
     if (norm.day && norm.month) {
       const year = norm.year || Number(period?.year) || new Date().getFullYear();
@@ -15226,7 +15753,7 @@
       showToast("Bạn không có quyền thêm đánh giá an toàn.", true);
       return;
     }
-    const selectedPeriodId = elements.safetyPeriodSelect?.value || getActivePeriodId(SAFETY_PERIOD_TYPE);
+    const selectedPeriodId = getActivePeriodId(SAFETY_PERIOD_TYPE);
     if (!selectedPeriodId || !isPeriodOpen(selectedPeriodId, SAFETY_PERIOD_TYPE)) {
       showToast("Kỳ đánh giá an toàn này hiện không mở.", true);
       return;
@@ -15290,7 +15817,7 @@
 
   function openSafetyRecordForm(record = null) {
     const isNew = !record;
-    const selectedPeriodId = elements.safetyPeriodSelect?.value || getActivePeriodId(SAFETY_PERIOD_TYPE);
+    const selectedPeriodId = getActivePeriodId(SAFETY_PERIOD_TYPE);
     const period = getPeriod(isNew ? selectedPeriodId : record.periodId);
     const periodId = period?.id || "";
     if (!periodId) {
@@ -15327,7 +15854,7 @@
     const safetyPhotoAnnotationAttrs = (field, editable) =>
       "data-safety-record-id=\"" + escapeHtml(record?.id || "") + "\" data-safety-photo-field=\"" + field + "\" data-safety-annotations=\"" +
       escapeHtml(JSON.stringify(record?.[field] || [])) + "\" data-safety-annotation-editable=\"" + (editable ? "true" : "false") + "\" data-safety-source-pending=\"false\"";
-    const safetyPhotoEditorHtml = (inputName, removeName, photoUrl, alt, annotationField, editable, badge) => {
+    const safetyPhotoEditorHtml = (inputName, removeName, photoUrl, alt, annotationField, editable) => {
       const hasPhoto = Boolean(photoUrl);
       return "<div class=\"photo-upload-box photo-edit-widget safety-photo-editor " + (hasPhoto ? "has-photo" : "") + "\" data-safety-photo-editor>" +
         "<input class=\"photo-file-input safety-photo-file-input " + (hasPhoto ? "is-hidden" : "") + "\" name=\"" + inputName + "\" type=\"file\" accept=\"image/*\" capture=\"environment\">" +
@@ -15340,12 +15867,12 @@
             "<button type=\"button\" class=\"photo-btn open-btn\" data-photo-open title=\"Mở ảnh lớn\" aria-label=\"Mở ảnh lớn\" " + (hasPhoto ? "" : "hidden") + "><i class=\"fa-solid fa-expand\"></i></button>" +
             "<button type=\"button\" class=\"photo-btn retake-btn\" data-photo-change title=\"Đổi ảnh\" aria-label=\"Đổi ảnh\" " + (hasPhoto ? "" : "hidden") + "><i class=\"fa-solid fa-arrows-rotate\"></i></button>" +
             "<button type=\"button\" class=\"photo-btn delete-btn\" data-photo-delete title=\"Xóa ảnh\" aria-label=\"Xóa ảnh\" " + (hasPhoto ? "" : "hidden") + "><i class=\"fa-solid fa-trash-can\"></i></button></div>" +
-          "<div class=\"photo-attached-badge\"><i class=\"fa-solid fa-circle-check\"></i> " + escapeHtml(badge) + "</div></div>" +
+          "</div>" +
         "<input type=\"checkbox\" name=\"" + removeName + "\" hidden aria-hidden=\"true\"></div>";
     };
     const afterPhotoEditor = safetyPhotoEditorHtml(
       "afterPhoto", "removeAfterPhoto", record?.afterPhotoDataUrl, "Ảnh sau cải tiến, xử lý",
-      "afterPhotoAnnotations", canManageSafetyCountermeasure(record), "Đã đính kèm ảnh sau cải tiến",
+      "afterPhotoAnnotations", canManageSafetyCountermeasure(record),
     );
     const bindSafetyPhotoEditors = (root) => {
       root?.querySelectorAll?.("[data-safety-photo-editor]").forEach((editor) => {
@@ -15564,7 +16091,6 @@
           showToast(error?.message || "Không lưu được phần cải tiến/xử lý. Vui lòng thử lại.", true);
         },
         html: "<div class=\"modal-context\">" +
-            "<span><strong>Kỳ:</strong> " + escapeHtml(periodLabel(period)) + "</span>" +
             "<span><strong>Zone:</strong> " + escapeHtml(selectedArea.code || "") + "</span>" +
             "<span><strong>Mối nguy:</strong> " + escapeHtml(record?.note || "") + "</span>" +
           "</div>" +
@@ -15656,10 +16182,14 @@
     const displayIssueDate = formatDateDisplay(issueDate);
     const photoEditor = safetyPhotoEditorHtml(
       "photo", "removePhoto", record?.photoDataUrl, "Ảnh hiện trường",
-      "photoAnnotations", canManageSafetyRecord(record), "Đã đính kèm ảnh hiện trường",
+      "photoAnnotations", canManageSafetyRecord(record),
     );
 
-    const effectiveAreaId = safetyDraft?.areaId || selectedArea.id;
+    const requestedAreaId = safetyDraft?.areaId || (isNew ? "" : selectedArea.id);
+    const availableAreaIds = new Set(getAreasForPeriod(periodId)
+      .filter((area) => isReportableSafetyArea(area) && (isNew || allowedIds.has(area.id)))
+      .map((area) => area.id));
+    const effectiveAreaId = availableAreaIds.has(requestedAreaId) ? requestedAreaId : "";
     const effectiveIssueDate = safetyDraft?.issueDate || issueDate;
     const effectiveDisplayIssueDate = safetyDraft?.issueDate ? formatDateDisplay(safetyDraft.issueDate) : displayIssueDate;
     const effectiveNote = safetyDraft?.note ?? (record?.note || "");
@@ -15670,7 +16200,7 @@
     const effectiveIssueCount = safetyDraft?.issueCount ?? (record ? getIssueCount(row) : 1);
     const effectiveIssueType = safetyDraft?.issueType ?? (record?.issueType || "");
     const effectiveIssueLevel = safetyDraft?.issueLevel ?? (record?.issueLevel || "");
-    const effectiveFoundChannel = safetyDraft?.foundChannel ?? normalizeFoundChannel(record?.foundChannel || (record ? (getIssueFoundBy(row) ? "worker" : "") : "worker"));
+    const effectiveFoundChannel = safetyDraft?.foundChannel ?? normalizeFoundChannel(record?.foundChannel || (record ? (getIssueFoundBy(row) ? "worker" : "") : (isNew && hasAt5sRole(currentUser) ? "at5s" : "worker")));
     const effectiveIssueStatus = safetyDraft?.issueStatus ?? normalizeIssueStatus(record?.issueStatus || "open");
     const effectiveIssueFoundBy = safetyDraft?.issueFoundBy ?? (record ? getIssueFoundBy(row) : getAccountDisplayName(currentUser, SAFETY_PERIOD_TYPE, periodId));
     const effectiveEmployeeCode = safetyDraft?.employeeCode ?? (record ? getIssueEmployeeCode(row) : "");
@@ -15687,7 +16217,6 @@
         : "",
       modalClass: "safety-record-modal",
       html: "<div class=\"modal-context\">" +
-          "<span><strong>Kỳ:</strong> " + escapeHtml(periodLabel(period)) + "</span>" +
           "<span><strong>Nguồn:</strong> Đánh giá an toàn nhà máy</span>" +
         "</div>" +
         "<div class=\"safety-record-entry-wrap\"><table class=\"safety-record-entry-table\">" +
@@ -15695,7 +16224,7 @@
             "<th>Zone</th><th>Ngày phát hiện (dd/mm/yyyy)</th><th>Mối nguy hiểm phát hiện được</th><th>Ảnh minh họa</th><th>Số lần</th><th>STOP 6</th><th>Cấp bậc</th><th>Phát hiện</th><th>Tình trạng</th><th>Phát hiện bởi</th><th>Mã nhân viên</th><th>Hạng mục</th><th>Nội dung cải tiến, xử lý</th><th>Ảnh sau cải tiến</th><th>Đảm nhiệm</th><th>Kế hoạch</th><th>Ngày dự kiến hoàn thành</th>" +
           "</tr></thead>" +
           "<tbody><tr>" +
-            "<td><select name=\"areaId\" required>" + getSafetyAreaOptions(periodId, effectiveAreaId, isNew ? null : allowedIds) + "</select></td>" +
+            "<td><select name=\"areaId\" required>" + getSafetyAreaOptions(periodId, effectiveAreaId, isNew ? null : allowedIds, isNew ? "Chọn Zone AT" : "") + "</select></td>" +
             "<td><span class=\"safety-date-editor\"><input name=\"issueDate\" type=\"text\" data-safety-date placeholder=\"dd/mm/yyyy\" inputmode=\"numeric\" maxlength=\"10\" value=\"" + escapeHtml(effectiveDisplayIssueDate) + "\" required autocomplete=\"off\"><input type=\"date\" class=\"safety-date-calendar\" aria-label=\"Mở lịch chọn ngày\" value=\"" + escapeHtml(effectiveIssueDate) + "\"></span></td>" +
             "<td><textarea name=\"note\" required>" + escapeHtml(effectiveNote) + "</textarea></td>" +
             "<td>" + photoEditor + "</td>" +
@@ -15724,6 +16253,10 @@
           return false;
         }
         const parsedIssueDate = parseSafetyIssueDateInput(formData.get("issueDate"), period);
+        if (!parsedIssueDate.date) {
+          showToast("Ngày đánh giá an toàn không hợp lệ.", true);
+          return false;
+        }
         const issueCountInput = String(formData.get("issueCount") || "").trim();
         const issueCount = normalizeIssueCount(issueCountInput || 1);
         const note = String(formData.get("note") || "").trim();
@@ -15752,7 +16285,9 @@
         const now = new Date().toISOString();
         const ownerAccount = record ? getSafetyRecordOwnerAccount(record) : currentUser;
         const ownerUsername = record
-          ? String(record.accountUsername || ownerAccount?.username || currentUser?.username || "").trim()
+          ? String(!isAdminAccount(currentUser) && canManageSafetyRecord(record, currentUser)
+            ? (currentUser?.username || record.accountUsername || ownerAccount?.username || "")
+            : (record.accountUsername || ownerAccount?.username || currentUser?.username || "")).trim()
           : String(currentUser?.username || "").trim();
         const ownerName = record
           ? String(record.scorerName || getAccountDisplayName(ownerAccount, SAFETY_PERIOD_TYPE, periodId) || getAccountDisplayName(currentUser, SAFETY_PERIOD_TYPE, periodId)).trim()
@@ -15762,6 +16297,7 @@
           id: record?.id || makeId("safety"),
           periodId,
           areaId: selected.id,
+          issueDate: parsedIssueDate.date,
           issueLocation: "Zone " + selected.code,
           issueDay: parsedIssueDate.day,
           issueMonth: parsedIssueDate.month,
@@ -15791,6 +16327,8 @@
           scorerName: ownerName,
           accountUsername: ownerUsername,
           createdBy: record?.createdBy || ownerUsername,
+          createdByAccountId: record?.createdByAccountId
+            || (!record || (canManageSafetyRecord(record, currentUser) && !isAdminAccount(currentUser)) ? String(currentUser?.id || "") : ""),
           createdAt: record?.createdAt || record?.updatedAt || now,
           updatedAt: now,
         });
@@ -15878,14 +16416,20 @@
       });
     }
   }
-  async function exportFiveSFindings(ids, periodId) {
+  async function exportFiveSFindings(ids, filters = {}) {
     if (!requireExportAction()) return;
     const selectedIds = new Set(ids);
     const records = (state.fiveSFindings || []).filter((sheet) => selectedIds.has(sheet.id));
-    if (!records.length) throw new Error("Không có phiếu đã lưu để xuất Excel.");
-    const period = getPeriod(periodId);
-    const areas = period ? getAreasForPeriod(period.id) : [];
+    const legacyPeriodId = typeof filters === "string" ? filters : "";
+    const year = Number(filters?.year) || 0;
+    const month = Number(filters?.month) || 0;
+    const status = filters?.status === "resolved" || filters?.status === "unresolved" ? filters.status : "all";
+    const period = (year && month
+      ? getPeriodsByType(FIVE_S_PERIOD_TYPE).find((item) => Number(item.year) === year && Number(item.month) === month)
+      : null) || getPeriod(legacyPeriodId) || getPeriod(getActivePeriodId(FIVE_S_PERIOD_TYPE));
     const areaForSheet = (sheet) => {
+      const sheetPeriodId = window.FiveSFindingsPage?.resolvePeriodId?.(sheet, getPeriodsByType(FIVE_S_PERIOD_TYPE)) || sheet.periodId || period?.id || "";
+      const areas = sheetPeriodId ? getAreasForPeriod(sheetPeriodId) : [];
       const areaId = window.FiveSFindingsPage?.resolveAreaId?.(sheet, areas) || sheet.areaId;
       return areas.find((item) => item.id === areaId);
     };
@@ -15901,7 +16445,8 @@
     const widths = [6, 12, 16, 18, 42, 22, 28, 11, 42, 16, 14];
     const excelColumnByField = { location: 4, problem: 5, fiveS: 7, shift: 8, countermeasure: 9, dueDate: 10, progress: 11 };
     const findingRows = records.flatMap((sheet) => (sheet.rows || [])
-      .filter((row) => Boolean(row?.photoDataUrl) || fields.some((key) => key === "progress" ? Number(row?.[key]) > 0 : Boolean(row?.[key])))
+      .filter((row) => (Boolean(row?.photoDataUrl) || fields.some((key) => key === "progress" ? Number(row?.[key]) > 0 : Boolean(row?.[key])))
+        && (status === "all" || (status === "resolved" ? window.FiveSFindingsPage?.isFindingResolved?.(row) : !window.FiveSFindingsPage?.isFindingResolved?.(row))))
       .map((row) => ({ sheet, row })));
     const images = [];
     const logo = await loadWorkbookLogoImage("images/Logo.jpg", "legroup-logo.png", 1, 1);
@@ -15917,13 +16462,14 @@
     };
     addModelCell(model, 1, 1, "", 31);
     merged(1, 4, 8, "CÁC VẤN ĐỀ VỀ 5S PHÁT HIỆN", 12);
-    merged(2, 4, 8, `5S find out · ${periodLabel(period)}`, 24);
+    const reportLabel = year && month ? `Tháng ${month}/${year}` : periodLabel(period);
+    merged(2, 4, 8, `5S find out · ${reportLabel}`, 24);
     addModelCell(model, 1, 9, "Người kiểm tra", 31);
     merged(1, 10, 11, "", 31);
     addModelCell(model, 2, 9, "Ngày kiểm tra", 31);
     merged(2, 10, 11, "", 31);
     merged(3, 1, 11, "Khu vực (Zone): Tất cả Zone", 31);
-    merged(4, 1, 6, `Kỳ đánh giá: ${periodLabel(period)}`, 31);
+    merged(4, 1, 6, year && month ? `Tháng báo cáo: ${month}/${year}` : `Kỳ: ${reportLabel}`, 31);
     merged(4, 7, 11, `Tổng số vấn đề: ${findingRows.length}`, 31);
     model.rowHeights.set(1, 34);
     model.rowHeights.set(2, 26);
@@ -15970,7 +16516,7 @@
       .replace('<sheetView workbookViewId="0"/>', '<sheetView workbookViewId="0"><pane ySplit="6" topLeftCell="A7" activePane="bottomLeft" state="frozen"/></sheetView>')
       .replace('</pageMargins>', '</pageMargins><pageSetup paperSize="9" orientation="landscape" fitToWidth="1" fitToHeight="0"/>');
     const bytes = buildWorkbookFromSheets([{ name: "Vấn đề 5S", xml, images }]);
-    downloadFile(`van-de-5s-${period ? `${period.month}-${period.year}` : "chua-gan-ky"}.xlsx`, bytes, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+    downloadFile(`van-de-5s-${year && month ? `${month}-${year}` : period ? `${period.month}-${period.year}` : "chua-gan-ky"}.xlsx`, bytes, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
   }
 
   function exportExcel(periodId) {
@@ -16009,9 +16555,16 @@
     const areaId = Object.prototype.hasOwnProperty.call(options, "areaId")
       ? options.areaId
       : elements.safetyAreaFilter?.value || "";
-    const rows = getIssueRecords(periodId, { areaId }).filter((row) => !options.status || normalizeIssueStatus(row.score.issueStatus) === options.status);
+    const rows = Number.isInteger(Number(options.year))
+      ? getSafetyRowsForYear(Number(options.year), { areaId }).filter((row) => !options.month || getSafetyIssueMonth(row) === Number(options.month))
+      : getIssueRecords(periodId, { areaId });
+    const filteredRows = rows.filter((row) => {
+      if (options.status && normalizeIssueStatus(row.score.issueStatus) !== options.status) return false;
+      if (options.source && normalizeFoundChannel(row.score.foundChannel) !== normalizeFoundChannel(options.source)) return false;
+      return true;
+    });
     const logoImage = await loadWorkbookLogoImage("images/Logo.jpg", "legroup-logo.png", 1, 1);
-    const bytes = await buildSafetyXlsxWorkbook(periodId, rows, logoImage);
+    const bytes = await buildSafetyXlsxWorkbook(periodId, filteredRows, logoImage);
     const safeName = `danh-gia-an-toan-thang-${period?.month || "x"}-${period?.year || "x"}.xlsx`;
     downloadFile(safeName, bytes, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
   }
@@ -16074,6 +16627,9 @@
     await exportSafetyExcel(reportPeriod?.id || getActivePeriodId(SAFETY_PERIOD_TYPE), {
       areaId: elements.safetyAreaFilter?.value || "",
       status: elements.safetyStatusFilter?.value || "",
+      source: elements.safetySourceFilter?.value || "",
+      year: filters.year,
+      month: filters.month,
     });
   }
 
@@ -16721,7 +17277,7 @@
       if (beforeImage) {
         images.push(beforeImage);
       }
-      const afterImage = await photoSourceToImage(row.score.afterPhotoDataUrl, images.length + 1, rowNumber, 23, row.score.afterPhotoAnnotations);
+      const afterImage = await photoSourceToImage(row.score.afterPhotoDataUrl, images.length + 1, rowNumber, 24, row.score.afterPhotoAnnotations);
       if (afterImage) {
         images.push(afterImage);
       }
@@ -16758,7 +17314,7 @@
     const rows = new Map();
     const rowHeights = new Map();
     const merges = [];
-    const maxColumn = 28;
+    const maxColumn = 29;
 
     function addCell(row, column, value, style, options = {}) {
       if (!rows.has(row)) {
@@ -16783,34 +17339,34 @@
     addCell(1, 1, "LeGroup", 2);
     merge(1, 1, 2, 3);
     addCell(1, 4, "BẢNG THEO DÕI NHẬN DẠNG NGUY HIỂM VÀ KHẮC PHỤC\nHAZARD IDENTIFICATION & ACTIVITY FOLLOW UP SHEET", 1);
-    merge(1, 4, 2, 22);
-    addCell(1, 23, "Issue Date", 13);
-    merge(1, 23, 1, 25);
-    addCell(1, 26, issueDate, 14);
-    merge(1, 26, 1, 28);
-    addCell(2, 23, "Report date", 13);
-    merge(2, 23, 2, 25);
-    addCell(2, 26, reportDate, 14);
-    merge(2, 26, 2, 28);
+    merge(1, 4, 2, 23);
+    addCell(1, 24, "Issue Date", 13);
+    merge(1, 24, 1, 26);
+    addCell(1, 27, issueDate, 14);
+    merge(1, 27, 1, 29);
+    addCell(2, 24, "Report date", 13);
+    merge(2, 24, 2, 26);
+    addCell(2, 27, reportDate, 14);
+    merge(2, 27, 2, 29);
 
     addCell(3, 1, `Người Thực Hiện: ${report.performer}`, 13);
     merge(3, 1, 3, 6);
     addCell(3, 7, "Người Kiểm Tra:", 13);
     merge(3, 7, 3, 11);
     addCell(3, 12, report.checker, 13);
-    merge(3, 12, 3, 28);
+    merge(3, 12, 3, 29);
     addCell(4, 1, `Chức Danh: ${report.performerTitle || ""}`, 13);
     merge(4, 1, 4, 6);
     addCell(4, 7, `Chức Danh: ${report.checkerTitle || ""}`, 13);
     merge(4, 7, 4, 11);
     addCell(4, 12, "", 13);
-    merge(4, 12, 4, 28);
+    merge(4, 12, 4, 29);
     addCell(5, 1, `Bộ Phận: ${departmentLabel}`, 13);
     merge(5, 1, 5, 6);
     addCell(5, 7, `Bộ Phận: ${report.checkerDepartment || ""}`, 13);
     merge(5, 7, 5, 11);
     addCell(5, 12, "", 13);
-    merge(5, 12, 5, 28);
+    merge(5, 12, 5, 29);
 
     [
       [1, "No"],
@@ -16820,32 +17376,32 @@
       [5, "Mối nguy hiểm phát hiện được ."],
       [6, "Hình Ảnh Minh Họa"],
       [7, "Số lần phát hiện"],
-      [21, "Mã nhân viên"],
-      [22, "Nội dung cải tiến, xử lý"],
-      [23, "Hình ảnh sau cải tiến, xử lý"],
-      [24, "Đảm nhiệm"],
-      [25, "Kế hoạch"],
+      [22, "Mã nhân viên"],
+      [23, "Nội dung cải tiến, xử lý"],
+      [24, "Hình ảnh sau cải tiến, xử lý"],
+      [25, "Đảm nhiệm"],
+      [26, "Kế hoạch"],
     ].forEach(([column, label]) => {
       addCell(6, column, label, 2);
       merge(6, column, 8, column);
     });
 
     addCell(6, 8, report.instruction || DEFAULT_SAFETY_REPORT.instruction, 2);
-    merge(6, 8, 6, 20);
-    addCell(6, 26, "Hoàn thành", 2);
-    merge(6, 26, 6, 28);
+    merge(6, 8, 6, 21);
+    addCell(6, 27, "Hoàn thành", 2);
+    merge(6, 27, 6, 29);
     addCell(7, 8, "Phân loại STOP 6", 2);
     merge(7, 8, 7, 14);
     addCell(7, 15, "Cấp bậc", 2);
     merge(7, 15, 7, 17);
     addCell(7, 18, "Phát hiện", 2);
-    merge(7, 18, 7, 20);
-    addCell(7, 26, "Ngày", 2);
-    merge(7, 26, 8, 26);
-    addCell(7, 27, "Xác nhận theo cấp độ", 2);
+    merge(7, 18, 7, 21);
+    addCell(7, 27, "Ngày", 2);
     merge(7, 27, 8, 27);
-    addCell(7, 28, "Xác nhận theo loại stop 6", 2);
+    addCell(7, 28, "Xác nhận theo cấp độ", 2);
     merge(7, 28, 8, 28);
+    addCell(7, 29, "Xác nhận theo loại stop 6", 2);
+    merge(7, 29, 8, 29);
     SAFETY_STOP6_COLUMNS.forEach((column, index) => addCell(8, 8 + index, column.label, 26));
     SAFETY_LEVEL_COLUMNS.forEach((column, index) => addCell(8, 15 + index, column.label, 26));
     SAFETY_FOUND_COLUMNS.forEach((column, index) => addCell(8, 18 + index, column.label, 26));
@@ -16872,14 +17428,14 @@
         const selected = isSafetyFoundSelected(row.score, column.value);
         addCell(rowNumber, 18 + columnIndex, selected ? "v" : "", selected ? 24 : 14);
       });
-      addCell(rowNumber, 21, row.score.employeeCode || "", 14);
-      addCell(rowNumber, 22, [row.score.improvementContent || "", row.score.countermeasureDate ? `Triển khai: ${formatDateDisplay(row.score.countermeasureDate)}` : ""].filter(Boolean).join("\n"), 24);
-      addCell(rowNumber, 23, "", 24);
-      addCell(rowNumber, 24, row.score.actionOwner || "", 24);
-      addCell(rowNumber, 25, row.score.actionPlan || "", 24);
-      addCell(rowNumber, 26, getCompletionDateDisplay(row.score), 14);
-      addCell(rowNumber, 27, getSafetyLevelConfirm(row.score), 24);
-      addCell(rowNumber, 28, getSafetyStop6Confirm(row.score), 24);
+      addCell(rowNumber, 22, row.score.employeeCode || "", 14);
+      addCell(rowNumber, 23, [row.score.improvementContent || "", row.score.countermeasureDate ? `Triển khai: ${formatDateDisplay(row.score.countermeasureDate)}` : ""].filter(Boolean).join("\n"), 24);
+      addCell(rowNumber, 24, "", 24);
+      addCell(rowNumber, 25, row.score.actionOwner || "", 24);
+      addCell(rowNumber, 26, row.score.actionPlan || "", 24);
+      addCell(rowNumber, 27, getCompletionDateDisplay(row.score), 14);
+      addCell(rowNumber, 28, getSafetyLevelConfirm(row.score), 24);
+      addCell(rowNumber, 29, getSafetyStop6Confirm(row.score), 24);
     });
 
     let summaryEndRow = 0;
@@ -16904,7 +17460,7 @@
     const openRows = issueRows.filter((row) => !hasSafetyCountermeasure(row));
     const countRows = (rows, predicate = null) => sumSafetyIssueCounts(predicate ? rows.filter(predicate) : rows);
     const memberPredicate = (row) => isSafetyFoundSelected(row.score, "worker") || isSafetyFoundSelected(row.score, "department-head");
-    const leanPredicate = (row) => isSafetyFoundSelected(row.score, "assessor");
+    const leanPredicate = (row) => isSafetyFoundSelected(row.score, "assessor") || isSafetyFoundSelected(row.score, "at5s");
     const setHeight = (row, height = 24) => rowHeights.set(row, height);
     const addMerged = (row, columnStart, columnEnd, value, style = 2) => {
       addCell(row, columnStart, value, style);
@@ -16959,7 +17515,7 @@
       { column: SAFETY_STOP6_COLUMNS[4], start: 19, end: 20 },
       { column: SAFETY_STOP6_COLUMNS[5], start: 21, end: 23 },
       { column: SAFETY_STOP6_COLUMNS[6], start: 24, end: 26 },
-      { column: null, start: 27, end: 28, label: "Tổng" },
+      { column: null, start: 27, end: 29, label: "Tổng" },
     ];
     stopColumns.forEach((column) => addMerged(stopStart, column.start, column.end, column.label || column.column?.value || "", 2));
     addMerged(stopStart + 1, 6, 7, "Số nguy hiểm nhận dạng", 24);
@@ -17005,13 +17561,13 @@
     <col min="5" max="5" width="34" customWidth="1"/>
     <col min="6" max="6" width="24" customWidth="1"/>
     <col min="7" max="7" width="9" customWidth="1"/>
-    <col min="8" max="20" width="4.2" customWidth="1"/>
-    <col min="21" max="21" width="14" customWidth="1"/>
-    <col min="22" max="22" width="28" customWidth="1"/>
-    <col min="23" max="23" width="24" customWidth="1"/>
-    <col min="24" max="25" width="13" customWidth="1"/>
-    <col min="26" max="26" width="11" customWidth="1"/>
-    <col min="27" max="28" width="18" customWidth="1"/>
+    <col min="8" max="21" width="4.2" customWidth="1"/>
+    <col min="22" max="22" width="14" customWidth="1"/>
+    <col min="23" max="23" width="28" customWidth="1"/>
+    <col min="24" max="24" width="24" customWidth="1"/>
+    <col min="25" max="26" width="13" customWidth="1"/>
+    <col min="27" max="27" width="11" customWidth="1"/>
+    <col min="28" max="29" width="18" customWidth="1"/>
   </cols>
   <sheetData>${rowXml}</sheetData>
   ${mergeXml}
@@ -17284,6 +17840,8 @@
     const usedNames = new Set();
     const assessorSheetName = uniqueWorksheetName(`Assessor chấm${monthSuffix}`, usedNames);
     const selfSheetName = uniqueWorksheetName(`Tự đánh giá${monthSuffix}`, usedNames);
+    const at5sSheetName = uniqueWorksheetName(`Ban AT-5S${monthSuffix}`, usedNames);
+    const deptHeadSheetName = uniqueWorksheetName(`Trưởng phòng${monthSuffix}`, usedNames);
     const averageSheetName = uniqueWorksheetName(`Điểm trung bình${monthSuffix}`, usedNames);
     const assessorModel = buildWorksheetModel(periodId, {
       scoreSource: SCORE_SOURCE_ASSESSOR,
@@ -17301,19 +17859,39 @@
       headerTopRow: 3,
       tabColor: "FFFFC000",
     });
+    const at5sModel = buildWorksheetModel(periodId, {
+      scoreSource: SCORE_SOURCE_AT5S,
+      title: `Điểm Chi Tiết Theo Từng Hạng Mục Ban AT - 5S Chấm (${periodLabel(period)})`,
+      titleColumn: 1,
+      titleRow: 2,
+      headerTopRow: 3,
+      tabColor: "FF31859B",
+    });
+    const deptHeadModel = buildWorksheetModel(periodId, {
+      scoreSource: SCORE_SOURCE_DEPARTMENT_HEAD,
+      title: `Điểm Chi Tiết Theo Từng Hạng Mục Trưởng Phòng Chấm (${periodLabel(period)})`,
+      titleColumn: 1,
+      titleRow: 2,
+      headerTopRow: 3,
+      tabColor: "FFE46C0A",
+    });
     const averageModel = buildAverageScoreWorksheetModel(periodId, {
       tabColor: "FF92D050",
     });
     attachFiveSChartsToWorksheetModel(assessorModel, periodId, assessorSheetName, SCORE_SOURCE_ASSESSOR);
     attachFiveSChartsToWorksheetModel(selfModel, periodId, selfSheetName, SCORE_SOURCE_SELF);
+    attachFiveSChartsToWorksheetModel(at5sModel, periodId, at5sSheetName, SCORE_SOURCE_AT5S);
+    attachFiveSChartsToWorksheetModel(deptHeadModel, periodId, deptHeadSheetName, SCORE_SOURCE_DEPARTMENT_HEAD);
     return buildWorkbookFromSheets([
       { name: assessorSheetName, xml: buildWorksheetXml(assessorModel), charts: assessorModel.charts || [] },
       { name: selfSheetName, xml: buildWorksheetXml(selfModel), charts: selfModel.charts || [] },
+      { name: at5sSheetName, xml: buildWorksheetXml(at5sModel), charts: at5sModel.charts || [] },
+      { name: deptHeadSheetName, xml: buildWorksheetXml(deptHeadModel), charts: deptHeadModel.charts || [] },
       { name: averageSheetName, xml: buildWorksheetXml(averageModel), charts: averageModel.charts || [] },
     ]);
   }
 
-  function buildZoneScoreSheetWorksheetModel(periodId, area, scoreSource) {
+  function buildZoneScoreSheetWorksheetModel(periodId, area, scoreSource, scoreDate = "") {
     const period = getPeriod(periodId);
     const normalizedSource = normalizeScoreSource(scoreSource);
     const evaluatorName = normalizedSource === SCORE_SOURCE_SELF
@@ -17350,7 +17928,7 @@
     merge(2, 3, 2, 4);
     add(2, 5, `${normalizedSource === SCORE_SOURCE_SELF ? "Người phụ trách zone" : "Đánh giá viên"}:\n${evaluatorName}`, 31);
     merge(2, 5, 2, 7);
-    add(2, 8, `Điểm TB:\n${formatNumber(areaAverage(periodId, area, normalizedSource), 2)}`, 31);
+    add(2, 8, `Điểm TB:\n${formatNumber(areaAverage(periodId, area, normalizedSource, scoreDate), 2)}`, 31);
     merge(2, 8, 2, 9);
 
     ["Hạng mục", "Vị trí kiểm tra", "Khoản mục", "Điểm", ...SCORE_LEVEL_LABELS].forEach((label, index) => add(3, index + 1, label, 10));
@@ -17365,7 +17943,7 @@
         if (!item) return;
         const itemStartRow = rowNumber;
         item.criteria.forEach((criterion, criterionIndex) => {
-          const record = getScoreRecord(periodId, area.id, item.id, criterion.id, normalizedSource);
+          const record = getScoreRecord(periodId, area.id, item.id, criterion.id, normalizedSource, scoreDate);
           const crossed = isScoreCrossed(record);
           const scoreValue = crossed ? "X" : Number.isFinite(record?.score) ? record.score : "";
           const descriptions = SCORE_GUIDE[item.id]?.[criterion.id] || [];
@@ -17412,7 +17990,9 @@
     }
 
     const scoreSource = normalizeScoreSource(elements.adminScoreSheetSource?.value || SCORE_SOURCE_ASSESSOR);
-    const model = buildZoneScoreSheetWorksheetModel(periodId, area, scoreSource);
+    const isMultiDay = isMultiDayScoreSource(scoreSource);
+    const selectedDate = isMultiDay ? (elements.adminScoreSheetDate?.value || "") : "";
+    const model = buildZoneScoreSheetWorksheetModel(periodId, area, scoreSource, selectedDate);
     const sheetName = uniqueWorksheetName(`Zone ${area.code}`, new Set());
     const bytes = buildWorkbookFromSheets([{ name: sheetName, xml: buildWorksheetXml(model) }]);
     const sourceSlug = scoreSource === SCORE_SOURCE_SELF ? "quan-ly-tu-cham" : "assessor";
@@ -17627,6 +18207,7 @@
       { label: "Công nhân phát hiện", source: "worker" },
       { label: "Tổ trưởng phát hiện", source: "department-head" },
       { label: "Assessor phát hiện", source: "assessor" },
+      { label: "Ban AT - 5S phát hiện", source: "at5s" },
     ];
     let rowNumber = 10;
     const sourceRowSpan = sourceSections.length * SAFETY_STOP6_COLUMNS.length;
@@ -17728,7 +18309,7 @@
         imageIndex += 1;
       }
 
-      const afterImage = await photoSourceToImage(row.score.afterPhotoDataUrl, imageIndex, rowNumber, 23, row.score.afterPhotoAnnotations);
+      const afterImage = await photoSourceToImage(row.score.afterPhotoDataUrl, imageIndex, rowNumber, 24, row.score.afterPhotoAnnotations);
       if (afterImage) {
         images.push(renameWorkbookImage(afterImage, `factory-s${sheetNumber}-after-${imageIndex}`));
         imageIndex += 1;
@@ -18006,7 +18587,11 @@
     const titleColumn = Math.max(1, Number(options.titleColumn) || 1);
     const defaultTitle = scoreSource === SCORE_SOURCE_SELF
       ? `Điểm Chi Tiết Theo Từng Hạng Mục BP Tự Đánh giá (${periodLabel(period)})`
-      : `Điểm Chi Tiết Theo Từng Hạng Mục (${periodLabel(period)})`;
+      : scoreSource === SCORE_SOURCE_AT5S
+        ? `Điểm Chi Tiết Theo Từng Hạng Mục Ban AT - 5S Chấm (${periodLabel(period)})`
+        : scoreSource === SCORE_SOURCE_DEPARTMENT_HEAD
+          ? `Điểm Chi Tiết Theo Từng Hạng Mục Trưởng Phòng Chấm (${periodLabel(period)})`
+          : `Điểm Chi Tiết Theo Từng Hạng Mục (${periodLabel(period)})`;
     const title = options.title || defaultTitle;
     const rows = new Map();
     const rowHeights = new Map();
@@ -18056,7 +18641,11 @@
     areas.forEach((area, index) => {
       const scorerName = scoreSource === SCORE_SOURCE_ASSESSOR
         ? getAreaConfiguredAssessorNameForPeriod(periodId, area) || getAreaResponsibleNameForPeriod(periodId, area)
-        : getAreaResponsibleNameForPeriod(periodId, area);
+        : scoreSource === SCORE_SOURCE_AT5S
+          ? getSignatureName(periodId, area, scoreSource) || "Ban AT - 5S"
+          : scoreSource === SCORE_SOURCE_DEPARTMENT_HEAD
+            ? area.departmentHead || getAreaResponsibleNameForPeriod(periodId, area)
+            : getAreaResponsibleNameForPeriod(periodId, area);
       addCell(itemHeaderRow, 4 + index, scorerName, 10);
     });
 
@@ -18178,11 +18767,15 @@
     const areaRows = areas.map((area) => {
       const selfAverage = areaAverage(periodId, area, SCORE_SOURCE_SELF);
       const assessorAverage = areaAverage(periodId, area, SCORE_SOURCE_ASSESSOR);
+      const at5sAverage = areaAverage(periodId, area, SCORE_SOURCE_AT5S);
+      const deptHeadAverage = areaAverage(periodId, area, SCORE_SOURCE_DEPARTMENT_HEAD);
       return {
         area,
         selfAverage,
         assessorAverage,
-        average: average([selfAverage, assessorAverage]),
+        at5sAverage,
+        deptHeadAverage,
+        average: average([selfAverage, assessorAverage, at5sAverage, deptHeadAverage]),
       };
     });
     const rowByAreaId = new Map(areaRows.map((row) => [row.area.id, row]));
@@ -18191,21 +18784,25 @@
     const picRow = 3;
     const selfRow = 4;
     const assessorRow = 5;
-    const averageRow = 6;
-    const groupAverageRow = 7;
-    const groupLabelRow = 8;
+    const at5sRow = 6;
+    const deptHeadRow = 7;
+    const averageRow = 8;
+    const groupAverageRow = 9;
+    const groupLabelRow = 10;
 
     rowHeights.set(titleRow, 28);
     rowHeights.set(zoneRow, 24);
     rowHeights.set(picRow, 38);
-    [selfRow, assessorRow, averageRow, groupAverageRow, groupLabelRow].forEach((row) => rowHeights.set(row, 24));
+    [selfRow, assessorRow, at5sRow, deptHeadRow, averageRow, groupAverageRow, groupLabelRow].forEach((row) => rowHeights.set(row, 24));
 
     addCell(titleRow, 1, "Điểm số trung bình tính KPI các bộ phận", 1);
     merge(titleRow, 1, titleRow, maxColumn);
     addCell(zoneRow, 1, "Zone", 2);
     addCell(picRow, 1, "PIC", 2);
-    addCell(selfRow, 1, "Điểm tự Đ.giá lần 1", 13);
-    addCell(assessorRow, 1, "Điểm Đ.G theo lịch", 13);
+    addCell(selfRow, 1, "Điểm các zone tự đánh giá", 13);
+    addCell(assessorRow, 1, "Điểm Assessor đánh giá", 13);
+    addCell(at5sRow, 1, "Điểm Ban AT - 5S đánh giá", 13);
+    addCell(deptHeadRow, 1, "Điểm Trưởng phòng đánh giá", 13);
     addCell(averageRow, 1, "Điểm trung bình", 13);
     addCell(groupAverageRow, 1, "", 13);
     addCell(groupLabelRow, 1, "", 13);
@@ -18217,6 +18814,8 @@
       addCell(picRow, column, getAreaResponsibleNameForPeriod(periodId, area), 10);
       addCell(selfRow, column, values.selfAverage, Number.isFinite(values.selfAverage) ? 19 : 14);
       addCell(assessorRow, column, values.assessorAverage, Number.isFinite(values.assessorAverage) ? 19 : 14);
+      addCell(at5sRow, column, values.at5sAverage, Number.isFinite(values.at5sAverage) ? 19 : 14);
+      addCell(deptHeadRow, column, values.deptHeadAverage, Number.isFinite(values.deptHeadAverage) ? 19 : 14);
       addCell(averageRow, column, values.average, Number.isFinite(values.average) ? 19 : 14);
     });
 
@@ -18512,7 +19111,13 @@
     const areas = getAreasForPeriod(periodId);
     const targets = getFiveSChartTargets();
     const source = normalizeScoreSource(scoreSource);
-    const sourceLabel = source === SCORE_SOURCE_SELF ? "Điểm tự đánh giá" : "Điểm assessor";
+    const sourceLabel = source === SCORE_SOURCE_SELF
+      ? "Điểm tự đánh giá"
+      : source === SCORE_SOURCE_AT5S
+        ? "Điểm Ban AT - 5S"
+        : source === SCORE_SOURCE_DEPARTMENT_HEAD
+          ? "Điểm Trưởng phòng"
+          : "Điểm assessor";
     const zoneRows = areas.map((area) => ({
       label: "Zone " + (area.code || "-"),
       value: areaAverage(periodId, area, source),
@@ -19284,6 +19889,15 @@
 
   function showToast(message, isError = false) {
     clearTimeout(toastTimer);
+    const modalIsOpen = Boolean(elements.modalBackdrop && !elements.modalBackdrop.hidden);
+    const useMobileToast = !modalIsOpen
+      && typeof window.showMobileToast === "function"
+      && document.getElementById("mobileProtoOverlay");
+    if (useMobileToast) {
+      elements.toast?.classList.remove("is-visible", "is-error");
+      window.showMobileToast(message, isError);
+      return;
+    }
     if (elements.toast) {
       elements.toast.textContent = message;
       elements.toast.classList.toggle("is-error", isError);
@@ -19291,9 +19905,6 @@
       toastTimer = window.setTimeout(() => {
         elements.toast.classList.remove("is-visible");
       }, 2600);
-    }
-    if (typeof window.showMobileToast === "function" && document.getElementById("mobileProtoOverlay")) {
-      window.showMobileToast(message, isError);
     }
   }
 
@@ -19448,8 +20059,7 @@
 
   function renderAuditLogPager(page, totalPages, totalRows, startIndex, endIndex) {
     if (totalRows <= 0) return "";
-    const start = startIndex + 1;
-    const end = endIndex;
+    const currentCount = endIndex - startIndex;
 
     const pages = [];
     if (totalPages <= 7) {
@@ -19476,7 +20086,7 @@
 
     return '<div class="audit-log-pager" aria-label="Phân trang lịch sử chỉnh sửa">' +
       '<div class="audit-log-pager-info">' +
-        'Hiển thị <strong>' + start + '–' + end + '</strong> / <strong>' + totalRows + '</strong> chỉnh sửa · Trang <strong>' + page + '</strong>/<strong>' + totalPages + '</strong>' +
+        '<strong>' + currentCount + '/' + totalRows + '</strong> · Trang <strong>' + page + '</strong>/<strong>' + totalPages + '</strong>' +
       '</div>' +
       '<div class="audit-log-pager-controls">' +
         '<button type="button" class="tiny-button" data-action="set-audit-log-page" data-page="1"' + (page <= 1 ? ' disabled' : '') + ' title="Trang đầu">« Đầu</button>' +
@@ -21215,7 +21825,6 @@
       "toggle-history-row",
       "delete-period",
       "edit-five-s-period-date",
-      "edit-safety-period-date",
       "edit-scorer",
       "delete-scorer",
       "edit-catalog-employee",
@@ -21242,6 +21851,9 @@
       "edit-account",
       "delete-viewer-account",
       "delete-department-head-account",
+      "delete-at5s-member",
+      "delete-at5s-account",
+      "edit-at5s-member",
       "delete-account",
     ]);
     const safetyActions = new Set(["add-safety-record", "edit-safety-record", "delete-safety-record"]);
@@ -21319,7 +21931,6 @@
       "delete-safety-record": () => deleteSafetyRecord(id),
       "delete-period": () => deletePeriod(id),
       "edit-five-s-period-date": () => editFiveSPeriodDate(id),
-      "edit-safety-period-date": () => editSafetyPeriodDate(id),
       "edit-scorer": () => editScorer(id),
       "delete-scorer": () => deleteScorer(id),
       "edit-catalog-employee": () => editCatalogEmployee(id),
@@ -21355,6 +21966,12 @@
       "edit-account": () => editAccount(id),
       "delete-viewer-account": () => deleteViewerAccount(id),
       "delete-department-head-account": () => deleteDepartmentHeadAccount(id),
+      "delete-at5s-member": () => deleteAt5sMember(id),
+      "edit-at5s-member": () => {
+        const member = (state.at5sMembers || []).find((m) => m.id === id);
+        if (member) editCatalogEmployeeForPerson(member);
+      },
+      "delete-at5s-account": () => deleteAt5sAccount(id),
       "delete-account": () => deleteAccount(id),
       "edit-safety-record": () => editSafetyRecord(id),
       "modal-cancel": () => closeModal(),
@@ -21490,25 +22107,41 @@
       if (!select) return;
       select.addEventListener("change", () => activatePeriod(select.value, type));
     };
-    bindPeriodSelect(elements.assessorPeriodSelect, FIVE_S_PERIOD_TYPE);
-    bindPeriodSelect(elements.summaryPeriodSelect, FIVE_S_PERIOD_TYPE);
+    elements.assessorPeriodSelect?.addEventListener("change", renderAssessorTab);
+    elements.summaryPeriodSelect?.addEventListener("change", renderActiveTab);
     elements.adminScoreSheetPeriod?.addEventListener("change", renderAdminScoreSheetTab);
     elements.adminScoreSheetArea?.addEventListener("change", renderAdminScoreSheetTab);
     elements.adminScoreSheetSource?.addEventListener("change", renderAdminScoreSheetTab);
-    elements.safetyPeriodSelect?.addEventListener("change", () => {
-      const selectedPeriod = getPeriod(elements.safetyPeriodSelect.value);
-      if (selectedPeriod) {
-        if (elements.safetyYearFilter && selectedPeriod.year) elements.safetyYearFilter.value = String(selectedPeriod.year);
-        if (elements.safetyMonthFilter && selectedPeriod.month) elements.safetyMonthFilter.value = String(selectedPeriod.month);
-      }
-      renderActiveTab();
-    });
-    bindPeriodSelect(elements.issueStatsPeriodSelect, SAFETY_PERIOD_TYPE);
-
     elements.assessorAreaSelect?.addEventListener("change", renderAssessorTab);
+    elements.assessorScoreDate?.addEventListener("change", () => {
+      if (elements.assessorScoreDateDisplay) elements.assessorScoreDateDisplay.value = formatDateDisplay(elements.assessorScoreDate.value);
+      renderAssessorTab();
+    });
+    elements.assessorScoreDateDisplay?.addEventListener("change", () => {
+      const parsedDate = parseDisplayDateToIso(elements.assessorScoreDateDisplay.value);
+      if (!parsedDate) {
+        showToast("Nhập ngày chấm hợp lệ theo định dạng dd/mm/yyyy.", true);
+        elements.assessorScoreDateDisplay.value = formatDateDisplay(elements.assessorScoreDate?.value || "");
+        return;
+      }
+      if (elements.assessorScoreDate) elements.assessorScoreDate.value = parsedDate;
+      renderAssessorTab();
+    });
+    elements.assessorScoredDatesSelect?.addEventListener("change", (e) => {
+      const val = e.target.value;
+      if (val && elements.assessorScoreDate) {
+        elements.assessorScoreDate.value = val;
+        if (elements.assessorScoreDateDisplay) elements.assessorScoreDateDisplay.value = formatDateDisplay(val);
+        renderAssessorTab();
+      }
+    });
+    elements.adminScoreSheetDate?.addEventListener("change", renderAdminScoreSheetTab);
     elements.assessorScoreSourceSelect?.addEventListener("change", renderAssessorTab);
     elements.summaryScoreSource?.addEventListener("change", renderActiveTab);
-    [elements.safetyAreaFilter, elements.safetyStatusFilter, elements.safetyYearFilter, elements.safetyMonthFilter, elements.safetyDepartmentFilter].forEach((select) => {
+    [elements.safetyAreaFilter, elements.safetyStatusFilter, elements.safetyYearFilter, elements.safetyMonthFilter, elements.safetyDepartmentFilter, elements.safetySourceFilter].forEach((select) => {
+      select?.addEventListener("change", renderActiveTab);
+    });
+    [elements.issueStatsYearFilter, elements.issueStatsMonthFilter, elements.issueStatsDayFilter].forEach((select) => {
       select?.addEventListener("change", renderActiveTab);
     });
     elements.addSafetyRecordButton?.addEventListener("click", addSafetyRecord);
@@ -21518,14 +22151,7 @@
     elements.exportSafetyExcelButton?.addEventListener("click", confirmExportActiveSafetyReportExcel);
     elements.sendSafetyMailButton?.addEventListener("click", () => openSendSafetyMailModal(getActivePeriodId(SAFETY_PERIOD_TYPE)));
 
-    elements.periodSafetyDateCalendar?.addEventListener("change", () => {
-      elements.periodSafetyDate.value = formatDateDisplay(elements.periodSafetyDateCalendar.value);
-    });
-    elements.periodSafetyDate?.addEventListener("input", () => {
-      elements.periodSafetyDateCalendar.value = parseDisplayDateToIso(elements.periodSafetyDate.value);
-    });
     elements.period5SForm?.addEventListener("submit", (event) => handlePeriodSubmit(event, FIVE_S_PERIOD_TYPE));
-    elements.periodSafetyForm?.addEventListener("submit", (event) => handlePeriodSubmit(event, SAFETY_PERIOD_TYPE));
     elements.catalogPersonForm?.addEventListener("submit", handleCatalogPersonSubmit);
     elements.catalogPersonRoles?.addEventListener("change", renderCatalogPersonZoneList);
     elements.departmentHeadEmailForm?.addEventListener("submit", handleDepartmentHeadEmailSubmit);
@@ -21544,6 +22170,8 @@
     elements.viewerAccountForm?.addEventListener("submit", handleViewerAccountSubmit);
     elements.departmentHeadAccountSource?.addEventListener("change", populateDepartmentHeadAccountSelect);
     elements.departmentHeadAccountForm?.addEventListener("submit", handleDepartmentHeadAccountSubmit);
+    elements.at5sAccountSource?.addEventListener("change", populateAt5sAccountSelect);
+    elements.at5sAccountForm?.addEventListener("submit", handleAt5sAccountSubmit);
 
     elements.modalCloseButton.addEventListener("click", closeModal);
     elements.modalBackdrop.addEventListener("click", (event) => {
@@ -21830,6 +22458,15 @@
       }
       if (!event.target.closest("[data-issue-notification-control]")) closeIssueNotificationPopovers();
 
+      const themeSetBtn = event.target.closest("[data-theme-set]");
+      if (themeSetBtn) {
+        event.preventDefault();
+        event.stopPropagation();
+        const targetTheme = themeSetBtn.getAttribute("data-theme-set");
+        setAppTheme(targetTheme);
+        return;
+      }
+
       const clickedUserBox = event.target.closest("#user-box");
       const clickedCyberUserBox = event.target.closest("#cyberUserBox");
       if (!clickedUserBox && elements.accountMenu) {
@@ -22020,6 +22657,42 @@
     }
   }
 
+  function getAppTheme() {
+    return localStorage.getItem("app_theme") || "dark";
+  }
+
+  function setAppTheme(theme) {
+    const activeTheme = theme === "light" ? "light" : "dark";
+    localStorage.setItem("app_theme", activeTheme);
+    document.documentElement.setAttribute("data-theme", activeTheme);
+    document.documentElement.classList.toggle("theme-light", activeTheme === "light");
+    document.documentElement.classList.toggle("theme-dark", activeTheme === "dark");
+    document.body.classList.toggle("theme-light", activeTheme === "light");
+    document.body.classList.toggle("theme-dark", activeTheme === "dark");
+
+    document.querySelectorAll(".theme-toggle-btn").forEach((btn) => {
+      const isTarget = btn.getAttribute("data-theme-set") === activeTheme;
+      btn.classList.toggle("is-active", isTarget);
+      btn.setAttribute("aria-checked", isTarget ? "true" : "false");
+    });
+
+    document.querySelectorAll(".custom-dropdown-menu").forEach((menu) => {
+      if (activeTheme === "light") {
+        menu.classList.remove("is-dark");
+      } else {
+        menu.classList.add("is-dark");
+      }
+    });
+
+    window.dispatchEvent(new CustomEvent("app-theme-changed", { detail: { theme: activeTheme } }));
+  }
+
+  window.getAppTheme = getAppTheme;
+  window.setAppTheme = setAppTheme;
   window.openImageFullscreenModal = openImageFullscreenModal;
+
+  // Initialize theme
+  setAppTheme(getAppTheme());
+
   init();
 })();

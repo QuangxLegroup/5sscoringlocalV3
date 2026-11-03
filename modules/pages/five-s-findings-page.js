@@ -3,6 +3,7 @@
 
   const views = new WeakMap();
   const ROWS_PER_PAGE = 10;
+  const FINDINGS_PAGE_SIZE = 25;
   const FINDING_CATEGORIES = [
     ["A1", "A1 - Đường đi bộ"],
     ["A2", "A2 - Cây nước"],
@@ -50,7 +51,19 @@
   const fields = ["location", "problem", "fiveS", "shift", "countermeasure", "dueDate", "progress"];
   const headings = ["Vị trí", "Vấn đề / Problem", "Hạng mục", "Ca / Shift", "Biện pháp khắc phục / CM", "Hạn / Due date", "Tiến độ / Progress"];
   const clone = (value) => JSON.parse(JSON.stringify(value));
-  const canEdit = (ctx) => Boolean(ctx.currentUser && (ctx.isAdminAccount(ctx.currentUser) || ctx.isDepartmentHeadAccount(ctx.currentUser) || (ctx.hasAccountAccessType(ctx.currentUser, ctx.FIVE_S_PERIOD_TYPE) && (ctx.isZoneOwnerAccount(ctx.currentUser, ctx.FIVE_S_PERIOD_TYPE) || ctx.isFiveSAssessor(ctx.currentUser)))));
+  function scrollMobileTargetIntoView(resolveTarget) {
+    const scroll = () => {
+      const target = resolveTarget?.();
+      if (!target?.isConnected || typeof target.scrollIntoView !== "function") return;
+      target.scrollIntoView({ behavior: "smooth", block: "center" });
+    };
+    if (typeof window.requestAnimationFrame === "function") {
+      window.requestAnimationFrame(() => window.requestAnimationFrame(scroll));
+    } else {
+      window.setTimeout(scroll, 100);
+    }
+  }
+  const canEdit = (ctx) => Boolean(ctx.currentUser && (ctx.isAdminAccount(ctx.currentUser) || ctx.hasAt5sRole?.(ctx.currentUser) || ctx.isDepartmentHeadAccount(ctx.currentUser) || (ctx.hasAccountAccessType(ctx.currentUser, ctx.FIVE_S_PERIOD_TYPE) && (ctx.isZoneOwnerAccount(ctx.currentUser, ctx.FIVE_S_PERIOD_TYPE) || ctx.isFiveSAssessor(ctx.currentUser)))));
   const canEditPeriod = (ctx, periodId) => canEdit(ctx) && Boolean(periodId && ctx.getPeriod(periodId) && !ctx.getPeriod(periodId).archived && (typeof ctx.isPeriodOpen === "function" ? ctx.isPeriodOpen(periodId, ctx.FIVE_S_PERIOD_TYPE) : ctx.getActivePeriodId(ctx.FIVE_S_PERIOD_TYPE) === periodId));
   const sortedAreas = (ctx, periodId) => [...ctx.getAreasForPeriod(periodId)].sort((a, b) => {
     if (typeof ctx?.compareZoneCodesByOrder === "function") return ctx.compareZoneCodesByOrder(a, b);
@@ -59,13 +72,13 @@
     }
     return String(a.code).localeCompare(String(b.code), "vi", { numeric: true });
   });
-  const editableAreas = (ctx, periodId) => sortedAreas(ctx, periodId).filter((area) => canEditPeriod(ctx, periodId) && (ctx.isAdminAccount(ctx.currentUser) || ctx.getAllowedAreaIds(ctx.currentUser, periodId).has(area.id)));
+  const editableAreas = (ctx, periodId) => sortedAreas(ctx, periodId).filter((area) => canEditPeriod(ctx, periodId) && (ctx.isAdminAccount(ctx.currentUser) || ctx.hasAt5sRole?.(ctx.currentUser) || ctx.getAllowedAreaIds(ctx.currentUser, periodId).has(area.id)));
   const canEditSheet = (ctx, sheet) => {
     if (!canEdit(ctx) || !sheet) return false;
     const periodId = resolvePeriodId(sheet, ctx.getPeriodsByType(ctx.FIVE_S_PERIOD_TYPE));
     if (!canEditPeriod(ctx, periodId)) return false;
     const areas = editableAreas(ctx, periodId);
-    return ctx.isAdminAccount(ctx.currentUser) || Boolean(resolveAreaId(sheet, areas));
+    return ctx.isAdminAccount(ctx.currentUser) || Boolean(ctx.hasAt5sRole?.(ctx.currentUser)) || Boolean(resolveAreaId(sheet, areas));
   };
   const blankRow = () => Object.fromEntries(fields.map((key) => [key, key === "progress" ? "0" : ""]));
   const UNASSIGNED = "unassigned";
@@ -127,7 +140,7 @@
       <div class="photo-preview-wrap ${hasPhoto ? "" : "is-hidden"}">
         <img class="photo-preview-img findings-photo-thumb" data-findings-photo-preview data-preview-img="${hasPhoto ? esc(row.photoDataUrl) : ""}" ${hasPhoto ? `src="${esc(row.photoDataUrl)}" ${photoImageAttributes(row, esc, metadata)}` : "hidden"} alt="Ảnh vấn đề 5S" title="Chạm để phóng to ảnh">
         <div class="photo-preview-actions">
-          <button type="button" class="photo-btn annotate-btn" data-finding-annotate title="Vẽ nét & chú thích ảnh" aria-label="Vẽ nét & chú thích ảnh" ${hasPhoto ? "" : "hidden"}><i class="fa-solid fa-pen-to-square"></i></button>
+          <button type="button" class="photo-btn annotate-btn" data-finding-annotate title="Vẽ nét & chú thích ảnh" aria-label="Vẽ nét & chú thích ảnh" ${editing && hasPhoto ? "" : "hidden"}><i class="fa-solid fa-pen-to-square"></i></button>
           <button type="button" class="photo-btn open-btn" data-finding-open title="Mở ảnh lớn" aria-label="Mở ảnh vấn đề 5S" ${hasPhoto ? "" : "hidden"}><i class="fa-solid fa-expand"></i></button>
           <button type="button" class="photo-btn retake-btn" data-finding-retake title="Đổi ảnh" aria-label="Đổi ảnh vấn đề 5S" ${editing && hasPhoto ? "" : "hidden"}><i class="fa-solid fa-arrows-rotate"></i></button>
           <button type="button" class="photo-btn delete-btn" data-finding-remove title="Xóa ảnh" aria-label="Xóa ảnh vấn đề 5S" ${editing && hasPhoto ? "" : "hidden"}><i class="fa-solid fa-trash-can"></i></button>
@@ -327,6 +340,8 @@
   const zoneLabel = (area) => `Zone ${area.code}`;
   const shortZoneLabel = (value) => String(value || "").split("·")[0].trim();
   const rowHasContent = (row) => Boolean(row?.photoDataUrl) || fields.some((key) => key === "progress" ? Number(row[key]) > 0 : Boolean(row[key]));
+  const findingRowIdentity = (row) => [row?.location, row?.problem, findingCategoryNormalized(row?.fiveS), row?.shift, cleanFindingDraftPhotoUrl(row?.photoDataUrl)]
+    .map((value) => String(value || "").trim().toLocaleLowerCase("vi")).join("|");
   function monthKeyFromDate(value) {
     const text = String(value || "").trim();
     const isoMatch = /^(\d{4})-(\d{1,2})-(\d{1,2})/.exec(text);
@@ -393,9 +408,10 @@
   }
 
   function fresh(ctx, periodId, mobile = false) {
+    const loggedInInspector = String(ctx.getAccountDisplayName?.(ctx.currentUser, ctx.FIVE_S_PERIOD_TYPE, periodId) || ctx.currentUser?.name || ctx.currentUser?.username || "").trim().slice(0, 20);
     return {
       periodId,
-      id: ctx.makeId("finding"), areaId: "", area: "", inspector: ctx.currentUser?.name || ctx.currentUser?.username || "",
+      id: ctx.makeId("finding"), areaId: "", area: "", inspector: loggedInInspector,
       inspectionDate: ctx.todayIsoDate(), rows: Array.from({ length: mobile ? 1 : ROWS_PER_PAGE }, blankRow),
     };
   }
@@ -425,22 +441,55 @@
       const id = resolvePeriodId(item, periods);
       return periods.some((period) => period.id === id) ? id : UNASSIGNED;
     };
-    const hasUnassigned = allRecords.some((item) => periodFor(item) === UNASSIGNED);
-    if (!periods.some((period) => period.id === view.periodId) && !(hasUnassigned && view.periodId === UNASSIGNED)) {
-      view.periodId = periods.find((period) => period.id === ctx.getActivePeriodId(ctx.FIVE_S_PERIOD_TYPE))?.id || periods[0]?.id || (hasUnassigned ? UNASSIGNED : "");
-    }
-    const periodRecords = allRecords.filter((item) => periodFor(item) === view.periodId);
+    const activePeriodId = ctx.getActivePeriodId(ctx.FIVE_S_PERIOD_TYPE);
+    const activePeriod = periods.find((period) => period.id === activePeriodId) || periods[0] || null;
+    if (!view.draft) view.periodId = activePeriod?.id || "";
+    else if (!periods.some((period) => period.id === view.periodId)) view.periodId = activePeriod?.id || "";
+    const availableMonthKeys = [...new Set([
+      ...periods.map(monthKeyFromPeriod),
+      ...allRecords.map((item) => monthKeyForFinding(item, periods)),
+    ].filter(Boolean))].sort((left, right) => right.localeCompare(left));
+    const availableYears = [...new Set(availableMonthKeys.map((key) => Number(key.slice(0, 4))))]
+      .filter((year) => Number.isInteger(year)).sort((left, right) => right - left);
+    const today = new Date();
+    const fallbackYear = Number(activePeriod?.year) || today.getFullYear();
+    let selectedYear = Number(view.findingYear) || fallbackYear;
+    if (!availableYears.includes(selectedYear)) selectedYear = availableYears.includes(fallbackYear) ? fallbackYear : availableYears[0] || fallbackYear;
+    const availableMonths = availableMonthKeys
+      .filter((key) => Number(key.slice(0, 4)) === selectedYear)
+      .map((key) => Number(key.slice(5, 7))).sort((left, right) => right - left);
+    const fallbackMonth = Number(activePeriod?.year) === selectedYear ? Number(activePeriod?.month) || today.getMonth() + 1 : today.getMonth() + 1;
+    let selectedMonth = Number(view.findingMonth) || fallbackMonth;
+    if (!availableMonths.includes(selectedMonth)) selectedMonth = availableMonths.includes(fallbackMonth) ? fallbackMonth : availableMonths[0] || fallbackMonth;
+    view.findingYear = selectedYear;
+    view.findingMonth = selectedMonth;
+    const selectedMonthKey = `${selectedYear}-${String(selectedMonth).padStart(2, "0")}`;
+    const monthRecords = allRecords.filter((item) => monthKeyForFinding(item, periods) === selectedMonthKey);
+    const statusFilter = ["resolved", "unresolved"].includes(view.findingStatusFilter) ? view.findingStatusFilter : "all";
+    const rowMatchesStatus = (row) => statusFilter === "all"
+      || (statusFilter === "resolved" ? isFindingResolved(row) : !isFindingResolved(row));
     const areas = sortedAreas(ctx, view.periodId);
+    const areasByPeriod = new Map([[view.periodId, areas]]);
+    const areasForFinding = (item) => {
+      const itemPeriodId = resolvePeriodId(item, periods);
+      if (!periods.some((period) => period.id === itemPeriodId)) return areas;
+      if (!areasByPeriod.has(itemPeriodId)) areasByPeriod.set(itemPeriodId, sortedAreas(ctx, itemPeriodId));
+      return areasByPeriod.get(itemPeriodId);
+    };
     const zoneKey = (item) => {
-      const id = resolveAreaId(item, areas) || item.areaId;
+      const id = resolveAreaId(item, areasForFinding(item)) || item.areaId;
       return id ? `id:${id}` : `legacy:${String(item.area || "").trim().toLocaleLowerCase("vi")}`;
     };
     const zoneOptions = new Map(areas.map((area) => [`id:${area.id}`, `Zone ${area.code}`]));
-    periodRecords.forEach((item) => {
-      if (!zoneOptions.has(zoneKey(item))) zoneOptions.set(zoneKey(item), shortZoneLabel(item.area) || "Chưa chọn Zone");
+    monthRecords.forEach((item) => {
+      const recordAreas = areasForFinding(item);
+      const recordAreaId = resolveAreaId(item, recordAreas) || item.areaId;
+      const recordArea = recordAreas.find((area) => area.id === recordAreaId);
+      if (!zoneOptions.has(zoneKey(item))) zoneOptions.set(zoneKey(item), recordArea ? `Zone ${recordArea.code}` : shortZoneLabel(item.area) || "Chưa chọn Zone");
     });
     if (!zoneOptions.has(view.zoneFilter)) view.zoneFilter = "";
-    const records = periodRecords.filter((item) => !view.zoneFilter || zoneKey(item) === view.zoneFilter)
+    const records = monthRecords.filter((item) => (!view.zoneFilter || zoneKey(item) === view.zoneFilter)
+      && (statusFilter === "all" || (item.rows || []).some((row) => rowHasContent(row) && rowMatchesStatus(row))))
       .sort(compareFindingsNewestFirst);
     const mobilePeriodBadge = host.closest("#mobileProtoOverlay")?.querySelector(".period-pill-text");
     if (mobilePeriodBadge) mobilePeriodBadge.textContent = ctx.periodLabel(periods.find((period) => period.id === view.periodId));
@@ -449,17 +498,25 @@
     const sheet = view.draft || (saved ? { ...saved, periodId: resolvePeriodId(saved, periods) } : { periodId: view.periodId, area: "", inspector: "", inspectionDate: "", rows: defaultRows() });
     const editing = Boolean(view.draft && canEditPeriod(ctx, view.draft.periodId));
     const isAllZones = !view.zoneFilter;
-    const combined = !mobile && !editing && (isAllZones || records.length > 1);
-    const rowSources = combined ? records.flatMap((record) => (record.rows || []).map((row, index) => ({ record, index, row })).filter(({ row }) => rowHasContent(row)))
-      .sort((left, right) => compareFindingsNewestFirst(left.record, right.record) || right.index - left.index) : [];
-    const tableRows = editing ? sheet.rows : defaultRows(combined ? rowSources.map(({ row }) => row) : sheet.rows);
-    if (!tableRows.length) tableRows.push(blankRow());
-    const rowPageCount = Math.max(1, Math.ceil(tableRows.length / ROWS_PER_PAGE));
+    const combined = !mobile && !editing && (isAllZones || records.length > 1 || statusFilter !== "all");
+    const rowSources = editing ? [] : records.flatMap((record) => (record.rows || []).map((row, index) => ({ record, index, row })))
+      .filter(({ row }) => rowHasContent(row) && rowMatchesStatus(row));
+    if (combined) rowSources.sort((left, right) => compareFindingsNewestFirst(left.record, right.record) || right.index - left.index);
+    const tableRows = editing ? sheet.rows : rowSources.map(({ row }) => row);
+    const pageSize = editing ? ROWS_PER_PAGE : FINDINGS_PAGE_SIZE;
+    const rowPageCount = Math.max(1, Math.ceil(tableRows.length / pageSize));
     view.rowPage = Math.max(0, Math.min(view.rowPage || 0, rowPageCount - 1));
-    const firstRow = view.rowPage * ROWS_PER_PAGE;
+    const firstRow = view.rowPage * pageSize;
     const zoneInspectors = [...new Set(records.flatMap((item) => parseInspectors(item.inspector)))].slice(0, 2);
     const displayInspectors = isAllZones ? [] : zoneInspectors;
-    const canEditCurrentZone = Boolean(!isAllZones && canEditPeriod(ctx, view.periodId) && (ctx.isAdminAccount(ctx.currentUser) || editableAreas(ctx, view.periodId).some((a) => `id:${a.id}` === view.zoneFilter)));
+    const currentZoneEditableRecord = monthRecords.find((item) => periodFor(item) === view.periodId
+      && zoneKey(item) === view.zoneFilter
+      && resolveAreaId(item, areasForFinding(item))
+      && canEditSheet(ctx, item));
+    const canEditCurrentZone = Boolean(!isAllZones && canEditPeriod(ctx, view.periodId)
+      && (ctx.isAdminAccount(ctx.currentUser)
+        ? areas.some((area) => `id:${area.id}` === view.zoneFilter) || currentZoneEditableRecord
+        : editableAreas(ctx, view.periodId).some((area) => `id:${area.id}` === view.zoneFilter)));
     const isEditingHeader = Boolean(view.editingHeader && canEditCurrentZone);
     const currentInspectionDate = isAllZones ? "" : (sheet.inspectionDate || records.find((item) => item.inspectionDate)?.inspectionDate || "");
     const headerHtml = isEditingHeader
@@ -492,22 +549,29 @@
           </label>
         </div>`;
     const button = (action, label) => `<button type="button" data-finding-action="${action}">${label}</button>`;
+    const canAddFinding = canEditPeriod(ctx, view.periodId) && editableAreas(ctx, view.periodId).length > 0;
     const valueInput = (name, value, type = "text", required = false) => type === "date"
       ? dateEditor(value, `name="${name}"`, editing, esc, required)
       : `<input name="${name}" type="${type}" value="${esc(value || "")}" ${required ? "required" : ""} maxlength="200" ${editing ? "" : "disabled"}>`;
     const periodOptions = (selected) => periods.map((period) => `<option value="${esc(period.id)}" ${period.id === selected ? "selected" : ""}>${esc(ctx.periodLabel(period))}</option>`).join("");
+    const yearOptions = availableYears.map((year) => `<option value="${year}" ${year === selectedYear ? "selected" : ""}>${year}</option>`).join("");
+    const monthOptions = availableMonths.map((month) => `<option value="${month}" ${month === selectedMonth ? "selected" : ""}>Tháng ${month}</option>`).join("");
+    const statusOptions = [
+      ["all", "Tất cả trạng thái"],
+      ["unresolved", "Chưa xử lý"],
+      ["resolved", "Đã xử lý"],
+    ].map(([value, label]) => `<option value="${value}" ${statusFilter === value ? "selected" : ""}>${label}</option>`).join("");
     host.innerHTML = `<div class="findings-page ${mobile ? "findings-mobile" : ""}">
       <div class="findings-toolbar ${mobile ? "" : "toolbar findings-desktop-toolbar"}">
-        <label ${mobile && editing ? "hidden" : ""}><span>Kỳ đánh giá 5S</span><select data-finding-period aria-label="Kỳ đánh giá 5S" ${editing ? "disabled" : ""}>
-          ${periodOptions(view.periodId)}${hasUnassigned ? `<option value="${UNASSIGNED}" ${view.periodId === UNASSIGNED ? "selected" : ""}>Phiếu chưa gán kỳ</option>` : ""}${!periods.length && !hasUnassigned ? '<option value="">Chưa có kỳ chấm 5S</option>' : ""}
-        </select></label>
+        <label><span>Năm báo cáo</span><select data-finding-year aria-label="Năm báo cáo" ${editing ? "disabled" : ""}>${yearOptions || '<option value="">Chưa có dữ liệu</option>'}</select></label>
+        <label><span>Tháng báo cáo</span><select data-finding-month aria-label="Tháng báo cáo" ${editing ? "disabled" : ""}>${monthOptions || '<option value="">Chưa có dữ liệu</option>'}</select></label>
         <label ${mobile && editing ? "hidden" : ""}><span>Khu vực (Zone)</span><select data-finding-zone aria-label="Lọc theo Zone" ${editing ? "disabled" : ""}>
           <option value="">Tất cả Zone</option>${[...zoneOptions].sort((a, b) => (ctx.compareZoneCodesByOrder || window.CustomDropdown?.compareZoneCodesByOrder || ((x, y) => x.localeCompare(y, "vi", { numeric: true })))(a[1], b[1])).map(([key, label]) => `<option value="${esc(key)}" ${view.zoneFilter === key ? "selected" : ""}>${esc(label)}</option>`).join("")}
         </select></label>
-        <div class="findings-actions">${mobile && view.showDetail && !editing ? button("back", "‹ Danh sách") : ""}${editing ? '<button type="submit" data-finding-save>Lưu phiếu</button>' + button("cancel", "Hủy") : canEditPeriod(ctx, view.periodId) ? (periods.some((period) => period.id === view.periodId) ? button("new", "Thêm vấn đề 5S") : "") + (canEditSheet(ctx, saved) && mobile && view.showDetail ? button("edit", "Sửa") + button("delete", "Xóa") : "") : '<span class="findings-readonly">Chỉ xem</span>'}
-        ${!editing ? `<button type="button" class="btn-export-excel-gradient" data-finding-export ${periodRecords.length ? "" : "disabled"} title="Xuất toàn bộ vấn đề trong tháng đang chọn"><i class="fa-solid fa-file-excel" aria-hidden="true"></i> Xuất Excel</button>` : ""}</div>
+        <label><span>Trạng thái</span><select data-finding-status aria-label="Lọc theo trạng thái" ${editing ? "disabled" : ""}>${statusOptions}</select></label>
+        <div class="findings-actions">${!editing ? `<button type="button" class="btn-export-excel-gradient" data-finding-export title="Xuất vấn đề trong tháng đang chọn"><i class="fa-solid fa-file-excel" aria-hidden="true"></i> Xuất Excel</button>` : ""}${mobile && view.showDetail && !editing ? button("back", "‹ Danh sách") : ""}${editing ? '<button type="submit" data-finding-save>Lưu phiếu</button>' + button("cancel", "Hủy") : canAddFinding ? (periods.some((period) => period.id === view.periodId) ? '<button type="button" class="primary-button" data-finding-action="new"><i class="fa-solid fa-plus" aria-hidden="true"></i> Thêm vấn đề 5S</button>' : "") + (canEditSheet(ctx, saved) && mobile && view.showDetail ? button("edit", "Sửa") + button("delete", "Xóa") : "") : ""}</div>
       </div>
-      ${mobile && !editing && !view.showDetail ? mobileList(records, periodRecords, esc, ctx) : ""}
+      ${mobile && !editing && !view.showDetail ? mobileList(records, monthRecords, esc, ctx) : ""}
       <form class="findings-form ${mobile ? "mobile-safety-form" : ""}" ${mobile && !editing && !view.showDetail ? "hidden" : ""}>
         ${editing ? `<label class="findings-period-editor">Kỳ của phiếu<select name="periodId" required aria-label="Kỳ của phiếu"><option value="">Chọn kỳ chấm 5S</option>${periodOptions(sheet.periodId)}</select></label>` : ""}
         ${mobile ? mobileForm(sheet, ctx, editing, view, valueInput) : `<div class="findings-paper">
@@ -519,9 +583,9 @@
           <div class="findings-table-scroll" tabindex="0" role="region" aria-label="Bảng các vấn đề 5S, cuộn ngang để xem đủ cột">
             <table class="findings-table"><colgroup>${[65, 85, 105, 100, 250, 130, 170, 65, 235, 120, 90].map((width) => `<col style="width:${width / 1415 * 100}%">`).join("")}</colgroup>
               <thead><tr><th scope="col">STT</th><th scope="col">Zone</th><th scope="col">Ngày kiểm tra</th>${headings.map((heading, col) => `<th scope="col">${heading}</th>${col === 1 ? '<th scope="col">Ảnh vấn đề</th>' : ""}`).join("")}</tr></thead>
-              <tbody>${tableRows.slice(firstRow, firstRow + ROWS_PER_PAGE).map((row, offset) => {
+              <tbody>${!editing && !tableRows.length ? '<tr><td colspan="11" class="findings-empty-row">Không có vấn đề phù hợp với bộ lọc.</td></tr>' : tableRows.slice(firstRow, firstRow + pageSize).map((row, offset) => {
                 const index = firstRow + offset;
-                const source = combined ? rowSources[index] : saved && index < saved.rows.length ? { record: saved, index } : null;
+                const source = editing ? null : rowSources[index];
                 const actions = editing ? `<button type="button" data-remove-row="${index}" aria-label="Xóa dòng ${index + 1}" title="Xóa dòng">Xóa</button>` : source && canEditSheet(ctx, source.record) ? `<button type="button" data-edit-saved-row="${source.index}" data-sheet-id="${esc(source.record.id)}" aria-label="Sửa dòng ${index + 1}" title="Sửa dòng">Sửa</button><button type="button" data-delete-saved-row="${source.index}" data-sheet-id="${esc(source.record.id)}" aria-label="Xóa dòng ${index + 1}" title="Xóa dòng">Xóa</button>` : "";
                 const photoMetadata = source ? { sheetId: source.record.id, rowIndex: source.index, editable: canEditSheet(ctx, source.record) } : { editable: editing };
                 const zone = (editing || rowHasContent(row)) ? source?.record.area || sheet.area : "";
@@ -531,10 +595,9 @@
             </table>
           </div>
         </div>`}
-        ${!mobile ? `<nav class="findings-row-pager" aria-label="Phân trang dòng phiếu 5S">
-          <span>Dòng ${firstRow + 1}–${Math.min(firstRow + ROWS_PER_PAGE, tableRows.length)} / ${tableRows.length}</span>
+        ${!mobile && (editing ? rowPageCount > 1 : tableRows.length > FINDINGS_PAGE_SIZE) ? `<nav class="findings-row-pager" aria-label="Phân trang vấn đề 5S">
+          <span>${Math.min(pageSize, Math.max(0, tableRows.length - firstRow))}/${tableRows.length} · Trang ${view.rowPage + 1}/${rowPageCount}</span>
           <button type="button" data-finding-row-page="${view.rowPage - 1}" ${view.rowPage === 0 ? "disabled" : ""}>‹ Trang trước</button>
-          <span aria-live="polite">Trang ${view.rowPage + 1} / ${rowPageCount}</span>
           <button type="button" data-finding-row-page="${view.rowPage + 1}" ${view.rowPage + 1 === rowPageCount ? "disabled" : ""}>Trang sau ›</button>
         </nav>` : ""}
         ${editing ? `<div class="findings-bottom"><button type="button" data-finding-action="add-row">＋ Thêm vấn đề 5S</button><button type="submit">Lưu phiếu</button></div>` : ""}
@@ -553,7 +616,7 @@
       render(host, view);
     }));
     host.querySelector("[data-finding-export]")?.addEventListener("click", async () => {
-      try { await ctx.exportFiveSFindings(periodRecords.map((item) => item.id), view.periodId); }
+      try { await ctx.exportFiveSFindings(monthRecords.map((item) => item.id), { year: selectedYear, month: selectedMonth, status: statusFilter }); }
       catch (error) { message(host, "Không xuất được Excel. Vui lòng thử lại.", true); }
     });
     host.querySelectorAll("[data-open-finding]").forEach((button) => button.addEventListener("click", () => {
@@ -570,12 +633,30 @@
       view.draft.area = "";
       render(host, view);
     });
-    host.querySelector("[data-finding-period]").addEventListener("change", (event) => {
-      view.periodId = event.target.value;
+    host.querySelector("[data-finding-year]")?.addEventListener("change", (event) => {
+      view.findingYear = Number(event.target.value) || 0;
+      view.zoneFilter = "";
+      view.selectedId = "";
+      view.rowPage = 0;
+      view.notice = null;
+      view.editingHeader = false;
+      view.showDetail = false;
+      render(host, view);
+    });
+    host.querySelector("[data-finding-month]")?.addEventListener("change", (event) => {
+      view.findingMonth = Number(event.target.value) || 0;
       view.zoneFilter = "";
       view.selectedId = "";
       view.rowPage = 0;
       view.showDetail = false;
+      view.notice = null;
+      view.editingHeader = false;
+      render(host, view);
+    });
+    host.querySelector("[data-finding-status]")?.addEventListener("change", (event) => {
+      view.findingStatusFilter = event.target.value;
+      view.selectedId = "";
+      view.rowPage = 0;
       view.notice = null;
       view.editingHeader = false;
       render(host, view);
@@ -652,7 +733,10 @@
       const action = el.dataset.findingAction;
       if (view.busy) return;
       if (action === "back") { view.showDetail = false; render(host, view); return; }
-      if (!canEdit(ctx)) return;
+      if (!canEdit(ctx)) {
+        ctx.showToast("Bạn không có quyền sửa, lưu hoặc xóa vấn đề 5S.", true);
+        return;
+      }
       view.notice = null;
       if (action === "edit-header") {
         view.editingHeader = true;
@@ -681,8 +765,12 @@
           return;
         }
         const newInspector = formatInspectors(inp1, inp2);
-        const targetAreaId = areas.find((a) => `id:${a.id}` === view.zoneFilter)?.id || (areas.length === 1 ? areas[0].id : "");
-        const targetRecords = periodRecords.filter((item) => resolveAreaId(item, areas) === targetAreaId);
+        const targetAreaId = areas.find((area) => `id:${area.id}` === view.zoneFilter)?.id
+          || (currentZoneEditableRecord ? resolveAreaId(currentZoneEditableRecord, areasForFinding(currentZoneEditableRecord)) : "")
+          || (areas.length === 1 ? areas[0].id : "");
+        const targetRecords = monthRecords.filter((item) => periodFor(item) === view.periodId
+          && resolveAreaId(item, areasForFinding(item)) === targetAreaId
+          && canEditSheet(ctx, item));
         await perform(host, view, async () => {
           if (targetRecords.length > 0) {
             const updates = targetRecords.map((r) => ({
@@ -803,6 +891,11 @@
         data.updatedBy = ctx.currentUser.id;
         await ctx.saveFiveSFinding(data);
         ctx.state.fiveSFindings = [...(ctx.state.fiveSFindings || []).filter((item) => item.id !== data.id), data];
+        const savedMonthKey = monthKeyForFinding(data, periods);
+        view.findingYear = Number(savedMonthKey.slice(0, 4)) || view.findingYear;
+        view.findingMonth = Number(savedMonthKey.slice(5, 7)) || view.findingMonth;
+        view.findingStatusFilter = "all";
+        view.rowPage = 0;
         view.selectedId = data.id;
         view.periodId = data.periodId;
         if (view.zoneFilter) view.zoneFilter = `id:${data.areaId}`;
@@ -812,14 +905,11 @@
         view.issueIndex = null;
         view.editIssueIndex = null;
         view.showDetail = false;
-      }, "Đã lưu phiếu.");
+      }, "Đã lưu vấn đề 5S thành công!");
     });
     if (view.notice) message(host, view.notice.text, view.notice.error);
     ctx.hydrateAuthenticatedPhotos(host);
     bindFindingPhotoImages(host, ctx);
-    if (!mobile && typeof window !== "undefined" && window.CustomDropdown?.enhanceAll) {
-      window.CustomDropdown.enhanceAll(host);
-    }
   }
 
   function renderMobile(host, view) {
@@ -884,6 +974,7 @@
     const findingsPager = {
       page: findingsPage,
       totalPages: serverFindingPage?.totalPages || localTotalPages,
+      totalRows: allMonthRecords.reduce((total, record) => total + (record.rows || []).filter(rowHasContent).length, 0),
     };
     const areas = sortedAreas(ctx, periodId);
     const zoneOptions = new Map(areas.map((area) => [area.id, zoneLabel(area)]));
@@ -931,7 +1022,7 @@
       }
     }
     const source = view.mobileEdit && records.find((record) => record.id === view.mobileEdit.id);
-    const writable = Boolean(periodId && canEditPeriod(ctx, periodId) && (!view.mobileEdit || canEditSheet(ctx, source)));
+    const writable = Boolean(periodId && canEditPeriod(ctx, periodId) && (view.mobileEdit ? canEditSheet(ctx, source) : editableAreas(ctx, periodId).length > 0));
     const input = (name, value, type = "text", required = false) => type === "date"
       ? dateEditor(value, `name="${name}"`, writable && !view.mobileEdit, esc, required)
       : `<input name="${name}" value="${esc(value || "")}" maxlength="200" ${required ? "required" : ""} ${!writable || view.mobileEdit ? "disabled" : ""}>`;
@@ -952,12 +1043,21 @@
           ${fields.map((key, index) => field(labels[index], cell(draft.rows[0], key, 0, labels[index], writable, esc, true), ["location", "problem", "countermeasure"].includes(key))).join("")}
           <div class="findings-mobile-field is-wide"><span>Hình ảnh minh họa hiện trường</span>${mobilePhotoEditor(draft.rows[0], writable, esc, { sheetId: view.mobileEdit?.id, rowIndex: view.mobileEdit?.index, editable: writable })}</div>
         </div>
-        <div class="findings-mobile-submit">${writable ? `<div class="mobile-fixed-save"><button type="submit">${view.mobileEdit ? "LƯU THAY ĐỔI" : "LƯU VẤN ĐỀ 5S"}</button></div>` : '<span class="findings-readonly">Chỉ xem — bạn không có quyền thêm, sửa, xóa vấn đề 5S trong kỳ hoặc Zone này.</span><div class="mobile-fixed-save"><button type="button" data-findings-denied>LƯU VẤN ĐỀ 5S</button></div>'}
+        <div class="findings-mobile-submit">${writable ? `<div class="mobile-fixed-save"><button type="submit">${view.mobileEdit ? "LƯU THAY ĐỔI" : "LƯU VẤN ĐỀ 5S"}</button></div>` : '<span class="findings-readonly">Chỉ xem — bạn không có quyền thêm, sửa, xóa vấn đề 5S trong kỳ hoặc Zone này.</span>'}
         ${view.mobileEdit ? `<button type="button" data-mobile-reset>${writable ? "Hủy sửa" : "Đóng chi tiết"}</button>${writable ? '<button type="button" class="findings-remove-issue" data-mobile-delete>Xóa vấn đề</button>' : ""}` : ""}</div>
         <p class="findings-message" role="status" aria-live="polite"></p>
       </form>
       ${mobileList(monthRecords, monthRecords, esc, ctx, monthOptionsHtml, findingsPager)}
     </div>`;
+    if (view.scrollToNewFinding) {
+      const target = view.scrollToNewFinding;
+      const findCard = () => Array.from(host.querySelectorAll(".findings-mobile-list [data-open-finding]"))
+        .find((card) => card.dataset.openFinding === String(target.sheetId) && Number(card.dataset.issueIndex) === target.rowIndex);
+      if (findCard()) {
+        view.scrollToNewFinding = null;
+        scrollMobileTargetIntoView(findCard);
+      }
+    }
     const badge = host.closest("#mobileProtoOverlay")?.querySelector(".period-pill-text");
     if (badge) badge.textContent = ctx.periodLabel(ctx.getPeriod(periodId));
     const form = host.querySelector("form");
@@ -976,7 +1076,6 @@
       view.findingsListFailedKey = "";
       renderMobile(host, view);
     }));
-    host.querySelector("[data-findings-denied]")?.addEventListener("click", () => ctx.showToast("Bạn không có quyền thêm, sửa, lưu hoặc xóa vấn đề 5S trong kỳ hoặc Zone này.", true));
     bindPhotoEditor(form, ctx, draft.rows[0], { sheetId: view.mobileEdit?.id, rowIndex: view.mobileEdit?.index, editable: writable, onAnnotationsSaved: (annotations, { pending }) => { if (!pending && view.mobileEdit?.original) view.mobileEdit.original.photoAnnotations = annotations; } });
     if (view.mobileEdit) form.elements.areaId.disabled = true;
     if (writable) form.querySelector('[data-field="problem"]').required = true;
@@ -1029,8 +1128,13 @@
       const selectedId = event.target.value;
       if (!selectedId) return;
       const [m1, m2] = getMobileAreaInspectors(selectedId);
-      if (form.elements.inspector1) form.elements.inspector1.value = m1 || String(ctx.currentUser?.name || ctx.currentUser?.username || "").trim().slice(0, 20);
-      if (form.elements.inspector2) form.elements.inspector2.value = m2 || "";
+      const loggedInInspector = String(ctx.getAccountDisplayName?.(ctx.currentUser, ctx.FIVE_S_PERIOD_TYPE, periodId) || ctx.currentUser?.name || ctx.currentUser?.username || "").trim().slice(0, 20);
+      if (form.elements.inspector1) {
+        form.elements.inspector1.value = loggedInInspector || form.elements.inspector1.value.trim() || m1;
+      }
+      if (form.elements.inspector2 && !form.elements.inspector2.value.trim() && m2) {
+        form.elements.inspector2.value = m2;
+      }
       const date = getMobileAreaDate(selectedId) || ctx.todayIsoDate();
       if (form.elements.inspectionDate) {
         form.elements.inspectionDate.value = displayDate(date);
@@ -1103,11 +1207,13 @@
       delete row.detectionDate;
       const data = target ? clone(target) : { ...fresh(ctx, periodId), inspector: draft.inspector, inspectionDate: date };
       data.periodId = periodId; data.areaId = area.id; data.area = zoneLabel(area);
+      let savedRowIndex = -1;
       if (deleting) data.rows.splice(edit.index, 1);
       else {
         let index = edit ? edit.index : data.rows.findIndex((item) => !rowHasContent(item));
         if (index < 0) index = data.rows.length;
         data.rows[index] = row;
+        savedRowIndex = index;
       }
       data.createdAt ||= new Date().toISOString();
       data.updatedAt = new Date().toISOString(); data.updatedBy = ctx.currentUser.id;
@@ -1121,8 +1227,21 @@
             row.photoName = nextPhoto.photoName;
           }
           await ctx.saveFiveSFinding(data);
-          ctx.state.fiveSFindings = [...ctx.state.fiveSFindings.filter((record) => record.id !== data.id), data];
-          if (!deleting) view.findingMonthKey = monthKeyForFinding(data, allPeriods);
+          ctx.state.fiveSFindings = [...(ctx.state.fiveSFindings || []).filter((record) => record.id !== data.id), data];
+          if (!deleting) {
+            view.findingMonthKey = monthKeyForFinding(data, allPeriods);
+            const monthIssues = sheets(ctx)
+              .filter((record) => monthKeyForFinding(record, allPeriods) === view.findingMonthKey)
+              .flatMap((sheet) => (sheet.rows || []).map((savedRow, index) => ({ sheet, row: savedRow, index })))
+              .filter(({ row: savedRow }) => rowHasContent(savedRow))
+              .sort((left, right) => compareFindingsNewestFirst(left.sheet, right.sheet) || right.index - left.index);
+            const savedIssueIndex = monthIssues.findIndex((item) => item.sheet.id === data.id && item.index === savedRowIndex);
+            view.findingsListPage = savedIssueIndex >= 0 ? Math.floor(savedIssueIndex / findingsPageSize) + 1 : 1;
+            view.scrollToNewFinding = edit ? null : { sheetId: data.id, rowIndex: savedRowIndex };
+          } else {
+            view.scrollToNewFinding = null;
+            view.findingsListPage = 1;
+          }
           await ctx.deleteUnusedPhotoFiles([oldPhotoUrl]);
         } catch (error) {
           if (!deleting) await ctx.deleteUnusedPhotoFiles([row.photoDataUrl]);
@@ -1134,22 +1253,23 @@
         reset(area.id);
         view.mobileNewDraft = null;
         view.zoneFilter = "";
-      }, deleting ? "Đã xóa vấn đề 5S." : edit ? "Đã cập nhật vấn đề 5S." : "Đã thêm vấn đề 5S.");
+      }, deleting ? "Đã xóa vấn đề 5S thành công!" : edit ? "Đã lưu thay đổi vấn đề 5S thành công!" : "Đã lưu vấn đề 5S thành công!");
     };
     form.addEventListener("submit", (event) => { event.preventDefault(); persist(); });
+    window.bindTouchSubmitBeforeKeyboardDismiss?.(form, form.querySelector('button[type="submit"]'));
     host.querySelector("[data-mobile-delete]")?.addEventListener("click", () => { if (window.confirm("Xóa vấn đề 5S này?")) persist(true); });
     if (view.notice) message(host, view.notice.text, view.notice.error);
     ctx.hydrateAuthenticatedPhotos(host);
     bindFindingPhotoImages(host, ctx);
-    if (!mobile && typeof window !== "undefined" && window.CustomDropdown?.enhanceAll) {
-      window.CustomDropdown.enhanceAll(host);
-    }
   }
 
   function openIssueModal(host, view, record = null, rowIndex = null) {
     const ctx = view.ctx;
     const editing = Boolean(record);
     const mobile = host.id === "mobileScreenFindings";
+    if (editing && !(ctx.state.fiveSFindings || []).some((item) => item.id === record.id)) {
+      ctx.state.fiveSFindings = [...(ctx.state.fiveSFindings || []), clone(record)];
+    }
     const writable = editing ? canEditSheet(ctx, record) : canEditPeriod(ctx, view.periodId);
     if ((!editing && !writable) || (editing && (!Number.isInteger(rowIndex) || !record.rows?.[rowIndex]))) return;
     const periodId = editing ? resolvePeriodId(record, ctx.getPeriodsByType(ctx.FIVE_S_PERIOD_TYPE)) : view.periodId;
@@ -1179,19 +1299,33 @@
         if (second) initN2 = second;
       }
     } else {
+      const loggedInInspector = String(ctx.getAccountDisplayName?.(ctx.currentUser, ctx.FIVE_S_PERIOD_TYPE, periodId) || ctx.currentUser?.name || ctx.currentUser?.username || "").trim().slice(0, 20);
       const areaInspectors = getAreaInspectors(areaId);
-      initN1 = areaInspectors[0] || "";
+      initN1 = loggedInInspector || areaInspectors[0] || "";
       initN2 = areaInspectors[1] || "";
-      if (!initN1 && !initN2) {
-        initN1 = String(ctx.currentUser?.name || ctx.currentUser?.username || "").trim().slice(0, 20);
-      }
     }
     let initialDate = (editing ? record?.inspectionDate : null) || getAreaInspectionDate(areaId) || ctx.todayIsoDate();
     const originalRow = editing ? clone(record.rows[rowIndex]) : null;
     let pendingPhotoAnnotations = null;
-    const originalMetadata = editing ? JSON.stringify([record.areaId, record.area, record.inspectionDate, record.inspector, record.periodId]) : null;
-    const hasChanged = (target) => !target || JSON.stringify(target.rows?.[rowIndex]) !== JSON.stringify(originalRow)
-      || JSON.stringify([target.areaId, target.area, target.inspectionDate, target.inspector, target.periodId]) !== originalMetadata;
+    const originalMetadata = editing ? {
+      areaId: resolveAreaId(record, areas),
+      areaLabel: shortZoneLabel(record.area).trim().toLocaleLowerCase("vi"),
+      inspectionDate: displayDate(record.inspectionDate),
+      inspector: formatInspectors(...parseInspectors(record.inspector)),
+      periodId: resolvePeriodId(record, ctx.getPeriodsByType(ctx.FIVE_S_PERIOD_TYPE)),
+    } : null;
+    const hasChanged = (target) => {
+      if (!target) return true;
+      const targetAreaId = resolveAreaId(target, areas);
+      const areaChanged = originalMetadata.areaId || targetAreaId
+        ? targetAreaId !== originalMetadata.areaId
+        : shortZoneLabel(target.area).trim().toLocaleLowerCase("vi") !== originalMetadata.areaLabel;
+      return !areFindingRowsEqual(target.rows?.[rowIndex], originalRow)
+        || areaChanged
+        || displayDate(target.inspectionDate) !== originalMetadata.inspectionDate
+        || formatInspectors(...parseInspectors(target.inspector)) !== originalMetadata.inspector
+        || resolvePeriodId(target, ctx.getPeriodsByType(ctx.FIVE_S_PERIOD_TYPE)) !== originalMetadata.periodId;
+    };
     const row = originalRow || blankRow();
     const origAreaId = areaId;
     const origInitialDate = initialDate;
@@ -1286,14 +1420,22 @@
     };
 
     let saving = false;
+    const isLightModal = Boolean(
+      host?.closest?.(".is-light-theme") ||
+      document.querySelector(".mobile-responsive-overlay")?.classList?.contains("is-light-theme") ||
+      document.documentElement.classList.contains("theme-light") ||
+      document.body.classList.contains("theme-light") ||
+      document.documentElement.getAttribute("data-theme") === "light" ||
+      (typeof window.getAppTheme === "function" && window.getAppTheme() === "light")
+    );
     ctx.openFormModal({
       title: editing ? writable ? "Sửa vấn đề 5S" : "Chi tiết vấn đề 5S" : "Thêm vấn đề 5S",
       submitText: mobile && editing ? "Lưu thay đổi" : "Lưu vấn đề",
       draftKey: findingDraftKey,
       getDraftSnapshot: captureFindingSnapshot,
       isDraftDirty: isFindingModalDirty,
-      extraRightActions: mobile && editing ? '<button type="button" class="danger-button" data-delete-issue-modal>Xóa vấn đề</button>' : "",
-      modalClass: `safety-record-modal findings-issue-modal${mobile ? " is-mobile-detail" : ""}${mobile && !host.closest(".is-light-theme") ? " is-mobile-dark" : ""}`,
+      extraRightActions: mobile && editing && writable ? '<button type="button" class="danger-button" data-delete-issue-modal>Xóa vấn đề</button>' : "",
+      modalClass: `safety-record-modal findings-issue-modal${mobile ? " is-mobile-detail" : ""}${isLightModal ? " is-light-theme" : (mobile ? " is-mobile-dark" : "")}`,
       html: `<div class="modal-context"><span><strong>Kỳ:</strong> ${esc(ctx.periodLabel(ctx.getPeriod(periodId)))}</span><span><strong>Nguồn:</strong> Vấn đề 5S</span></div>
         <div class="findings-page"><div class="safety-record-entry-wrap"><table class="safety-record-entry-table findings-issue-entry-table">
           <thead><tr><th>Zone</th><th>Ngày kiểm tra</th><th>Người kiểm tra</th>${headings.map((heading, index) => `<th>${heading}</th>${index === 1 ? '<th>Ảnh vấn đề</th>' : ""}`).join("")}</tr></thead>
@@ -1317,7 +1459,11 @@
         issue.photoAnnotations = form.elements.findingPhoto?.files?.[0] ? (pendingPhotoAnnotations || []) : (originalRow?.photoAnnotations || []);
         const originalPhotoUrl = originalRow?.photoDataUrl || "";
         const inspectionDate = ctx.parseDisplayDateToIso(form.elements.inspectionDate.value);
-        if (!selected || !editableAreas(ctx, periodId).some((area) => area.id === selected.id)) { error.textContent = "Vui lòng chọn Zone được phân công."; return false; }
+        if (!selected) { error.textContent = "Vui lòng chọn Zone."; return false; }
+        if (!editableAreas(ctx, periodId).some((area) => area.id === selected.id)) {
+          ctx.showToast("Bạn không có quyền sửa hoặc lưu vấn đề 5S ở Zone này.", true);
+          return false;
+        }
         if (!issue.problem) { error.textContent = "Vui lòng nhập vấn đề 5S."; form.querySelector('[data-field="problem"]').focus(); return false; }
         const n1 = form.elements.inspector1 ? form.elements.inspector1.value.trim().slice(0, 20) : "";
         const n2 = form.elements.inspector2 ? form.elements.inspector2.value.trim().slice(0, 20) : "";
@@ -1334,9 +1480,16 @@
         if (!inspectionDate || !inspector) { error.textContent = "Vui lòng nhập người kiểm tra và ngày hợp lệ (dd/mm/yyyy)."; return false; }
         if (issue.dueDate && !ctx.parseDisplayDateToIso(issue.dueDate)) { error.textContent = "Hạn hoàn thành không hợp lệ (dd/mm/yyyy)."; return false; }
         issue.dueDate = issue.dueDate ? ctx.parseDisplayDateToIso(issue.dueDate) : "";
-        const target = editing ? ctx.state.fiveSFindings.find((item) => item.id === record.id) : findMatchingSheet(ctx, periodId, selected.id, inspector, inspectionDate);
-        if (editing && hasChanged(target)) { error.textContent = "Vấn đề đã thay đổi. Đóng cửa sổ và mở lại để sửa dữ liệu mới nhất."; return false; }
-        if (target && !canEditSheet(ctx, target)) { error.textContent = "Bạn không có quyền thay đổi Zone này."; return false; }
+        const storedTarget = editing ? (ctx.state.fiveSFindings || []).find((item) => item.id === record.id) : null;
+        const target = editing ? (storedTarget || record) : findMatchingSheet(ctx, periodId, selected.id, inspector, inspectionDate);
+        if (editing && storedTarget && hasChanged(storedTarget)) {
+          ctx.showToast("Vấn đề đã thay đổi. Đóng cửa sổ và mở lại để sửa dữ liệu mới nhất.", true);
+          return false;
+        }
+        if (target && !canEditSheet(ctx, target)) {
+          ctx.showToast("Bạn không có quyền thay đổi Zone này.", true);
+          return false;
+        }
         const metadataChanged = editing && (resolveAreaId(target, areas) !== selected.id || target.inspector !== inspector || target.inspectionDate !== inspectionDate);
         // Legacy records share inspection details across rows. Split only the edited
         // issue when those details change, and persist both records atomically.
@@ -1370,9 +1523,13 @@
             remaining.updatedBy = data.updatedBy;
             await ctx.saveFiveSFindingsBatch(updates);
           } else await ctx.saveFiveSFinding(data);
-          ctx.state.fiveSFindings = [...ctx.state.fiveSFindings.filter((item) => !updates.some((updated) => updated.id === item.id)), ...updates];
-          if (mobile) view.findingMonthKey = monthKeyForFinding(data, ctx.getPeriodsByType(ctx.FIVE_S_PERIOD_TYPE));
+          ctx.state.fiveSFindings = [...(ctx.state.fiveSFindings || []).filter((item) => !updates.some((updated) => updated.id === item.id)), ...updates];
+          if (mobile) {
+            view.findingMonthKey = monthKeyForFinding(data, ctx.getPeriodsByType(ctx.FIVE_S_PERIOD_TYPE));
+            view.findingsListPage = 1;
+          }
           await ctx.deleteUnusedPhotoFiles([originalPhotoUrl]);
+          invalidateFindingsPageCache(view);
           if (editing && view.zoneFilter) view.zoneFilter = `id:${selected.id}`;
           view.selectedId = data.id;
           view.showDetail = false;
@@ -1380,11 +1537,11 @@
           view.notice = null;
           render(host, view);
           window.FormDraftManager?.clearDraft(findingDraftKey);
-          message(host, editing ? "Đã cập nhật vấn đề 5S." : "Đã thêm vấn đề 5S.");
+          message(host, editing ? "Đã lưu thay đổi vấn đề 5S thành công!" : "Đã lưu vấn đề 5S thành công!");
           return true;
         } catch (failure) {
-          await ctx.deleteUnusedPhotoFiles([issue.photoDataUrl]);
-          error.textContent = "Không lưu được vấn đề. Vui lòng thử lại.";
+          try { await ctx.deleteUnusedPhotoFiles([issue.photoDataUrl]); } catch (_) {}
+          ctx.showToast(failure?.message || "Không lưu được vấn đề. Vui lòng thử lại.", true);
           return false;
         } finally {
           saving = false;
@@ -1415,7 +1572,8 @@
     baselineSnapshot = captureFindingSnapshot();
     if (writable) form.querySelector('[data-field="problem"]').required = true;
     if (!writable) {
-      if (!mobile) ctx.elements.modalActions.querySelector('[type="submit"]')?.remove();
+      ctx.elements.modalActions.querySelector('[type="submit"]')?.remove();
+      ctx.elements.modalActions.querySelector("[data-delete-issue-modal]")?.remove();
       form.querySelector(".findings-modal-error").textContent = "Chỉ xem — bạn không có quyền sửa, lưu hoặc xóa vấn đề 5S này.";
       ctx.elements.modalActions.querySelector('[data-action="modal-cancel"]').textContent = "Đóng";
     } else if (mobile && editing) {
@@ -1426,10 +1584,11 @@
     ctx.elements.modalActions.querySelector("[data-delete-issue-modal]")?.addEventListener("click", async () => {
       if (!canEditSheet(ctx, record)) { ctx.showToast("Bạn không có quyền xóa vấn đề 5S này.", true); return; }
       if (saving) return;
-      const target = ctx.state.fiveSFindings.find((item) => item.id === record.id);
-      const error = form.querySelector(".findings-modal-error");
-      if (hasChanged(target) || !canEditSheet(ctx, target)) {
-        error.textContent = "Vấn đề đã thay đổi hoặc bạn không còn quyền sửa. Đóng cửa sổ và mở lại.";
+      const storedTarget = (ctx.state.fiveSFindings || []).find((item) => item.id === record.id);
+      const target = storedTarget || record;
+      const currentIssue = target.rows?.[rowIndex];
+      if (!currentIssue || findingRowIdentity(currentIssue) !== findingRowIdentity(originalRow) || !canEditSheet(ctx, target)) {
+        ctx.showToast("Vấn đề đã thay đổi hoặc bạn không còn quyền xóa. Hãy tải lại danh sách rồi thử lại.", true);
         return;
       }
       if (!window.confirm("Xóa vấn đề 5S này?")) return;
@@ -1443,14 +1602,16 @@
       controls.forEach(([el]) => { el.disabled = true; });
       try {
         await ctx.saveFiveSFinding(data);
-        ctx.state.fiveSFindings = ctx.state.fiveSFindings.map((item) => item.id === data.id ? data : item);
+        ctx.state.fiveSFindings = [...(ctx.state.fiveSFindings || []).filter((item) => item.id !== data.id), data];
         await ctx.deleteUnusedPhotoFiles([removedPhotoUrl]);
         window.FormDraftManager?.clearDraft(findingDraftKey);
+        if (mobile) view.findingsListPage = 1;
+        invalidateFindingsPageCache(view);
         ctx.closeModal({ force: true });
         render(host, view);
-        message(host, "Đã xóa vấn đề 5S.");
+        message(host, "Đã xóa vấn đề 5S thành công!");
       } catch (failure) {
-        error.textContent = "Không xóa được vấn đề. Vui lòng thử lại.";
+        ctx.showToast(failure?.message || "Không xóa được vấn đề. Vui lòng thử lại.", true);
       } finally {
         saving = false;
         controls.forEach(([el, disabled]) => { el.disabled = disabled; });
@@ -1468,8 +1629,21 @@
       const selectedId = event.target.value;
       if (!selectedId) return;
       const [n1, n2] = getAreaInspectors(selectedId);
-      if (form.elements.inspector1) form.elements.inspector1.value = n1 || String(ctx.currentUser?.name || ctx.currentUser?.username || "").trim().slice(0, 20);
-      if (form.elements.inspector2) form.elements.inspector2.value = n2 || "";
+      const loggedInInspector = String(ctx.getAccountDisplayName?.(ctx.currentUser, ctx.FIVE_S_PERIOD_TYPE, periodId) || ctx.currentUser?.name || ctx.currentUser?.username || "").trim().slice(0, 20);
+      if (form.elements.inspector1) {
+        if (!editing) {
+          form.elements.inspector1.value = loggedInInspector || form.elements.inspector1.value.trim() || n1;
+        } else {
+          form.elements.inspector1.value = n1 || loggedInInspector;
+        }
+      }
+      if (form.elements.inspector2) {
+        if (!editing) {
+          if (!form.elements.inspector2.value.trim() && n2) form.elements.inspector2.value = n2;
+        } else {
+          form.elements.inspector2.value = n2 || "";
+        }
+      }
       const date = getAreaInspectionDate(selectedId) || ctx.todayIsoDate();
       if (form.elements.inspectionDate) {
         form.elements.inspectionDate.value = displayDate(date);
@@ -1495,7 +1669,7 @@
   function mobileList(records, periodRecords, esc, ctx, monthOptionsHtml = "", pagination = null) {
     const issues = records.flatMap((sheet) => (sheet.rows || []).map((row, index) => ({ sheet, row, index })).filter(({ row }) => rowHasContent(row)))
       .sort((left, right) => compareFindingsNewestFirst(left.sheet, right.sheet) || right.index - left.index);
-    const total = periodRecords.reduce((count, sheet) => count + (sheet.rows || []).filter(rowHasContent).length, 0);
+    const total = pagination?.totalRows ?? periodRecords.reduce((count, sheet) => count + (sheet.rows || []).filter(rowHasContent).length, 0);
     return `<section class="findings-mobile-list" aria-label="Danh sách vấn đề 5S">
       <div class="findings-list-heading"><div class="history-heading-filter"><h3 class="history-section-title">VẤN ĐỀ 5S ĐÃ GHI NHẬN</h3><label class="history-period-filter"><span>Tháng</span><select data-finding-month aria-label="Lọc vấn đề 5S theo tháng" ${monthOptionsHtml ? "" : "disabled"}>${monthOptionsHtml || '<option value="">Chưa có dữ liệu</option>'}</select></label></div><span>${issues.length === total ? `${total} vấn đề` : `${issues.length} / ${total} vấn đề trong tháng`}</span></div>
       ${issues.length ? issues.map(({ sheet, row, index }) => {
@@ -1506,7 +1680,7 @@
           <span class="findings-status ${complete ? "is-done" : ""}">${complete ? "Đã xử lý" : "Chưa xử lý"}</span><span aria-hidden="true">›</span>
         </button>`;
       }).join("") : '<div class="findings-empty"><span aria-hidden="true">▤</span><strong>Chưa có vấn đề trong tháng này</strong><p>Điền thông tin ở trên để ghi nhận vấn đề 5S.</p></div>'}
-      ${pagination?.totalPages > 1 ? `<div class="safety-table-pager" aria-label="Phân trang vấn đề 5S"><button type="button" class="tiny-button" data-findings-page="${pagination.page - 1}" ${pagination.page <= 1 ? "disabled" : ""}>Trước</button><span>Trang ${pagination.page}/${pagination.totalPages}</span><button type="button" class="tiny-button" data-findings-page="${pagination.page + 1}" ${pagination.page >= pagination.totalPages ? "disabled" : ""}>Sau</button></div>` : ""}
+      ${pagination?.totalPages > 1 ? `<div class="safety-table-pager" aria-label="Phân trang vấn đề 5S"><button type="button" class="tiny-button" data-findings-page="${pagination.page - 1}" ${pagination.page <= 1 ? "disabled" : ""}>Trước</button><span>${issues.length}/${total} · Trang ${pagination.page}/${pagination.totalPages}</span><button type="button" class="tiny-button" data-findings-page="${pagination.page + 1}" ${pagination.page >= pagination.totalPages ? "disabled" : ""}>Sau</button></div>` : ""}
     </section>`;
   }
 
@@ -1583,11 +1757,21 @@
 
   function dateEditor(value, attrs, editing, esc, required = false) {
     return `<span class="findings-date-editor"><input type="text" ${attrs} data-finding-date value="${esc(displayDate(value))}" placeholder="${editing ? "dd/mm/yyyy" : ""}" inputmode="numeric" maxlength="10" ${required ? "required" : ""} ${editing ? "" : "disabled"}>
-      ${editing ? `<input type="date" class="findings-date-calendar" aria-label="Mở lịch chọn ngày" value="${/^\d{4}-\d{2}-\d{2}$/.test(value) ? esc(value) : ""}" tabindex="0">` : ""}</span>`;
+      ${editing ? `<input type="date" class="findings-date-calendar" aria-label="Mở lịch chọn ngày" value="${/^\d{4}-\d{2}-\d{2}$/.test(value) ? esc(value) : ""}" tabindex="0"><button type="button" class="btn-calendar-trigger" tabindex="-1" aria-hidden="true"><i class="fa-solid fa-calendar-days"></i></button>` : ""}</span>`;
   }
 
   function message(host, text, error = false) {
     const view = views.get(host);
+    if (host?.id === "mobileScreenFindings" && text && text !== "Đang lưu...") {
+      if (view) view.notice = null;
+      const el = host.querySelector(".findings-message");
+      if (el) {
+        el.textContent = "";
+        el.classList.remove("is-error");
+      }
+      view?.ctx?.showToast?.(text, error);
+      return;
+    }
     if (view) view.notice = { text, error };
     if (view?.ctx?.showToast && text && text !== "Đang lưu...") {
       view.ctx.showToast(text, error);
@@ -1605,14 +1789,24 @@
     message(host, "Đang lưu...");
     try {
       await action();
+      invalidateFindingsPageCache(view);
       view.busy = false;
       render(host, view);
       message(host, success);
     } catch (error) {
       view.busy = false;
+      view.notice = null;
       render(host, view);
-      message(host, "Không lưu được phiếu. Vui lòng thử lại.", true);
+      view.ctx?.showToast?.(error?.message || "Không lưu được phiếu. Vui lòng thử lại.", true);
     }
+  }
+
+  function invalidateFindingsPageCache(view) {
+    if (!view) return;
+    view.findingsListPageData = null;
+    view.findingsListPageKey = "";
+    view.findingsListFailedKey = "";
+    view.findingsListRequestId = (view.findingsListRequestId || 0) + 1;
   }
 
   window.FiveSFindingsPage = { mount, resolvePeriodId, resolveAreaId, findingCategoryLabel, FINDING_CATEGORIES, parseInspectors, formatInspectors, canEditSheet, isFindingResolved, openIssueById };
