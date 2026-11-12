@@ -99,8 +99,34 @@
   }
 
   function monthOf(row, context) {
-    const value = Number(context.getIssueMonth(row, row.score.periodId));
-    return Number.isInteger(value) && value >= 1 && value <= 12 ? value : 0;
+    const record = row?.score || row || {};
+    const explicitDate = String(record.issueDate || record.date || "").trim();
+    if (explicitDate) {
+      const isoMatch = /^(\d{4})-(\d{1,2})-(\d{1,2})/.exec(explicitDate);
+      if (isoMatch) {
+        const m = Number(isoMatch[2]);
+        if (m >= 1 && m <= 12) return m;
+      }
+      const vnMatch = /^(\d{1,2})\/(\d{1,2})\/(\d{4})/.exec(explicitDate);
+      if (vnMatch) {
+        const m = Number(vnMatch[2]);
+        if (m >= 1 && m <= 12) return m;
+      }
+    }
+    if (record.issueMonth && Number.isInteger(Number(record.issueMonth))) {
+      const m = Number(record.issueMonth);
+      if (m >= 1 && m <= 12) return m;
+    }
+    const value = Number(context?.getIssueMonth?.(row, record.periodId));
+    if (Number.isInteger(value) && value >= 1 && value <= 12) return value;
+    if (typeof context?.getSafetyRecordIssueDate === "function") {
+      const dateStr = context.getSafetyRecordIssueDate(record, context.getPeriod?.(record.periodId));
+      if (dateStr && dateStr.length >= 7) {
+        const m = Number(dateStr.slice(5, 7));
+        if (m >= 1 && m <= 12) return m;
+      }
+    }
+    return 0;
   }
 
   function safetyAreaCode(area) {
@@ -279,30 +305,62 @@
   }
 
   function syncSafetyFilters(context, period) {
-    const { elements, escapeHtml, getSafetyFilterMonths, getSafetyFilterYears, isAdminAccount, currentUser } = context;
+    const { elements, escapeHtml, getSafetyFilterMonths, getSafetyFilterYears, getSafetyRowsForYear, isAdminAccount, currentUser } = context;
     const isAdmin = Boolean(isAdminAccount?.(currentUser));
+    const isAssessment = context.activeSafetyReport === "assessment";
     const usesAdminViewScope = context.activeSafetyReport === "assessment" || context.activeSafetyReport === "identification" || context.activeSafetyReport === "factory";
     const areaId = context.activeSafetyReport === "assessment" ? elements.safetyAreaFilter?.value || "" : "";
     const openYear = new Date().getFullYear();
     const openMonth = new Date().getMonth() + 1;
+    const activePeriod = context.getPeriod?.(context.getActivePeriodId?.(context.SAFETY_PERIOD_TYPE)) || period;
+    const activeYear = Number(activePeriod?.year) || openYear;
+    const activeMonth = Number(activePeriod?.month) || openMonth;
 
     let years = typeof getSafetyFilterYears === "function" ? getSafetyFilterYears({ areaId }) : [];
     if (!isAdmin && !usesAdminViewScope) {
-      years = [openYear];
+      years = [activeYear, openYear];
+    } else {
+      years = [...new Set([...years, activeYear, openYear])].sort((a, b) => b - a);
+    }
+    if (isAssessment && typeof getSafetyRowsForYear === "function") {
+      years = years.filter((year) => year === activeYear || year === openYear || Boolean(getSafetyRowsForYear(year, { areaId })?.length));
     }
 
-    let selectedYear = Number(elements.safetyYearFilter?.value) || openYear;
+    const latestDataPeriod = [...years].sort((a, b) => b - a).map((year) => {
+      const latestRow = getSafetyRowsForYear?.(year, { areaId })?.[0];
+      return latestRow ? { year: Number(year), month: monthOf(latestRow, context) } : null;
+    }).find((value) => value && value.month >= 1 && value.month <= 12) || null;
+    const defaultYear = latestDataPeriod?.year || activeYear || years[0] || openYear;
+    let selectedYear = Number(elements.safetyYearFilter?.value) || defaultYear;
     if (!years.includes(selectedYear)) {
-      selectedYear = openYear;
+      selectedYear = years[0] || openYear;
     }
-    const months = years.length && typeof getSafetyFilterMonths === "function"
+    const rowMonths = isAssessment && typeof getSafetyRowsForYear === "function"
+      ? (getSafetyRowsForYear(selectedYear, { areaId }) || []).map((row) => monthOf(row, context)).filter((m) => m >= 1 && m <= 12)
+      : [];
+    const filterMonths = years.length && typeof getSafetyFilterMonths === "function"
       ? getSafetyFilterMonths(selectedYear, { areaId })
       : [];
-    let selectedMonth = Number(elements.safetyMonthFilter?.value) || openMonth;
-    if (!isAdmin && !usesAdminViewScope) {
-      selectedMonth = openMonth;
-    } else if (!months.includes(selectedMonth)) {
-      selectedMonth = months.includes(openMonth) ? openMonth : months[0] || openMonth;
+    const months = [...new Set([...rowMonths, ...filterMonths])];
+    const expectedMonths = [];
+    if (selectedYear === activeYear && activeMonth >= 1 && activeMonth <= 12) expectedMonths.push(activeMonth);
+    if (selectedYear === openYear && openMonth >= 1 && openMonth <= 12) expectedMonths.push(openMonth);
+    const visibleMonths = !isAdmin && !usesAdminViewScope
+      ? (expectedMonths.length ? [...new Set(expectedMonths)] : [openMonth])
+      : [...new Set([...months, ...expectedMonths])].sort((a, b) => b - a);
+
+    const defaultMonth = latestDataPeriod?.year === selectedYear
+      ? latestDataPeriod.month
+      : selectedYear === activeYear
+        ? activeMonth
+        : selectedYear === openYear
+          ? openMonth
+          : visibleMonths[0] || openMonth;
+    let selectedMonth = Number(elements.safetyMonthFilter?.value) || defaultMonth;
+    if (!visibleMonths.includes(selectedMonth)) {
+      selectedMonth = visibleMonths.includes(activeMonth)
+        ? activeMonth
+        : (visibleMonths.includes(openMonth) ? openMonth : visibleMonths[0] || openMonth);
     }
 
     if (elements.safetyYearFilter) {
@@ -315,7 +373,6 @@
     }
 
     if (elements.safetyMonthFilter) {
-      const visibleMonths = !isAdmin && !usesAdminViewScope ? [openMonth] : months.length ? months : [openMonth];
       elements.safetyMonthFilter.innerHTML = visibleMonths.length
         ? visibleMonths
           .map((month) => `<option value="${month}" ${month === selectedMonth ? "selected" : ""}>Tháng ${month}</option>`)
@@ -336,7 +393,12 @@
   }
 
   function getAllReportableAreas(context, periodId, areaFilter = "") {
-    return context.getAreasForPeriod(periodId).filter((area) => isReportableSafetyArea(area) && (!areaFilter || area.id === areaFilter));
+    let areas = context.getAreasForPeriod(periodId);
+    if (!areas || !areas.length) {
+      areas = (typeof context.getAreas === "function" ? context.getAreas(context.SAFETY_PERIOD_TYPE) : []) || [];
+    }
+    const filterClean = String(areaFilter || "").trim();
+    return areas.filter((area) => isReportableSafetyArea(area) && (!filterClean || area.id === filterClean || String(area.code || area.templateCode || "").trim() === filterClean));
   }
 
   function getVisibleAreas(context, periodId, areaFilter = "") {
@@ -411,7 +473,7 @@
     const { SAFETY_STOP6_COLUMNS, getAreaResponsibleNameForPeriod, getSafetyDepartmentForArea, getSafetyZoneTarget } = context;
     const statusColumns = context.ISSUE_STATUS_OPTIONS || [];
     return areas.filter(isReportableSafetyArea).map((area) => {
-      const areaRows = rows.filter((row) => row.area.id === area.id);
+      const areaRows = rows.filter((row) => row.area?.id === area.id || String(row.area?.code || row.area?.templateCode || "").trim() === String(area.code || area.templateCode || "").trim());
       const stop6Counts = new Map(SAFETY_STOP6_COLUMNS.map((column) => [column.value, 0]));
       const statusCounts = Object.fromEntries(statusColumns.map((column) => [column.value, 0]));
       areaRows.forEach((row) => {
@@ -735,16 +797,26 @@
   function renderDonutDashboard({ id, scope, title, subtitle, entries, context }) {
     const escapeHtml = context.escapeHtml;
     const total = entries.reduce((sum, entry) => sum + entry.count, 0);
-    const radius = 64;
-    const strokeWidth = 20;
+    const radius = 60;
+    const strokeWidth = 22;
     const circumference = 2 * Math.PI * radius;
-    const activeSegmentCount = entries.filter((entry) => entry.count > 0).length;
+    const haloRadius = 76;
+    const haloStrokeWidth = 7;
+    const circumferenceHalo = 2 * Math.PI * haloRadius;
+
+    const activeEntries = entries.filter((entry) => entry.count > 0);
+    const activeSegmentCount = activeEntries.length;
     const separators = [];
+    const halos = [];
     let offset = 0;
-    const segments = total ? entries.map((entry) => {
-        if (!entry.count) return "";
+    let haloOffset = 0;
+
+    const segments = total ? activeEntries.map((entry) => {
         const segmentLength = (entry.count / total) * circumference;
+        const haloSegmentLength = (entry.count / total) * circumferenceHalo;
         const detailId = `${id}-${entry.value}`;
+        const percent = Math.round((entry.count / total) * 100);
+
         dashboardDetailRegistry.set(detailId, {
           id: detailId,
           scope,
@@ -754,25 +826,38 @@
           context,
           periodLabel: subtitle,
         });
-        const circle = `<circle class="safety-donut-segment" cx="90" cy="90" r="${radius}" fill="none" stroke="${escapeHtml(entry.color)}" stroke-width="${strokeWidth}" stroke-dasharray="${segmentLength.toFixed(2)} ${(circumference - segmentLength).toFixed(2)}" stroke-dashoffset="${(-offset).toFixed(2)}" transform="rotate(-90 90 90)" role="button" tabindex="0" aria-label="${escapeHtml(entry.label)}: ${escapeHtml(countCell(entry.count))}" data-safety-dashboard-detail="${escapeHtml(detailId)}"><title>${escapeHtml(entry.label)}: ${escapeHtml(countCell(entry.count))}</title></circle>`;
+
+        const halo = `<circle class="safety-donut-halo" cx="90" cy="90" r="${haloRadius}" fill="none" stroke="${escapeHtml(entry.color)}" stroke-width="${haloStrokeWidth}" stroke-dasharray="${haloSegmentLength.toFixed(2)} ${(circumferenceHalo - haloSegmentLength).toFixed(2)}" stroke-dashoffset="${(-haloOffset).toFixed(2)}" transform="rotate(-90 90 90)" data-safety-dashboard-detail="${escapeHtml(detailId)}"></circle>`;
+        halos.push(halo);
+
+        const circle = `<circle class="safety-donut-segment" cx="90" cy="90" r="${radius}" fill="none" stroke="${escapeHtml(entry.color)}" stroke-width="${strokeWidth}" stroke-dasharray="${segmentLength.toFixed(2)} ${(circumference - segmentLength).toFixed(2)}" stroke-dashoffset="${(-offset).toFixed(2)}" transform="rotate(-90 90 90)" role="button" tabindex="0" aria-label="${escapeHtml(entry.label)}: ${escapeHtml(countCell(entry.count))}" data-safety-dashboard-detail="${escapeHtml(detailId)}" data-tooltip-title="${escapeHtml(entry.label)}" data-tooltip-count="${escapeHtml(countCell(entry.count))}" data-tooltip-pct="${percent}" data-tooltip-color="${escapeHtml(entry.color)}"><title>${escapeHtml(entry.label)}: ${escapeHtml(countCell(entry.count))} (${percent}%)</title></circle>`;
+
         offset += segmentLength;
-        const angle = -Math.PI / 2 + offset / radius;
-        const innerRadius = radius - strokeWidth / 2;
-        const outerRadius = radius + strokeWidth / 2;
-        const innerX = 90 + Math.cos(angle) * innerRadius;
-        const innerY = 90 + Math.sin(angle) * innerRadius;
-        const outerX = 90 + Math.cos(angle) * outerRadius;
-        const outerY = 90 + Math.sin(angle) * outerRadius;
+        haloOffset += haloSegmentLength;
+
         if (activeSegmentCount > 1) {
+          const angle = -Math.PI / 2 + offset / radius;
+          const innerRadius = radius - strokeWidth / 2 - 0.5;
+          const outerRadius = radius + strokeWidth / 2 + 0.5;
+          const innerX = 90 + Math.cos(angle) * innerRadius;
+          const innerY = 90 + Math.sin(angle) * innerRadius;
+          const outerX = 90 + Math.cos(angle) * outerRadius;
+          const outerY = 90 + Math.sin(angle) * outerRadius;
           separators.push(`<path class="safety-donut-separator" d="M ${innerX.toFixed(2)} ${innerY.toFixed(2)} L ${outerX.toFixed(2)} ${outerY.toFixed(2)}"></path>`);
         }
         return circle;
       }).join("") : "";
+
     const ring = total
-      ? `<circle class="safety-donut-track" cx="90" cy="90" r="${radius}" fill="none" stroke-width="${strokeWidth}"></circle>${segments}${separators.join("")}`
+      ? `<circle class="safety-donut-track" cx="90" cy="90" r="${radius}" fill="none" stroke-width="${strokeWidth}"></circle>${halos.join("")}${segments}${separators.join("")}`
       : `<circle class="safety-donut-track" cx="90" cy="90" r="${radius}" fill="none" stroke-width="${strokeWidth}"></circle>`;
 
-    const legend = entries.map((entry) => {
+    const isDept = id.includes("-department");
+    const legendEntries = (isDept && total > 0)
+      ? activeEntries
+      : (entries.length ? entries : []);
+
+    const legend = legendEntries.length ? legendEntries.map((entry) => {
       const detailId = `${id}-${entry.value}`;
       const percent = total ? Math.round((entry.count / total) * 100) : 0;
       dashboardDetailRegistry.set(detailId, {
@@ -785,22 +870,20 @@
         periodLabel: subtitle,
       });
       const isZero = entry.count === 0;
-      return `<button class="safety-donut-legend-item ${isZero ? "is-zero-count" : "is-has-count"}" type="button" data-safety-dashboard-detail="${escapeHtml(detailId)}" title="Bấm để xem danh sách: ${escapeHtml(entry.label)} (${escapeHtml(countCell(entry.count))})">
-        <span class="donut-legend-bullet" style="--donut-color:${escapeHtml(entry.color)}"></span>
-        <div class="donut-legend-info">
-          <div class="donut-legend-meta">
-            <span class="donut-legend-name" title="${escapeHtml(entry.label)}">${escapeHtml(entry.label)}</span>
-            <div class="donut-legend-numbers">
-              <strong class="donut-legend-val">${escapeHtml(countCell(entry.count))}</strong>
-              <small class="donut-legend-pct">${percent}%</small>
-            </div>
-          </div>
-          <div class="donut-legend-bar-track">
-            <div class="donut-legend-bar-fill" style="width: ${percent}%; background-color: ${escapeHtml(entry.color)};"></div>
-          </div>
-        </div>
+      const valColor = isZero ? "#94a3b8" : entry.color;
+      return `<button class="safety-donut-legend-item ${isZero ? "is-zero-count" : "is-has-count"}" type="button" 
+        data-safety-dashboard-detail="${escapeHtml(detailId)}" 
+        data-tooltip-title="${escapeHtml(entry.label)}"
+        data-tooltip-count="${escapeHtml(countCell(entry.count))}"
+        data-tooltip-pct="${percent}"
+        data-tooltip-color="${escapeHtml(entry.color)}"
+        title="Bấm để xem danh sách: ${escapeHtml(entry.label)} (${escapeHtml(countCell(entry.count))})">
+        <span class="donut-legend-dot" style="background-color:${escapeHtml(entry.color)}"></span>
+        <span class="donut-legend-label">${escapeHtml(entry.label)}</span>
+        <strong class="donut-legend-val" style="color:${escapeHtml(valColor)}">${escapeHtml(countCell(entry.count))}</strong>
+        <span class="donut-legend-pct">(${percent}%)</span>
       </button>`;
-    }).join("");
+    }).join("") : '<div class="donut-empty-legend">Không có dữ liệu ghi nhận</div>';
 
     const cardIcons = {
       rank: { icon: "fa-solid fa-ranking-star", class: "is-rank" },
@@ -824,6 +907,7 @@
         : id.endsWith("-rank")
           ? " is-rank-dashboard"
           : id.endsWith("-status") ? " is-status-dashboard" : "";
+
     return `<section class="safety-donut-dashboard${dashboardTypeClass}" aria-label="${escapeHtml(title)}">
       <header class="safety-donut-dashboard-header">
         <div class="donut-header-left">
@@ -842,10 +926,8 @@
       <div class="safety-donut-dashboard-content">
         <div class="safety-donut-visual">
           <svg viewBox="0 0 180 180" role="img" aria-label="${escapeHtml(title)}: ${escapeHtml(countCell(total))} vấn đề">
-            <circle class="safety-donut-inner-card" cx="90" cy="90" r="48"></circle>
             ${ring}
-            <text x="90" y="83" class="safety-donut-total">${escapeHtml(countCell(total))}</text>
-            <text x="90" y="103" class="safety-donut-total-label">VẤN ĐỀ</text>
+            <text x="90" y="90" class="safety-donut-center-total">${escapeHtml(countCell(total))}</text>
           </svg>
         </div>
         <div class="safety-donut-legend">${legend}</div>
@@ -853,6 +935,7 @@
       <footer class="safety-donut-card-footer">
         <span><i class="fa-solid fa-arrow-pointer"></i> Nhấp vào mục hoặc biểu đồ để xem chi tiết</span>
       </footer>
+      <div class="donut-floating-tooltip" role="tooltip" aria-hidden="true"></div>
     </section>`;
   }
 
@@ -948,7 +1031,7 @@
     });
     const statusDefinitions = [
       { value: "closed", label: "Đã xử lý", color: "#10b981" },
-      { value: "in_progress", label: "Đang xử lý", color: "#3b82f6" },
+      { value: "in_progress", label: "Đang xử lý", color: "#446bf2" },
       { value: "open", label: "Chưa xử lý", color: "#f59e0b" },
       { value: "overdue", label: "Quá hạn", color: "#ef4444" },
     ];
@@ -956,7 +1039,7 @@
       const matched = rows.filter((row) => issueStatusOf(row, context) === definition.value);
       return { ...definition, rows: matched, count: sumIssueCounts(matched, context) };
     });
-    const modernStop6Colors = ["#3b82f6", "#ef4444", "#10b981", "#8b5cf6", "#06b6d4", "#f97316", "#64748b"];
+    const modernStop6Colors = ["#446bf2", "#ef4444", "#10b981", "#9d4edd", "#06b6d4", "#fb923c", "#64748b"];
     const stops = context.SAFETY_STOP6_COLUMNS.map((column, index) => {
       const matched = rows.filter((row) => context.isSafetyStop6Selected(row.score, column.value));
       return {
@@ -989,9 +1072,9 @@
       departmentRows.get(department).push(row);
     });
     const modernDepartmentColors = [
-      "#3b82f6", "#ef4444", "#10b981", "#f59e0b", "#8b5cf6", "#06b6d4",
-      "#ec4899", "#14b8a6", "#f97316", "#6366f1", "#84cc16", "#a855f7",
-      "#0ea5e9", "#e11d48", "#d97706"
+      "#446bf2", "#9d4edd", "#f72585", "#fb7185", "#fb923c",
+      "#f59e0b", "#eab308", "#3a0ca3", "#06b6d4", "#10b981",
+      "#8b5cf6", "#14b8a6", "#ec4899", "#6366f1", "#64748b"
     ];
     const departments = [...departmentRows.entries()]
       .map(([label, departmentIssues]) => ({ label, value: label, rows: departmentIssues, count: sumIssueCounts(departmentIssues, context) }))
@@ -2063,7 +2146,9 @@
       : getVisibleDepartmentGroups(context, reportPeriodId, areaFilter);
     const selectedDepartment = syncDepartmentFilter(context, groups, filters.year);
     const visibleAreaIds = new Set(visibleAreas.map((area) => area.id));
-    const rawYearRows = getSafetyRowsForYear(filters.year, { areaId: areaFilter }).filter((row) => visibleAreaIds.has(row.area.id));
+    const visibleAreaCodes = new Set(visibleAreas.map((area) => String(area.code || area.templateCode || "").trim()));
+    const rawYearRows = getSafetyRowsForYear(filters.year, { areaId: areaFilter })
+      .filter((row) => visibleAreaIds.has(row.area?.id) || visibleAreaCodes.has(String(row.area?.code || row.area?.templateCode || "").trim()));
     const rawMonthRows = filterRowsByMonth(rawYearRows, filters.month, context);
     const yearRows = isAdmin || shouldUseAdminScope ? rawYearRows : rawYearRows.filter((row) => row.score.periodId === activePeriodId);
     const monthRows = isAdmin || shouldUseAdminScope ? rawMonthRows : rawMonthRows.filter((row) => row.score.periodId === activePeriodId);
@@ -2185,39 +2270,89 @@
     refreshActiveDashboardDetail(true);
   });
 
-  const syncDashboardHighlight = (choice) => {
+  const escapeTooltip = (str) => String(str || "").replace(/[&<>'"]/g, (tag) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;" }[tag] || tag));
+
+  const syncDashboardHighlight = (choice, event) => {
     const dashboard = choice?.closest?.(".safety-donut-dashboard");
     if (!dashboard) return;
     const selectedId = choice.dataset.safetyDashboardDetail || "";
     dashboard.classList.add("has-highlight");
-    dashboard.querySelectorAll(".safety-donut-segment, .safety-donut-legend-item").forEach((item) => {
+    dashboard.querySelectorAll(".safety-donut-segment, .safety-donut-legend-item, .safety-donut-halo").forEach((item) => {
       const isActive = item.dataset.safetyDashboardDetail === selectedId;
       item.classList.toggle("is-active", isActive);
       item.classList.toggle("is-muted", !isActive);
     });
+    const tooltip = dashboard.querySelector(".donut-floating-tooltip");
+    if (tooltip && choice.dataset.tooltipTitle) {
+      const title = choice.dataset.tooltipTitle;
+      const count = choice.dataset.tooltipCount;
+      const pct = choice.dataset.tooltipPct;
+      const color = choice.dataset.tooltipColor;
+      tooltip.innerHTML = `<div class="donut-tooltip-row"><span>${escapeTooltip(title)}:</span> <strong>${escapeTooltip(count)}</strong></div><div class="donut-tooltip-pct" style="color:${escapeTooltip(color)}">(${escapeTooltip(pct)}%)</div>`;
+
+      if (event && typeof event.clientX === "number") {
+        const dashRect = dashboard.getBoundingClientRect();
+        const mouseX = event.clientX - dashRect.left;
+        const mouseY = event.clientY - dashRect.top;
+        const tipWidth = tooltip.offsetWidth || 120;
+        const tipHeight = tooltip.offsetHeight || 48;
+        const gap = 16;
+
+        let posX = mouseX + gap;
+        if (posX + tipWidth > dashRect.width - 12) {
+          posX = mouseX - tipWidth - gap;
+        }
+        if (posX < 8) posX = 8;
+
+        let posY = mouseY - tipHeight - gap;
+        if (posY < 8) {
+          posY = mouseY + gap;
+        }
+        if (posY + tipHeight > dashRect.height - 8) {
+          posY = dashRect.height - tipHeight - 8;
+        }
+
+        tooltip.style.left = `${posX}px`;
+        tooltip.style.top = `${posY}px`;
+      } else {
+        tooltip.style.left = "16px";
+        tooltip.style.top = "56px";
+      }
+      tooltip.classList.add("is-visible");
+    }
   };
 
   const clearDashboardHighlight = (dashboard) => {
     if (!dashboard) return;
     dashboard.classList.remove("has-highlight");
-    dashboard.querySelectorAll(".safety-donut-segment, .safety-donut-legend-item").forEach((item) => {
+    dashboard.querySelectorAll(".safety-donut-segment, .safety-donut-legend-item, .safety-donut-halo").forEach((item) => {
       item.classList.remove("is-active", "is-muted");
     });
+    const tooltip = dashboard.querySelector(".donut-floating-tooltip");
+    if (tooltip) {
+      tooltip.classList.remove("is-visible");
+      tooltip.innerHTML = "";
+    }
   };
 
-  document.addEventListener("pointerover", (event) => {
+  document.addEventListener("pointermove", (event) => {
     const choice = event.target.closest?.(".safety-donut-segment, .safety-donut-legend-item");
-    if (choice) syncDashboardHighlight(choice);
+    if (choice) {
+      syncDashboardHighlight(choice, event);
+    } else {
+      const dashboard = event.target.closest?.(".safety-donut-dashboard");
+      if (dashboard) {
+        clearDashboardHighlight(dashboard);
+      }
+    }
   });
 
-  document.addEventListener("pointerout", (event) => {
-    const choice = event.target.closest?.(".safety-donut-segment, .safety-donut-legend-item");
-    if (!choice || choice.contains(event.relatedTarget)) return;
-    const dashboard = choice.closest(".safety-donut-dashboard");
-    const nextChoice = event.relatedTarget?.closest?.(".safety-donut-segment, .safety-donut-legend-item");
-    if (nextChoice && nextChoice.closest(".safety-donut-dashboard") === dashboard) syncDashboardHighlight(nextChoice);
-    else clearDashboardHighlight(dashboard);
-  });
+  document.addEventListener("pointerleave", (event) => {
+    const dashboard = event.target.closest?.(".safety-donut-dashboard");
+    if (dashboard) {
+      clearDashboardHighlight(dashboard);
+    }
+  }, true);
 
   document.addEventListener("focusin", (event) => {
     const choice = event.target.closest?.(".safety-donut-segment, .safety-donut-legend-item");
@@ -2225,12 +2360,8 @@
   });
 
   document.addEventListener("focusout", (event) => {
-    const choice = event.target.closest?.(".safety-donut-segment, .safety-donut-legend-item");
-    if (!choice) return;
-    const nextChoice = event.relatedTarget?.closest?.(".safety-donut-segment, .safety-donut-legend-item");
-    const dashboard = choice.closest(".safety-donut-dashboard");
-    if (nextChoice && nextChoice.closest(".safety-donut-dashboard") === dashboard) syncDashboardHighlight(nextChoice);
-    else clearDashboardHighlight(dashboard);
+    const dashboard = event.target.closest?.(".safety-donut-dashboard");
+    if (dashboard) clearDashboardHighlight(dashboard);
   });
 
   document.addEventListener("keydown", (event) => {

@@ -111,16 +111,22 @@ class JsonFileRepository {
       throw new Error("Duong dan DATA_FILE khong hop le.");
     }
     this.writeQueue = Promise.resolve();
+    this.organizedWriteQueue = Promise.resolve();
     this.readCache = null;
     this.organizedTimer = null;
     this.latestOrganizedRoot = null;
   }
 
-  async readRoot() {
+  async readRootSnapshot({ cloneRoot = true } = {}) {
+    const root = await this.readRoot({ cloneRoot });
+    return { root, revision: null };
+  }
+
+  async readRoot({ cloneRoot = true } = {}) {
     try {
       const stat = await fs.stat(this.filePath);
       if (this.readCache && this.readCache.size === stat.size && this.readCache.mtimeMs === stat.mtimeMs) {
-        return clone(this.readCache.root);
+        return cloneRoot ? clone(this.readCache.root) : this.readCache.root;
       }
 
       const text = await fs.readFile(this.filePath, "utf8");
@@ -130,7 +136,7 @@ class JsonFileRepository {
       }
       const root = JSON.parse(text);
       this.readCache = { size: stat.size, mtimeMs: stat.mtimeMs, root: clone(root) };
-      return root;
+      return cloneRoot ? root : this.readCache.root;
     } catch (error) {
       if (error.code === "ENOENT") {
         const migratedRoot = await this.readLegacyRoot();
@@ -215,47 +221,52 @@ class JsonFileRepository {
     if (path.basename(this.organizedDir) !== ORGANIZED_DIR_NAME || !isInsideRoot(this.dataDir, this.organizedDir)) {
       throw new Error("Thu muc organized khong hop le.");
     }
-    await fs.rm(this.organizedDir, { recursive: true, force: true });
-    await fs.mkdir(this.organizedDir, { recursive: true });
-    await Promise.all(COLLECTION_FILE_MAP.map((entry) => {
-      return writeJsonFile(path.join(this.organizedDir, entry.file), pickKeys(root, entry.keys));
-    }));
+    const task = async () => {
+      await fs.rm(this.organizedDir, { recursive: true, force: true });
+      await fs.mkdir(this.organizedDir, { recursive: true });
+      await Promise.all(COLLECTION_FILE_MAP.map((entry) => {
+        return writeJsonFile(path.join(this.organizedDir, entry.file), pickKeys(root, entry.keys));
+      }));
 
-    const periods = collectionValues(root.periods);
-    const periodById = groupPeriodsByType(periods);
-    const fiveSPeriods = periods.filter((period) => period?.type === FIVE_S_PERIOD_TYPE);
-    const safetyPeriods = periods.filter((period) => period?.type === SAFETY_PERIOD_TYPE);
-    await writeJsonFile(path.join(this.organizedDir, "cham-5s/periods.json"), fiveSPeriods);
-    await writeJsonFile(path.join(this.organizedDir, "danh-gia-an-toan/periods.json"), safetyPeriods);
+      const periods = collectionValues(root.periods);
+      const periodById = groupPeriodsByType(periods);
+      const fiveSPeriods = periods.filter((period) => period?.type === FIVE_S_PERIOD_TYPE);
+      const safetyPeriods = periods.filter((period) => period?.type === SAFETY_PERIOD_TYPE);
+      await writeJsonFile(path.join(this.organizedDir, "cham-5s/periods.json"), fiveSPeriods);
+      await writeJsonFile(path.join(this.organizedDir, "danh-gia-an-toan/periods.json"), safetyPeriods);
 
-    const scoreGroups = groupRowsByPeriod(collectionValues(root.scores), periodById);
-    await Promise.all([...scoreGroups.entries()].map(([key, group]) => {
-      return writeJsonFile(path.join(this.organizedDir, "cham-5s", key), {
-        period: group.period,
-        scores: group.rows,
+      const scoreGroups = groupRowsByPeriod(collectionValues(root.scores), periodById);
+      await Promise.all([...scoreGroups.entries()].map(([key, group]) => {
+        return writeJsonFile(path.join(this.organizedDir, "cham-5s", key), {
+          period: group.period,
+          scores: group.rows,
+        });
+      }));
+
+      const safetyGroups = groupRowsByPeriod(collectionValues(root.safetyRecords), periodById);
+      await Promise.all([...safetyGroups.entries()].map(([key, group]) => {
+        return writeJsonFile(path.join(this.organizedDir, "danh-gia-an-toan", key), {
+          period: group.period,
+          safetyRecords: group.rows,
+        });
+      }));
+
+      await writeJsonFile(path.join(this.organizedDir, "README.json"), {
+        note: "Thu muc nay duoc tao tu dong tu file data chinh. Khong sua tay khi ung dung dang chay.",
+        sourceFile: path.basename(this.filePath),
+        generatedAt: new Date().toISOString(),
+        folders: {
+          "cham-5s": "Diem 5S tach theo nam/thang.",
+          "danh-gia-an-toan": "Ban ghi danh gia an toan tach theo nam/thang.",
+          "danh-muc": "Danh muc ky danh gia, zone, nguoi cham, target.",
+          "tai-khoan": "Danh sach tai khoan va lich su phien.",
+          "he-thong": "Thong tin he thong."
+        }
       });
-    }));
-
-    const safetyGroups = groupRowsByPeriod(collectionValues(root.safetyRecords), periodById);
-    await Promise.all([...safetyGroups.entries()].map(([key, group]) => {
-      return writeJsonFile(path.join(this.organizedDir, "danh-gia-an-toan", key), {
-        period: group.period,
-        safetyRecords: group.rows,
-      });
-    }));
-
-    await writeJsonFile(path.join(this.organizedDir, "README.json"), {
-      note: "Thu muc nay duoc tao tu dong tu file data chinh. Khong sua tay khi ung dung dang chay.",
-      sourceFile: path.basename(this.filePath),
-      generatedAt: new Date().toISOString(),
-      folders: {
-        "cham-5s": "Diem 5S tach theo nam/thang.",
-        "danh-gia-an-toan": "Ban ghi danh gia an toan tach theo nam/thang.",
-        "danh-muc": "Danh muc ky danh gia, zone, nguoi cham, target.",
-        "tai-khoan": "Danh sach tai khoan va lich su phien.",
-        "he-thong": "Thong tin he thong."
-      }
-    });
+    };
+    const run = (this.organizedWriteQueue || Promise.resolve()).then(task, task);
+    this.organizedWriteQueue = run.catch(() => {});
+    return run;
   }
 }
 

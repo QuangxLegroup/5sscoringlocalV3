@@ -122,6 +122,27 @@ function collectionEntryForKey(value, key) {
   return position < 0 ? null : { key: entries[position][0], position: null, payload: entries[position][1] };
 }
 
+function pathParts(input) {
+  return String(input || "")
+    .split("/")
+    .map((part) => part.trim())
+    .filter(Boolean);
+}
+
+function valueAtPath(record, targetPath) {
+  let cursor = record;
+  for (const part of pathParts(targetPath)) {
+    if (Array.isArray(cursor)) {
+      cursor = cursor.find((item, index) => String(item?.id || index) === part || String(index) === part);
+    } else if (cursor && typeof cursor === "object" && Object.prototype.hasOwnProperty.call(cursor, part)) {
+      cursor = cursor[part];
+    } else {
+      return undefined;
+    }
+  }
+  return cursor;
+}
+
 function rootMatchesTouchedKeys(currentRoot, nextRoot, touchedRootKeys, touchedRecords, touchedRecordFields = null) {
   if (!touchedRootKeys) return stableJson(currentRoot) === stableJson(nextRoot);
   for (const key of touchedRootKeys) {
@@ -273,7 +294,7 @@ class PostgresRepository {
     this.initialized = true;
   }
 
-  async readRootSnapshot() {
+  async readRootSnapshot({ cloneRoot = true } = {}) {
     if (!this.initialized) throw new Error("PostgreSQL repository chưa được khởi tạo.");
     const client = await this.pool.connect();
     try {
@@ -282,13 +303,13 @@ class PostgresRepository {
       const revision = Number(revisionResult.rows[0]?.revision || 0);
       if (this.rootCache && this.rootRevision === revision) {
         await client.query("COMMIT");
-        return { root: clone(this.rootCache), revision };
+        return { root: cloneRoot ? clone(this.rootCache) : this.rootCache, revision };
       }
       const root = await this.readRootWithClient(client);
       await client.query("COMMIT");
       this.rootCache = clone(root);
       this.rootRevision = revision;
-      return { root, revision };
+      return { root: cloneRoot ? root : this.rootCache, revision };
     } catch (error) {
       await client.query("ROLLBACK").catch(() => {});
       throw error;
@@ -526,19 +547,21 @@ class PostgresRepository {
     const fieldSet = Array.isArray(changedFields) ? new Set(changedFields) : null;
     if (previousPayload && fieldSet?.size && collection === "safetyRecords"
       && [...fieldSet].every((field) => ["photoAnnotations", "afterPhotoAnnotations", "updatedAt"].includes(field))) {
-      const dataPatch = Object.fromEntries([...fieldSet].map((field) => [field, record[field]]));
+      const removedFields = [...fieldSet].filter((field) => !Object.prototype.hasOwnProperty.call(record, field) || record[field] === undefined);
+      const dataPatch = Object.fromEntries([...fieldSet].filter((field) => !removedFields.includes(field)).map((field) => [field, record[field]]));
       await client.query(
-        "UPDATE safety_records SET updated_at = $2, data = data || $3::jsonb WHERE id = $1",
-        [entry.key, safeTimestamp(record.updatedAt), JSON.stringify(dataPatch)],
+        "UPDATE safety_records SET updated_at = $2, data = (data - $3::text[]) || $4::jsonb WHERE id = $1",
+        [entry.key, safeTimestamp(record.updatedAt), removedFields, JSON.stringify(dataPatch)],
       );
       return;
     }
     if (previousPayload && fieldSet?.size && collection === "fiveSFindings"
       && [...fieldSet].every((field) => ["photoAnnotationsByRow", "updatedAt", "updatedBy"].includes(field))) {
-      const dataPatch = encodedStructuredPayload(collection, Object.fromEntries([...fieldSet].map((field) => [field, record[field]])));
+      const removedFields = [...fieldSet].filter((field) => !Object.prototype.hasOwnProperty.call(record, field) || record[field] === undefined);
+      const dataPatch = encodedStructuredPayload(collection, Object.fromEntries([...fieldSet].filter((field) => !removedFields.includes(field)).map((field) => [field, record[field]])));
       await client.query(
-        "UPDATE five_s_findings SET updated_at = $2, updated_by = $3, data = data || $4::jsonb WHERE id = $1",
-        [entry.key, safeTimestamp(record.updatedAt), record.updatedBy || null, dataPatch],
+        "UPDATE five_s_findings SET updated_at = $2, updated_by = $3, data = (data - $4::text[]) || $5::jsonb WHERE id = $1",
+        [entry.key, safeTimestamp(record.updatedAt), record.updatedBy || null, removedFields, dataPatch],
       );
       return;
     }
@@ -611,12 +634,14 @@ class PostgresRepository {
     }
     const page = Math.max(1, Math.trunc(Number(filters.page) || 1));
     const pageSize = Math.min(100, Math.max(1, Math.trunc(Number(filters.pageSize) || 50)));
-    if (filters.year !== undefined && filters.year !== "" && (!Number.isInteger(Number(filters.year)) || Number(filters.year) < 2020 || Number(filters.year) > 2100)) {
+    const yearFilter = filters.year === null || filters.year === undefined ? "" : String(filters.year).trim();
+    const monthFilter = filters.month === null || filters.month === undefined ? "" : String(filters.month).trim();
+    if (yearFilter !== "" && (!Number.isInteger(Number(yearFilter)) || Number(yearFilter) < 2020 || Number(yearFilter) > 2100)) {
       const error = new Error("Năm lọc không hợp lệ.");
       error.statusCode = 400;
       throw error;
     }
-    if (filters.month !== undefined && filters.month !== "" && (!Number.isInteger(Number(filters.month)) || Number(filters.month) < 1 || Number(filters.month) > 12)) {
+    if (monthFilter !== "" && (!Number.isInteger(Number(monthFilter)) || Number(monthFilter) < 1 || Number(monthFilter) > 12)) {
       const error = new Error("Tháng lọc không hợp lệ.");
       error.statusCode = 400;
       throw error;
@@ -635,7 +660,7 @@ class PostgresRepository {
     addFilter("record_status", filters.status);
     if (collection === "safetyRecords") {
       const addSafetyDatePartFilter = (datePart, value) => {
-        if (value === undefined || value === "") return;
+        if (value === undefined || value === null || value === "") return;
         values.push(Number(value));
         const parameter = `$${values.length}`;
         const resolvedPart = datePart === "year"
@@ -643,11 +668,11 @@ class PostgresRepository {
           : "COALESCE(EXTRACT(MONTH FROM issue_date)::int, EXTRACT(MONTH FROM occurred_at)::int, CASE WHEN data->>'issueMonth' ~ '^[0-9]{1,2}$' THEN (data->>'issueMonth')::int WHEN data->>'issueDate' ~ '^\\d{4}-\\d{2}' THEN substring(data->>'issueDate' from 6 for 2)::int WHEN data->>'issueDate' ~ '^\\d{1,2}/\\d{1,2}/\\d{4}' THEN split_part(data->>'issueDate', '/', 2)::int WHEN data->>'date' ~ '^\\d{4}-\\d{2}' THEN substring(data->>'date' from 6 for 2)::int WHEN data->>'date' ~ '^\\d{1,2}/\\d{1,2}/\\d{4}' THEN split_part(data->>'date', '/', 2)::int WHEN data->>'createdAt' ~ '^\\d{4}-\\d{2}' THEN substring(data->>'createdAt' from 6 for 2)::int END, EXTRACT(MONTH FROM created_at)::int, period_month)";
         conditions.push(`${resolvedPart} = ${parameter}`);
       };
-      addSafetyDatePartFilter("year", filters.year);
-      addSafetyDatePartFilter("month", filters.month);
+      addSafetyDatePartFilter("year", yearFilter);
+      addSafetyDatePartFilter("month", monthFilter);
     } else if (collection === "fiveSFindings") {
       const addFindingDatePartFilter = (datePart, value) => {
-        if (value === undefined || value === "") return;
+        if (value === undefined || value === null || value === "") return;
         values.push(Number(value));
         const parameter = `$${values.length}`;
         const resolvedPart = datePart === "year"
@@ -655,11 +680,11 @@ class PostgresRepository {
           : "COALESCE(EXTRACT(MONTH FROM occurred_at)::int, CASE WHEN data->>'inspectionDate' ~ '^\\d{4}-\\d{2}' THEN substring(data->>'inspectionDate' from 6 for 2)::int WHEN data->>'inspectionDate' ~ '^\\d{1,2}/\\d{1,2}/\\d{4}' THEN split_part(data->>'inspectionDate', '/', 2)::int END, EXTRACT(MONTH FROM created_at)::int, period_month)";
         conditions.push(`${resolvedPart} = ${parameter}`);
       };
-      addFindingDatePartFilter("year", filters.year);
-      addFindingDatePartFilter("month", filters.month);
+      addFindingDatePartFilter("year", yearFilter);
+      addFindingDatePartFilter("month", monthFilter);
     } else {
-      if (filters.year !== undefined && filters.year !== "") addFilter("period_year", Number(filters.year));
-      if (filters.month !== undefined && filters.month !== "") addFilter("period_month", Number(filters.month));
+      if (yearFilter !== "") addFilter("period_year", Number(yearFilter));
+      if (monthFilter !== "") addFilter("period_month", Number(monthFilter));
     }
     const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
     const count = await this.pool.query(`SELECT count(*)::int AS total FROM ${spec.table} ${where}`, values);

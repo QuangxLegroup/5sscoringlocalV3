@@ -25,8 +25,13 @@ test("viewers see monthly targets as text; admins retain editable inputs", () =>
 test("viewer cannot mutate targets, local storage, or database through the update handler", async () => {
   const state = { safetyMonthlyTargets: { 2026: { 9: 100 } } };
   let writes = 0;
+  const auditEntries = [];
   const context = vm.createContext({
     currentUser: { role: "viewer" }, isAdminAccount: user => user.role === "admin", state,
+    SAFETY_PERIOD_TYPE: "safety",
+    getSafetyMonthlyTarget: (year, month) => Number(state.safetyMonthlyTargets?.[year]?.[month] ?? 100),
+    getPeriodsByType: () => [{ id: "safety-2026-09", year: 2026, month: 9 }],
+    logDetailedHistoryChange: async entry => { auditEntries.push(entry); },
     window: { localStorage: { setItem: () => { writes++; } } }, dbRef: () => ({ set: async () => { writes++; } }),
     showToast() {}, renderActiveTab() {},
   });
@@ -38,10 +43,49 @@ test("viewer cannot mutate targets, local storage, or database through the updat
   assert.equal(await context.updateSafetyMonthlyTarget(2026, 9, 85), 85);
   assert.equal(state.safetyMonthlyTargets[2026][9], 85);
   assert.equal(writes, 2);
+  assert.equal(auditEntries.length, 1);
+  assert.equal(auditEntries[0].before, "100%");
+  assert.equal(auditEntries[0].after, "85%");
+  assert.equal(auditEntries[0].periodId, "safety-2026-09");
   context.dbRef = () => ({ set: async () => { throw new Error("Save failed"); } });
   await assert.rejects(context.updateSafetyMonthlyTarget(2026, 9, 10), /Save failed/);
   assert.equal(state.safetyMonthlyTargets[2026][9], 85);
   assert.equal(writes, 2);
+  assert.equal(auditEntries.length, 1, "failed saves must not create an audit entry");
+});
+
+test("admin changes to a Zone safety target are included in audit history", async () => {
+  const period = {
+    id: "safety-2026-10",
+    settingsSnapshot: { areas: [{ id: "zone-2", code: "2", safetyTarget: 75 }] },
+  };
+  const auditEntries = [];
+  const savedSnapshots = [];
+  const context = vm.createContext({
+    currentUser: { role: "admin" },
+    SAFETY_PERIOD_TYPE: "safety",
+    SAFETY_ZONE_TARGETS: { "2": 80 },
+    isAdminAccount: user => user.role === "admin",
+    getPeriod: () => period,
+    getActivePeriodId: () => period.id,
+    ensurePeriodSnapshotLocal: () => period.settingsSnapshot,
+    shouldEditPeriodSnapshot: () => true,
+    getSafetyZoneTarget: area => Number(area.safetyTarget || 0),
+    savePeriodSnapshot: async targetPeriod => { savedSnapshots.push(structuredClone(targetPeriod.settingsSnapshot)); },
+    logDetailedHistoryChange: async entry => { auditEntries.push(entry); },
+    pushUndoAction() {}, showToast() {}, renderActiveTab() {},
+  });
+  vm.runInContext(readFunction("app.js", "updateSafetyZoneTarget"), context);
+
+  await context.updateSafetyZoneTarget(period.id, "zone-2", 90);
+
+  assert.equal(period.settingsSnapshot.areas[0].safetyTarget, 90);
+  assert.equal(savedSnapshots.length, 1);
+  assert.equal(auditEntries.length, 1);
+  assert.equal(auditEntries[0].periodId, period.id);
+  assert.equal(auditEntries[0].areaCode, "2");
+  assert.equal(auditEntries[0].details[0].before, "75%");
+  assert.equal(auditEntries[0].details[0].after, "90%");
 });
 
 test("server rejects viewer target writes including root batches", () => {

@@ -27,7 +27,13 @@ test("failed safety deletion leaves visible records and deletion markers unchang
   const state = { safetyRecords: [record], deletedSafetyRecords: [] };
   let writes = 0;
   const context = vm.createContext({
-    state, canManageSafetyRecord: () => true,
+    state,
+    canManageSafetyRecord: () => true,
+    cloneValue: (v) => structuredClone(v),
+    getAreaForPeriod: () => ({ id: "z", code: "1" }),
+    logDetailedHistoryChange: async () => {},
+    SAFETY_PERIOD_TYPE: "safety",
+    buildSafetyAuditDetails: () => [],
     getDeletedSafetyRecordMarker: () => ({ id: "r", periodId: "p", areaId: "z" }),
     shouldKeepDeletedSafetyRecordMarker: () => true,
     updateRootWithOptionalRenderSuppression: async () => { throw new Error("Network failed"); },
@@ -74,7 +80,12 @@ test("LAN Docker deployment serves the frontend over HTTP without Caddy", () => 
 test("new 5S issues reuse only records with matching inspection details", () => {
   const moduleSource = fs.readFileSync(path.join(__dirname, "..", "modules/pages/five-s-findings-page.js"), "utf8");
   const record = { periodId: "p", areaId: "z", inspector: "First inspector", inspectionDate: "2026-09-28" };
-  const context = vm.createContext({ sheets: () => [record], resolvePeriodId: row => row.periodId, resolveAreaId: row => row.areaId });
+  const context = vm.createContext({
+    sheets: () => [record],
+    resolvePeriodId: row => row.periodId,
+    resolveAreaId: row => row.areaId,
+    displayDate: val => String(val || ""),
+  });
   vm.runInContext(moduleSource.match(/  function findMatchingSheet\([^]*?\n  }/)[0], context);
   const ctx = { getPeriodsByType: () => [], getAreasForPeriod: () => [] };
   assert.equal(context.findMatchingSheet(ctx, "p", "z", "First inspector", "2026-09-28"), record);

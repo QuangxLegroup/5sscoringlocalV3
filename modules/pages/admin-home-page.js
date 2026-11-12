@@ -92,16 +92,12 @@
 
   function render(context) {
     const {
-      SAFETY_PERIOD_TYPE,
       FIVE_S_PERIOD_TYPE,
       currentUser,
       elements,
       escapeHtml,
       getActivePeriodId,
       getPeriod,
-      isAdminAccount,
-      hasAccountAccessType,
-      isFiveSAssessor,
       renderRoleVisibility,
       periodLabel,
     } = context;
@@ -111,53 +107,27 @@
     }
 
     const activeTheme = (typeof window.getAppTheme === "function" ? window.getAppTheme() : (document.documentElement.getAttribute("data-theme") || localStorage.getItem("app_theme") || "dark"));
-    const canScoreFiveS = !isAdminAccount(currentUser) && Boolean(
-      typeof isFiveSAssessor === "function"
-        ? isFiveSAssessor(currentUser)
-        : (typeof hasAccountAccessType === "function" ? hasAccountAccessType(currentUser, FIVE_S_PERIOD_TYPE) : false)
-    );
-    const isAdmin = isAdminAccount(currentUser);
-    const hasFiveSAccess = isAdmin || Boolean(
-      typeof hasAccountAccessType === "function"
-        ? hasAccountAccessType(currentUser, FIVE_S_PERIOD_TYPE)
-        : canScoreFiveS
-    );
-    const hasSafetyAccess = isAdmin || Boolean(
-      typeof hasAccountAccessType === "function"
-        ? hasAccountAccessType(currentUser, SAFETY_PERIOD_TYPE)
-        : false
-    );
-
-    const navButton = ({ icon, label, title, tab, report }) => {
+    const navButton = ({ icon, label, title, tab, classes = "", report }) => {
       const routeAttr = report
         ? `data-go-safety-report="${escapeHtml(report)}"`
         : `data-go-tab="${escapeHtml(tab)}"`;
-      return `<button class="cyber-nav-btn${tab === "home" ? " is-active" : ""}" type="button" ${routeAttr} title="${escapeHtml(title)}">
-        <span>${escapeHtml(icon)}</span> ${escapeHtml(label)}
+      return `<button class="tab-button ${classes}" type="button" ${routeAttr} title="${escapeHtml(title)}">
+        <span class="tab-icon">${escapeHtml(icon)}</span>
+        <span>${escapeHtml(label)}</span>
       </button>`;
     };
-    const navSections = [
-      [
-        navButton({ icon: "🏠", label: "Trang chủ", title: "Trang chủ Cyber Hub", tab: "home" }),
-      ],
-      [
-        ...(canScoreFiveS ? [navButton({ icon: "📝", label: "Phiếu chấm", title: "Phiếu chấm điểm 5S", tab: "assessor" })] : []),
-        ...(hasFiveSAccess ? [navButton({ icon: "📊", label: "Bảng Điểm 5S", title: "Tổng hợp điểm 5S", tab: "summary" })] : []),
-        navButton({ icon: "📝", label: "Vấn đề 5S", title: "Vấn đề 5S", tab: "five-s-findings" }),
-        ...(isAdmin ? [navButton({ icon: "📋", label: "Phiếu theo zone", title: "Xem phiếu 5S theo zone", tab: "score-sheets" })] : []),
-      ],
-      [
-        ...(hasSafetyAccess ? [
-          navButton({ icon: "🛡️", label: "Đánh giá AT", title: "Đánh giá an toàn", report: "assessment" }),
-          navButton({ icon: "⚠️", label: "Nhận diện", title: "Tổng hợp nhận diện nguy cơ mất an toàn", report: "identification" }),
-          navButton({ icon: "🏭", label: "Nguy cơ NM", title: "Tổng hợp nguy cơ mất an toàn nhà máy", report: "factory" }),
-          navButton({ icon: "📈", label: "Thống kê AT", title: "Thống kê an toàn", tab: "issue-stats" }),
-        ] : []),
-      ],
-    ].filter((section) => section.length);
-    const cyberNavHtml = navSections
-      .map((section) => section.join(""))
-      .join('<span class="cyber-nav-divider"></span>');
+    // Keep the same canonical order and visibility classes as #headerQuickNav.
+    // renderRoleVisibility applies the active account's permissions after render.
+    const cyberNavHtml = [
+      navButton({ icon: "📝", label: "Phiếu chấm", title: "Phiếu chấm điểm 5S", tab: "assessor", classes: "assessor-only" }),
+      navButton({ icon: "📊", label: "Bảng Điểm 5S", title: "Tổng hợp điểm 5S", tab: "summary", classes: "admin-only five-s-access-only" }),
+      navButton({ icon: "📝", label: "Vấn đề 5S", title: "Vấn đề 5S", tab: "five-s-findings" }),
+      navButton({ icon: "📋", label: "Phiếu theo zone", title: "Xem phiếu 5S theo zone", tab: "score-sheets", classes: "admin-only" }),
+      navButton({ icon: "🛡️", label: "Đánh giá AT", title: "Đánh giá an toàn", report: "assessment", classes: "safety-access-only" }),
+      navButton({ icon: "⚠️", label: "Nhận diện", title: "Tổng hợp nhận diện nguy cơ mất an toàn", report: "identification", classes: "admin-only" }),
+      navButton({ icon: "🏭", label: "Nguy cơ NM", title: "Tổng hợp nguy cơ mất an toàn nhà máy", report: "factory", classes: "admin-only" }),
+      navButton({ icon: "📈", label: "Thống kê AT", title: "Thống kê an toàn", tab: "issue-stats", classes: "admin-only" }),
+    ].join("");
 
     elements.adminHomeCards.classList.add("has-cyber-home");
 
@@ -174,8 +144,8 @@
         <div class="cyber-stars"></div>
 
         <!-- Top Navigation Bar / Cyber HUD Header -->
-        <div class="cyber-top-nav">
-          <div class="cyber-brand">
+        <div class="cyber-top-nav app-header">
+          <div class="cyber-brand header-left-box">
             <img src="images/Logo.jpg" alt="LeGroup" class="cyber-brand-logo">
             <div class="cyber-brand-text">
               <span class="cyber-brand-subtitle">LeGroup 5S</span>
@@ -184,12 +154,12 @@
           </div>
 
           <!-- All Sidebar Items as Direct Cyber HUD Buttons with Drag-to-Scroll -->
-          <div class="cyber-nav-links" id="cyberNavLinks">
+          <nav class="header-quick-nav" id="cyberNavLinks" aria-label="Điều hướng nhanh">
             ${cyberNavHtml}
-          </div>
+          </nav>
 
           <!-- Right Side: User Profile -->
-          <div class="cyber-top-right">
+          <div class="cyber-top-right header-right-tools">
             <div class="issue-notification-control" data-issue-notification-control>
               <button class="issue-notification-button" type="button" data-issue-notification-toggle aria-label="Mở thông báo" aria-expanded="false" title="Thông báo">
                 <i class="fa-regular fa-bell" aria-hidden="true"></i>
@@ -231,6 +201,11 @@
                 <button class="account-menu-item admin-only" type="button" data-action="show-problem-zone-emails">
                   <i class="fa-regular fa-envelope" aria-hidden="true"></i>
                   Email báo cáo zone có vấn đề
+                </button>
+                <div class="account-menu-divider safety-live-access-only" hidden></div>
+                <button class="account-menu-item safety-live-access-only" type="button" data-go-tab="safety-live" hidden>
+                  <i class="fa-solid fa-tv" aria-hidden="true"></i>
+                  Safety Live (Trình chiếu)
                 </button>
                 <div class="account-menu-theme-row">
                   <span class="account-menu-theme-label">

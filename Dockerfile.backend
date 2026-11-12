@@ -39,6 +39,7 @@ COPY --from=build /app/package*.json ./
 COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/server.js ./server.js
 COPY --from=build /app/src ./src
+COPY --from=build /app/scripts ./scripts
 COPY --from=build /app/index.html /app/404.html /app/styles.css /app/standards.js /app/app.js /app/manifest.json /app/service-worker.js ./
 COPY --from=build /app/modules ./modules
 COPY --from=build /app/images ./images

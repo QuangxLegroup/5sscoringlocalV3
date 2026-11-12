@@ -85,49 +85,49 @@ function createAppServer({ authController, authService, dataController, staticFi
       }
 
       if (requestUrl.pathname === "/api/data" && request.method === "GET") {
-        const authContext = await authService.authenticateRequest(request);
+        const authContext = await authService.authenticateRequest(request, { cloneRoot: false });
         await dataController.handleRead(request, response, authContext);
         return;
       }
 
       if (requestUrl.pathname === "/api/data/page" && request.method === "GET") {
-        const authContext = await authService.authenticateRequest(request);
+        const authContext = await authService.authenticateRequest(request, { cloneRoot: false });
         await dataController.handleReadPage(request, response, authContext, requestUrl);
         return;
       }
 
       if (requestUrl.pathname === "/api/data/stream" && request.method === "GET") {
-        const authContext = await authService.authenticateRequest(request);
+        const authContext = await authService.authenticateRequest(request, { cloneRoot: false });
         dataController.handleStream(request, response, authContext);
         return;
       }
 
       if (requestUrl.pathname === "/api/data/write" && request.method === "POST") {
-        const authContext = await authService.authenticateRequest(request);
+        const authContext = await authService.authenticateRequest(request, { cloneRoot: false });
         await dataController.handleWrite(request, response, authContext);
         return;
       }
 
       if (requestUrl.pathname === "/api/photos" && request.method === "POST") {
-        const authContext = await authService.authenticateRequest(request);
+        const authContext = await authService.authenticateRequest(request, { cloneRoot: false });
         await dataController.handleSavePhoto(request, response, authContext);
         return;
       }
 
       if (requestUrl.pathname === "/api/photos/delete" && request.method === "POST") {
-        const authContext = await authService.authenticateRequest(request);
+        const authContext = await authService.authenticateRequest(request, { cloneRoot: false });
         await dataController.handleDeletePhoto(request, response, authContext);
         return;
       }
 
       if (requestUrl.pathname.startsWith("/api/photos/") && request.method === "GET") {
-        await authService.authenticateRequest(request);
+        await authService.authenticateRequest(request, { cloneRoot: false });
         await dataController.handleReadPhoto(request, response, requestUrl);
         return;
       }
 
       if (requestUrl.pathname === "/api/send-safety-report" && request.method === "POST") {
-        const authContext = await authService.authenticateRequest(request);
+        const authContext = await authService.authenticateRequest(request, { cloneRoot: false });
         authService.assertSafetyMailAllowed(authContext);
         await mailController.handleSendSafetyReport(request, response);
         return;

@@ -322,9 +322,11 @@ class SmtpSession {
 
     return new Promise((resolve, reject) => {
       const secureSocket = tls.connect({ socket: this.socket, servername: this.config.host });
+      secureSocket.setTimeout(this.config.timeoutMs);
       const cleanup = () => {
         secureSocket.removeListener("secureConnect", onSecureConnect);
         secureSocket.removeListener("error", onError);
+        secureSocket.removeListener("timeout", onTimeout);
       };
       const onSecureConnect = () => {
         cleanup();
@@ -333,17 +335,27 @@ class SmtpSession {
       };
       const onError = (error) => {
         cleanup();
+        secureSocket.destroy();
         reject(error);
+      };
+      const onTimeout = () => {
+        cleanup();
+        secureSocket.destroy();
+        reject(createHttpError("Quá thời gian thiết lập TLS tới máy chủ SMTP.", 504));
       };
 
       secureSocket.once("secureConnect", onSecureConnect);
       secureSocket.once("error", onError);
+      secureSocket.once("timeout", onTimeout);
     });
   }
 
   close() {
     this.detach();
-    this.socket.end();
+    if (this.socket) {
+      this.socket.on?.("error", () => {});
+      this.socket.end();
+    }
   }
 }
 

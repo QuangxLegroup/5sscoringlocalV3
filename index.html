@@ -22,7 +22,7 @@
         } catch (e) {}
       })();
     </script>
-      <link rel="stylesheet" href="styles.css?v=2026110302">
+    <link rel="stylesheet" href="styles.css?v=2026110911">
   </head>
   <body>
     <section class="loading-screen" id="loading-screen">
@@ -252,6 +252,11 @@
                   <i class="fa-regular fa-envelope" aria-hidden="true"></i>
                   Email báo cáo zone có vấn đề
                 </button>
+                <div class="account-menu-divider safety-live-access-only" hidden></div>
+                <button class="account-menu-item safety-live-access-only" type="button" data-go-tab="safety-live" hidden>
+                  <i class="fa-solid fa-tv" aria-hidden="true"></i>
+                  Safety Live (Trình chiếu)
+                </button>
                 <div class="account-menu-theme-row">
                   <span class="account-menu-theme-label">
                     <i class="fa-solid fa-circle-half-stroke" aria-hidden="true"></i>
@@ -331,9 +336,14 @@
           <section class="tab-panel five-s-access-only" id="tab-summary">
             <div class="toolbar compact-toolbar summary-toolbar">
               <label>
-                <span>Kỳ đánh giá</span>
-                <select id="summary-period-select"></select>
+                <span>Tháng đánh giá</span>
+                <select id="summary-period-month-filter"></select>
               </label>
+              <label>
+                <span>Năm đánh giá</span>
+                <select id="summary-period-year-filter"></select>
+              </label>
+              <select id="summary-period-select" hidden aria-hidden="true" tabindex="-1"></select>
               <label class="source-toggle">
                 <span>Bảng điểm</span>
                 <select id="summary-score-source"></select>
@@ -383,6 +393,7 @@
                 </select>
               </label>
               <button class="btn-export-excel-gradient" id="export-admin-score-sheet-button" type="button"><i class="fa-solid fa-file-excel"></i> <span>Xuất Excel</span></button>
+              <button class="primary-button" id="add-admin-score-sheet-date-button" type="button" hidden><i class="fa-solid fa-plus" aria-hidden="true"></i> <span>Thêm phiếu đánh giá</span></button>
             </div>
             <section class="sheet-panel">
               <div class="section-heading">
@@ -766,6 +777,8 @@
           <section class="tab-panel admin-only" id="tab-guide-setup"></section>
           <!-- TAB AUDIT LOG (LỊCH SỬ CHỈNH SỬA) -->
           <section class="tab-panel admin-only" id="tab-audit-log"></section>
+          <!-- TAB SAFETY LIVE -->
+          <section class="tab-panel safety-live-access-only" id="tab-safety-live" hidden></section>
         </main>
       </div>
     </div>
@@ -782,28 +795,29 @@
       </section>
     </div>
 
-    <div class="toast" id="toast" role="status" aria-live="polite"></div>
-    <script src="modules/local-data-api.js?v=2026110201"></script>
+    <div class="toast" id="toast" popover="manual" role="status" aria-live="polite"></div>
+    <script src="modules/local-data-api.js?v=2026110901"></script>
     <script src="modules/core/page-registry.js"></script>
     <script src="modules/core/safety-timeline.js?v=2026103101"></script>
       <script src="modules/core/image-circle-annotator.js?v=2026110201"></script>
       <script src="modules/core/form-draft-manager.js?v=2026102903"></script>
     <script src="modules/core/custom-dropdown.js?v=2026103101"></script>
-    <script src="modules/pages/admin-home-page.js?v=2026110210"></script>
+    <script src="modules/pages/admin-home-page.js?v=2026110402"></script>
     <script src="modules/pages/assessor-page.js"></script>
-    <script src="modules/pages/summary-page.js?v=2026103103"></script>
-    <script src="modules/pages/safety-page.js?v=2026110301"></script>
+    <script src="modules/pages/summary-page.js?v=2026110402"></script>
+    <script src="modules/pages/safety-page.js?v=2026110402"></script>
     <script src="modules/pages/issue-stats-page.js?v=2026110203"></script>
+    <script src="modules/pages/safety-live-page.js?v=2026110902"></script>
     <script src="modules/pages/catalog-page.js"></script>
     <script src="modules/pages/accounts-page.js"></script>
     <script src="modules/pages/data-page.js"></script>
-    <script src="modules/pages/five-s-findings-page.js?v=2026110304"></script>
+    <script src="modules/pages/five-s-findings-page.js?v=2026110908"></script>
     <script src="modules/pages/user-guide-content.js?v=2026103001"></script>
-    <script src="modules/pages/mobile-prototype.js?v=2026110304"></script>
+    <script src="modules/pages/mobile-prototype.js?v=2026110909"></script>
     <script src="modules/pages/guide-setup-page.js?v=2026102903"></script>
     <script src="modules/pages/audit-log-page.js?v=2026102801"></script>
     <script src="standards.js"></script>
-    <script src="app.js?v=2026110304"></script>
+    <script src="app.js?v=2026110901"></script>
   
     <script>
       (() => {

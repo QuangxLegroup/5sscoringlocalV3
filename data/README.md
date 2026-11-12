@@ -1,8 +1,12 @@
 # Local data
 
-Operational data is stored in PostgreSQL. Uploaded images are separated into two distinct folders under `photos/`:
-- `photos/van-de-5s/MM-YYYY`: Ảnh hiện trường vấn đề 5S, bằng chứng chấm điểm 5S và ảnh hướng dẫn.
-- `photos/an-toan/MM-YYYY`: Ảnh hiện trường đánh giá an toàn và ảnh sau cải tiến an toàn.
+Operational data is stored in PostgreSQL. Uploaded images are organized under `photos/` by category and processing stage:
+- `photos/an-toan/anh-truoc-xu-ly/MM-YYYY`
+- `photos/an-toan/anh-sau-xu-ly/MM-YYYY`
+- `photos/van-de-5s/anh-truoc-xu-ly/MM-YYYY`
+- `photos/van-de-5s/anh-sau-xu-ly/MM-YYYY`
+- `photos/huong-dan/MM-YYYY` for guide images.
+- `.thumbs/` mirrors these paths for generated thumbnails.
 
 PostgreSQL stores the `/api/photos/...` reference and does not store image bytes.
 

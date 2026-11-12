@@ -1,6 +1,6 @@
 "use strict";
 
-const { readJsonBody } = require("../http/request");
+const { readJsonBody, SMALL_BODY_LIMIT_BYTES } = require("../http/request");
 const { sendJson } = require("../http/response");
 const { TOKEN_COOKIE_NAME, SESSION_TTL_MS } = require("../services/auth-service");
 
@@ -31,7 +31,7 @@ class AuthController {
   }
 
   async handleLogin(request, response) {
-    const credentials = await readJsonBody(request);
+    const credentials = await readJsonBody(request, SMALL_BODY_LIMIT_BYTES);
     const payload = await this.authService.login(credentials.username, credentials.password);
     const { replacedSessionId, ...sessionPayload } = payload;
     if (replacedSessionId) {

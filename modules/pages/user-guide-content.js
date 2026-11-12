@@ -565,6 +565,7 @@
           body: step.body || "",
           imageUrl: step.imageUrl || "",
           annotations: step.annotations || [],
+          images: Array.isArray(step.images) ? step.images.map((img) => ({ ...img })) : [],
         })),
       };
     }

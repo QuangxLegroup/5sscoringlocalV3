@@ -61,7 +61,12 @@ class StaticFileService {
   }
 
   async getFile(requestPath) {
-    const requestedPath = decodeURIComponent(String(requestPath || "/"));
+    let requestedPath;
+    try {
+      requestedPath = decodeURIComponent(String(requestPath || "/"));
+    } catch (_) {
+      return { statusCode: 400 };
+    }
     const normalizedRequestPath = normalizeRoutePath(requestedPath);
     const requestedSegments = normalizedRequestPath.split("/").filter(Boolean);
     if (requestedSegments.some((segment) => segment.startsWith("."))
@@ -70,7 +75,12 @@ class StaticFileService {
     }
 
     const publicPath = toPublicPath(requestPath);
-    const decodedPath = decodeURIComponent(publicPath);
+    let decodedPath;
+    try {
+      decodedPath = decodeURIComponent(publicPath);
+    } catch (_) {
+      return { statusCode: 400 };
+    }
     const filePath = path.resolve(this.rootDir, `.${decodedPath}`);
 
     if (!isInsideRoot(this.rootDir, filePath) || !isPublicAsset(this.rootDir, filePath)) {

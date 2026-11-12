@@ -30,15 +30,34 @@ test("admin controls recover after switching accounts without unlocking business
 });
 
 test("all authenticated roles can navigate to every mobile page", () => {
-  const context = vm.createContext({ currentUser: null });
+  const context = vm.createContext({
+    currentUser: null,
+    isAdminAccount: (u) => u?.role === "admin",
+    isViewerAccount: (u) => u?.role === "viewer",
+    isDepartmentHeadAccount: (u) => u?.role === "departmentHead",
+    hasAccountAccessType: (u, type) => type === "5s" && ["zoneOwner", "assessor5s"].includes(u?.role),
+    hasDepartmentHeadRole: (u) => u?.role === "departmentHead",
+    hasAt5sRole: (u) => u?.role === "at5s",
+    getActivePeriodId: () => "period-1",
+    FIVE_S_PERIOD_TYPE: "5s",
+  });
   vm.runInContext(readFunction("app.js", "isTabAllowed"), context);
-  for (const tab of ["mobile-5s", "mobile-safety", "mobile-findings"]) {
+  for (const tab of ["mobile-safety", "mobile-findings"]) {
     assert.equal(context.isTabAllowed(tab), false);
     for (const role of ["viewer", "departmentHead", "zoneOwner", "assessor5s", "assessorSafety", "admin"]) {
       context.currentUser = { role };
       assert.equal(context.isTabAllowed(tab), true, role + ": " + tab);
     }
     context.currentUser = null;
+  }
+  assert.equal(context.isTabAllowed("mobile-5s"), false);
+  for (const role of ["departmentHead", "zoneOwner", "assessor5s", "admin"]) {
+    context.currentUser = { role };
+    assert.equal(context.isTabAllowed("mobile-5s"), true, role + ": mobile-5s");
+  }
+  for (const role of ["viewer", "assessorSafety"]) {
+    context.currentUser = { role };
+    assert.equal(context.isTabAllowed("mobile-5s"), false, role + ": mobile-5s");
   }
 });
 
@@ -93,16 +112,24 @@ test("mobile 5S shows source filtering to admins and defaults each role to its o
   const overlay = { querySelector: () => screen };
   const vmContext = vm.createContext({
     SECTION_FILTERS: [{ id: "all", label: "Tất cả" }],
+    MULTI_DAY_MOBILE_SCORE_SOURCES: new Set(["at5s", "departmentHead"]),
     activeSectionFilter: "all",
     currentFiveSZoneId: "zone-1",
     currentFiveSScoreSource: "",
     currentFiveSScoreSourceUserKey: null,
+    currentFiveSScoreSourceAreaKey: null,
+    currentFiveSScoreDate: "",
+    currentFiveSDate: "",
     checkFiveSPermission: () => true,
     buildFlattened5SCriteria: () => [],
     calculateArea5SScoreStat: () => ({ completed: 0, total: 44, avgText: "--", pct: 0 }),
     render5SItemCards: () => "cards",
     wireFiveSEvents() {},
     escapeHtml: (value) => String(value),
+    formatIsoToVnDate: (value) => String(value || ""),
+    resolveMobileFiveSDate: () => "2026-10-01",
+    getMobileScoreDateBounds: () => ({ min: "2026-10-01", max: "2026-10-31" }),
+    sortMobileAreasByCode: (areas) => [...(areas || [])],
     window: {},
   });
   for (const name of ["filterMobileAreasByPermission", "resolveMobileAreaId", "getDefaultMobileFiveSScoreSource", "renderFiveSScreen"]) {
@@ -184,8 +211,21 @@ test("mobile safety submit saves a new report", async () => {
   };
   const sandbox = vm.createContext({
     editingSafetyRecordId: "",
+    currentSafetyZoneId: "",
     uploadedSafetyPhotoData: "",
     uploadedSafetyAfterPhotoData: "",
+    safetyAnnotationDraftId: null,
+    pendingSafetyPhotoAnnotations: [],
+    pendingSafetyAfterPhotoAnnotations: [],
+    currentSafetyHistoryPage: 1,
+    currentSafetyMonthKey: "",
+    safetyHistoryPageKey: "",
+    safetyHistoryPageData: null,
+    isSubmittingSafety: false,
+    parseSafetyIssueDateInput: (val) => ({ day: "1", month: "10", year: "2026", date: String(val || "2026-10-01") }),
+    parsePositiveIntegerInput: (val) => Number(val) || 1,
+    monthKeyForSafetyRecord: () => "2026-10",
+    scrollMobileTargetIntoView: () => {},
     showMobileToast: (message) => messages.push(message),
     renderSafetyScreen() {},
   });

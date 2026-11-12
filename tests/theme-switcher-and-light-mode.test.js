@@ -37,6 +37,45 @@ test('Theme Switcher & Light/Dark Mode Implementation', async (t) => {
     assert.match(css, /\.theme-toggle-btn\.is-active/, 'styles.css styles active theme button');
   });
 
+  await t.test('styles.css keeps dark theme cyber top nav free of light theme contamination', () => {
+    const css = fs.readFileSync('styles.css', 'utf8');
+    // Ensure home cyber top nav is not forced to light gradient
+    assert.doesNotMatch(
+      css,
+      /body:has\(#tab-home\.is-active\)\s*\.cyber-top-nav\.app-header\s*\.header-quick-nav\s*\{[^}]*linear-gradient\(120deg/s,
+      'Dark cyber top nav quick nav must not be given light theme gradient background'
+    );
+    // Ensure dark theme cyber top nav quick nav is explicitly styled with dark background
+    assert.match(
+      css,
+      /\[data-theme="dark"\]\s*\.cyber-top-nav\s*\.header-quick-nav/,
+      'Dark theme cyber top nav quick nav must have explicit dark styles'
+    );
+    // Ensure user name in dark header is white
+    assert.match(
+      css,
+      /\.app-header\s*\.cyber-user-name[^}]*color:\s*#ffffff/s,
+      'Username in app header must be white in dark mode'
+    );
+    // Ensure light theme quick nav text has high-contrast blue and active white pill with blue text
+    assert.match(
+      css,
+      /\[data-theme="light"\]\s*\.cyber-top-nav\s*\.header-quick-nav\s*\.tab-button\s*span[^}]*color:\s*#123f83/s,
+      'Light mode quick nav tab button span must have #123f83 blue text'
+    );
+    assert.match(
+      css,
+      /\[data-theme="light"\]\s*\.cyber-top-nav\s*\.header-quick-nav\s*\.tab-button\.active[^}]*background:\s*#ffffff[^}]*color:\s*#1d4ed8/s,
+      'Light mode active quick nav button must have white capsule background and #1d4ed8 blue text'
+    );
+    // Ensure subpage light header is scoped to theme-light or [data-theme="light"]
+    assert.doesNotMatch(
+      css,
+      /(?:^|\n)body:not\(:has\(#tab-home\.is-active\)\)\s*\.app-header\s*\{/,
+      'Subpage light header must not match all themes without theme-light scoping'
+    );
+  });
+
   await t.test('service-worker.js caches images/anhnhamay.jpg', () => {
     const sw = fs.readFileSync('service-worker.js', 'utf8');
     assert.match(sw, /\/images\/anhnhamay\.jpg/, 'service-worker caches anhnhamay.jpg');

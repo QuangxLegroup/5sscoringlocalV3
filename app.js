@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const DATA_VERSION = 5;
+  const DATA_VERSION = 6;
   const PAGE_JSON_FORMAT = "legroup-5s-page-json";
   const PAGE_JSON_VERSION = 1;
   const BENCHMARK = 3.3;
@@ -250,7 +250,7 @@
     { code: "8", departmentHead: "Mr Trọng", summaryGroup: "Mr Trọng", scorerName: "Mr Quyền", highlight: false },
     { code: "9", departmentHead: "Mr Trọng", summaryGroup: "Mr Trọng", scorerName: "Mr Huy", highlight: false },
     { code: "16", departmentHead: "Mrs Nga", summaryGroup: "Mr Trung", scorerName: "Mr Trung", highlight: false },
-    { code: "17", departmentHead: "Mrs Nga", summaryGroup: "Mr Trung", scorerName: "Mrs Nga", highlight: false },
+    { code: "17", departmentHead: "Mrs Nga", summaryGroup: "Mrs Nga", scorerName: "Mrs Nga", highlight: false },
     { code: "2", departmentHead: "Mrs Duyên", summaryGroup: "Mrs Liên", scorerName: "Mr Hương", highlight: false },
     { code: "3", departmentHead: "Mrs Duyên", summaryGroup: "Mrs Liên", scorerName: "Mrs Thắng", highlight: false },
     { code: "24", departmentHead: "", summaryGroup: "Mr Long", scorerName: "Mr Long", highlight: false },
@@ -295,6 +295,8 @@
     assessorTitle: document.getElementById("assessor-title"),
     assessorSheet: document.getElementById("assessor-sheet"),
     summaryPeriodSelect: document.getElementById("summary-period-select"),
+    summaryPeriodMonthFilter: document.getElementById("summary-period-month-filter"),
+    summaryPeriodYearFilter: document.getElementById("summary-period-year-filter"),
     summaryScoreSource: document.getElementById("summary-score-source"),
     summaryTable: document.getElementById("summary-table"),
     summaryTitle: document.getElementById("summary-title"),
@@ -303,6 +305,7 @@
     adminScoreSheetArea: document.getElementById("admin-score-sheet-area"),
     adminScoreSheetDateField: document.getElementById("admin-score-sheet-date-field"),
     adminScoreSheetDate: document.getElementById("admin-score-sheet-date"),
+    adminScoreSheetAddDateButton: document.getElementById("add-admin-score-sheet-date-button"),
     adminScoreSheet: document.getElementById("admin-score-sheet"),
     adminScoreSheetTitle: document.getElementById("admin-score-sheet-title"),
     adminScoreSheetProgress: document.getElementById("admin-score-sheet-progress"),
@@ -433,13 +436,14 @@
   let modalSubmitSucceeded = false;
   let snapshotSeedPromise = null;
   let scoreRecordIndex = null;
+  let adminScoreSheetPendingDate = null;
   let activeCatalogScope = FIVE_S_PERIOD_TYPE;
   let activeAccountScope = FIVE_S_PERIOD_TYPE;
   let expandedCatalogScope = "";
   let expandedAccountScope = "";
-  let activeHistoryScope = FIVE_S_PERIOD_TYPE;
-  let expandedHistoryScope = FIVE_S_PERIOD_TYPE;
-  const HISTORY_RETENTION_MONTHS = 3;
+  let activeHistoryScope = SAFETY_PERIOD_TYPE;
+  let expandedHistoryScope = SAFETY_PERIOD_TYPE;
+  const HISTORY_RETENTION_MONTHS = 12;
 
   function isHistoryEntryExpired(entry, months = HISTORY_RETENTION_MONTHS) {
     if (!entry) {
@@ -493,6 +497,7 @@
     "mobile-safety": "/mobile/safety",
     "audit-log": "/audit-log",
     "guide-setup": "/guide-setup",
+    "safety-live": "/safety-live",
   });
   const SAFETY_REPORT_OPTIONS = Object.freeze([
     { id: "assessment", route: "/safety/danh-gia-an-toan", title: "ĐÁNH GIÁ AN TOÀN" },
@@ -679,6 +684,110 @@
 
   function normalizeCatalogType(type) {
     return normalizePeriodType(type) === SAFETY_PERIOD_TYPE ? SAFETY_PERIOD_TYPE : FIVE_S_PERIOD_TYPE;
+  }
+
+  const AUDIT_LOG_SCOPE_OPTIONS = [
+    { value: SAFETY_PERIOD_TYPE, label: "Đánh giá an toàn", sheet: "Đánh giá AT" },
+    { value: "fiveSFindings", label: "Vấn đề 5S", sheet: "Vấn đề 5S" },
+    { value: "fiveSScoring", label: "Bảng điểm 5S", sheet: "Bảng điểm 5S" },
+    { value: "catalog", label: "Danh mục", sheet: "Danh mục" },
+    { value: "accounts", label: "Tài khoản", sheet: "Tài khoản" },
+  ];
+
+  function normalizeAuditLogScope(scope) {
+    const value = String(scope || "").trim().toLowerCase();
+    if (["catalog", "accounts", "fivesfindings", "fivesscoring"].includes(value)) {
+      return value === "fivesfindings" ? "fiveSFindings" : value === "fivesscoring" ? "fiveSScoring" : value;
+    }
+    if (value === FIVE_S_PERIOD_TYPE) return "fiveSFindings";
+    return SAFETY_PERIOD_TYPE;
+  }
+
+  function auditLogScopeLabel(scope) {
+    return AUDIT_LOG_SCOPE_OPTIONS.find((option) => option.value === normalizeAuditLogScope(scope))?.label || "Đánh giá an toàn";
+  }
+
+  function getAuditChangeCategory(change, entry = {}) {
+    const explicitCategory = String(change?.category || "").trim();
+    if (AUDIT_LOG_SCOPE_OPTIONS.some((option) => option.value === explicitCategory)) return explicitCategory;
+
+    const changeSection = String(change?.section || "").trim().toLocaleLowerCase("vi");
+    const changeLabel = String(change?.label || "").trim().toLocaleLowerCase("vi");
+    const changeTarget = String(change?.target || "").trim().toLocaleLowerCase("vi");
+    const changeScope = String(change?.scope || "").trim().toLocaleLowerCase("vi");
+
+    if (changeScope === "fivesscoring" || changeScope === "fives_scoring" || changeScope === "score" || changeScope === "scores") return "fiveSScoring";
+    if (changeScope === "fivesfindings" || changeScope === "findings") return "fiveSFindings";
+    if (changeScope === "accounts" || changeScope === "account") return "accounts";
+
+    if (/đánh giá an toàn|báo cáo đánh giá an toàn|báo cáo at/.test(changeSection)) {
+      return SAFETY_PERIOD_TYPE;
+    }
+    if (/chấm điểm 5s|bảng điểm 5s|phiếu chấm 5s/.test(changeSection)) {
+      return "fiveSScoring";
+    }
+    if (/vấn đề 5s|5s finding/.test(changeSection)) {
+      return "fiveSFindings";
+    }
+    if (/tài khoản/.test(changeSection)) {
+      return "accounts";
+    }
+    if (/danh mục|phân công|cấu hình phòng ban|nhận diện nguy cơ|mục tiêu đánh giá|kỳ đánh giá|thiết lập báo cáo/.test(changeSection)) {
+      return "catalog";
+    }
+
+    const changeText = [changeSection, changeLabel, changeTarget].filter(Boolean).join(" ").trim();
+    if (changeText) {
+      if (/đánh giá an toàn|đánh giá at|báo cáo đánh giá an toàn|mối nguy hiểm phát hiện|báo cáo at/.test(changeText)) {
+        return SAFETY_PERIOD_TYPE;
+      }
+      if (/chấm điểm 5s|bảng điểm 5s|phiếu chấm 5s|điểm chấm|tiêu chí chấm/.test(changeText)) {
+        return "fiveSScoring";
+      }
+      if (/vấn đề 5s|5s finding|vấn đề phát hiện|ảnh vấn đề|ảnh sau xử lý 5s|hạng mục 5s/.test(changeText)) {
+        return "fiveSFindings";
+      }
+      if (/tài khoản|quyền tài khoản|thông tin tài khoản|mật khẩu/.test(changeText)) {
+        return "accounts";
+      }
+      if (/danh mục|ban at\s*-\s*5s|mục tiêu|kỳ đánh giá|thiết lập|phân công|quản lý zone|nhận diện nguy cơ|trưởng phòng|assessor/.test(changeText)) {
+        return "catalog";
+      }
+      if (changeScope === SAFETY_PERIOD_TYPE) return SAFETY_PERIOD_TYPE;
+      if (changeScope === FIVE_S_PERIOD_TYPE && /finding|vấn đề/.test(changeText)) return "fiveSFindings";
+    }
+
+    // Fallback for legacy single-item entries where change text is absent:
+    const entrySection = String(entry?.sectionLabel || entry?.subjectLabel || "").trim().toLocaleLowerCase("vi");
+    const entryLabel = String(entry?.changeLabel || entry?.latestChange || entry?.note || "").trim().toLocaleLowerCase("vi");
+    const entryTarget = String(entry?.auditTarget || entry?.periodLabel || "").trim().toLocaleLowerCase("vi");
+    const entryText = [entrySection, entryLabel, entryTarget].filter(Boolean).join(" ").trim();
+
+    if (entry?.itemId || entry?.criterionId || entry?.scoreSource || entry?.scoreDate
+      || /chấm điểm 5s|bảng điểm 5s|phiếu chấm 5s|điểm chấm|tiêu chí chấm/.test(entryText)) {
+      return "fiveSScoring";
+    }
+    if (/vấn đề 5s|5s finding|vấn đề phát hiện|ảnh vấn đề|ảnh sau xử lý 5s|hạng mục 5s/.test(entryText)) {
+      return "fiveSFindings";
+    }
+    if (/đánh giá an toàn|đánh giá at|báo cáo đánh giá an toàn|mối nguy hiểm phát hiện/.test(entryText)) {
+      return SAFETY_PERIOD_TYPE;
+    }
+    if (/tài khoản|quyền tài khoản|thông tin tài khoản/.test(entryText)) {
+      return "accounts";
+    }
+    if (/danh mục|ban at\s*-\s*5s|mục tiêu|kỳ đánh giá|thiết lập|phân công|quản lý zone|nhận diện nguy cơ|trưởng phòng|assessor/.test(entryText)) {
+      return "catalog";
+    }
+
+    // Legacy records sometimes have no typed category. Use the old safety
+    // scope only when it is explicit; a generic 5S scope cannot distinguish
+    // score sheets from findings, so leave ambiguous entries under catalog.
+    const explicitScopes = [change?.scope, entry?.scope,
+      ...(Array.isArray(entry?.scopes) ? entry.scopes : []),
+    ].filter(Boolean).map((value) => String(value).trim().toLocaleLowerCase("vi"));
+    if (explicitScopes.includes(SAFETY_PERIOD_TYPE)) return SAFETY_PERIOD_TYPE;
+    return "catalog";
   }
 
   function normalizeFiveSChartTargetValue(value, fallback = BENCHMARK) {
@@ -1477,12 +1586,38 @@
 
   // ─── Load from local storage (once on startup) ──────────────────────────────
 
+  function splitFiveSSummaryGroupForDistinctZoneOwners(areas, managers) {
+    if (!Array.isArray(areas)) return;
+    const managerById = new Map((managers || []).map((manager) => [manager.id, manager]));
+    const zone16 = areas.find((area) => String(area.code || "").trim() === "16");
+    const zone17 = areas.find((area) => String(area.code || "").trim() === "17");
+    if (!zone16 || !zone17) return;
+
+    const sharedGroup16 = String(zone16.summaryGroup || "").trim();
+    const sharedGroup17 = String(zone17.summaryGroup || "").trim();
+    if (!sharedGroup16 || sharedGroup16 !== sharedGroup17) return;
+
+    const owner16 = String(zone16.responsibleName || zone16.scorerName || managerById.get(zone16.scorerId)?.name || "").trim();
+    const owner17 = String(zone17.responsibleName || zone17.scorerName || managerById.get(zone17.scorerId)?.name || "").trim();
+    if (!owner16 || !owner17 || departmentHeadKey(owner16) === departmentHeadKey(owner17)) return;
+
+    zone16.summaryGroup = owner16;
+    zone17.summaryGroup = owner17;
+  }
+
   async function loadStateFromStorage() {
     const snapshot = await dbRef().once("value");
     const raw = snapshot.val();
 
     if (raw) {
       const normalized = normalizeState(raw);
+      if ((Number(raw.version) || 0) < DATA_VERSION) {
+        splitFiveSSummaryGroupForDistinctZoneOwners(normalized.areas, normalized.managers);
+        const activeFiveSPeriod = normalized.periods.find((period) => period.id === normalized.activeFiveSPeriodId);
+        if (activeFiveSPeriod?.settingsSnapshot?.areas) {
+          splitFiveSSummaryGroupForDistinctZoneOwners(activeFiveSPeriod.settingsSnapshot.areas, activeFiveSPeriod.settingsSnapshot.managers);
+        }
+      }
       cleanupDeprecatedEmailStorage(raw, normalized).catch(() => {});
       cleanupExpiredHistoryStorage(raw).catch(() => {});
       if (raw.version !== DATA_VERSION) {
@@ -1938,8 +2073,21 @@
 
   function buildSafetyAuditDetails(previous, next, areaCode) {
     const target = `Zone ${areaCode || "?"}`;
-    if (!previous) {
-      return [{ action: "Thêm", label: "Báo cáo đánh giá an toàn", target, before: "", after: String(next.note || "").trim() }];
+    if (!previous || !next) {
+      const isDelete = Boolean(previous);
+      const source = previous || next || {};
+      return Object.entries(SAFETY_AUDIT_FIELDS).flatMap(([field, label]) => {
+        if ((field === "issueDay" || field === "issueMonth") && source.issueDate) return [];
+        const value = source[field];
+        if (isAuditValueEmpty(value)) return [];
+        return [{
+          action: isDelete ? "Xóa" : "Thêm",
+          label,
+          target,
+          before: isDelete ? formatAuditValue(value, field) : "",
+          after: isDelete ? "Đã xóa" : formatAuditValue(value, field),
+        }];
+      });
     }
     return Object.entries(SAFETY_AUDIT_FIELDS).flatMap(([field, label]) => {
       const before = previous[field];
@@ -2004,9 +2152,9 @@
         "updatedAt",
       ];
       const patch = Object.fromEntries(countermeasureFields.map((field) => [field, record[field]]));
-      await dbRef(`safetyRecords/${record.id}`).update(patch);
+      await dbRef(`safetyRecords/${record.id}`).update(patch, { requireServerAcknowledgement: true });
     } else {
-      await dbRef(`safetyRecords/${record.id}`).set(record);
+      await dbRef(`safetyRecords/${record.id}`).set(record, { requireServerAcknowledgement: true });
     }
     const area = getAreaForPeriod(record.periodId, record.areaId);
     const areaCode = area?.code || String(record.issueLocation || "").replace(/^zone\s*/i, "").trim();
@@ -2026,6 +2174,7 @@
         details,
       });
     }
+    return state.safetyRecords.find((item) => item.id === record.id) || record;
   }
 
   async function saveSafetyPhotoAnnotations(recordId, field, annotations) {
@@ -2088,34 +2237,40 @@
     return true;
   }
 
-  async function saveFiveSFindingPhotoAnnotations(sheetId, rowIndex, annotations, expectedPhotoUrl = "") {
+  async function saveFiveSFindingPhotoAnnotations(sheetId, rowIndex, annotations, expectedPhotoUrl = "", photoField = "photoDataUrl") {
     const sheet = state.fiveSFindings.find((item) => item.id === sheetId);
     const index = Number(rowIndex);
     const row = Number.isInteger(index) ? sheet?.rows?.[index] : null;
-    if (!sheet || !row?.photoDataUrl) throw new Error("Ảnh vấn đề 5S không còn tồn tại.");
-    if (expectedPhotoUrl && row.photoDataUrl !== expectedPhotoUrl) throw new Error("Ảnh đã thay đổi. Vui lòng tải lại trước khi khoanh.");
+    const isAfterPhoto = photoField === "afterPhotoDataUrl";
+    const photoUrlKey = isAfterPhoto ? "afterPhotoDataUrl" : "photoDataUrl";
+    const annotationKey = isAfterPhoto ? "afterPhotoAnnotations" : "photoAnnotations";
+    if (!sheet || !row?.[photoUrlKey]) throw new Error("Ảnh vấn đề 5S không còn tồn tại.");
+    if (expectedPhotoUrl && row[photoUrlKey] !== expectedPhotoUrl) throw new Error("Ảnh đã thay đổi. Vui lòng tải lại trước khi khoanh.");
     assertFiveSFindingAccess(sheet);
-    if (!window.FiveSFindingsPage?.canEditSheet?.(createPageContext(), sheet)) {
+    const pageContext = createPageContext();
+    const canEdit = window.FiveSFindingsPage?.canEditSheet?.(pageContext, sheet)
+      || (isAfterPhoto && canManageFiveSFindingCountermeasure(sheet, currentUser));
+    if (!canEdit) {
       throw new Error("Bạn không có quyền lưu nét khoanh trên ảnh vấn đề 5S này.");
     }
     const nextAnnotations = normalizeSafetyPhotoAnnotations(annotations);
-    if (JSON.stringify(normalizeSafetyPhotoAnnotations(row.photoAnnotations)) === JSON.stringify(nextAnnotations)) return true;
+    if (JSON.stringify(normalizeSafetyPhotoAnnotations(row[annotationKey])) === JSON.stringify(nextAnnotations)) return true;
     const previousSheet = sheet;
-    const annotationsByRow = {
+    const photoAnnotationsByRow = isAfterPhoto ? null : {
       ...(sheet.photoAnnotationsByRow && typeof sheet.photoAnnotationsByRow === "object" ? sheet.photoAnnotationsByRow : {}),
       ...Object.fromEntries((sheet.rows || []).flatMap((item, rowNumber) => (
         Array.isArray(item?.photoAnnotations) && item.photoAnnotations.length
           ? [[String(rowNumber), item.photoAnnotations]]
           : []
       ))),
+      [index]: nextAnnotations,
     };
-    const photoAnnotationsByRow = { ...annotationsByRow, [index]: nextAnnotations };
     const nextSheet = {
       ...sheet,
       rows: sheet.rows.map((item, rowNumber) => rowNumber === index
-        ? { ...item, photoAnnotations: nextAnnotations }
+        ? { ...item, [annotationKey]: nextAnnotations }
         : item),
-      photoAnnotationsByRow,
+      ...(isAfterPhoto ? {} : { photoAnnotationsByRow }),
       updatedAt: new Date().toISOString(),
       updatedBy: currentUser?.id || "",
     };
@@ -2123,32 +2278,37 @@
     const stateIndex = state.fiveSFindings.findIndex((item) => item.id === sheetId);
     if (stateIndex >= 0) state.fiveSFindings[stateIndex] = nextSheet;
     try {
-      // Keep large photos and finding rows out of each annotation save request.
-      await dbRef(`fiveSFindings/${sheetId}`).update({
-        photoAnnotationsByRow,
-        updatedAt: nextSheet.updatedAt,
-        updatedBy: nextSheet.updatedBy,
-      });
+      if (isAfterPhoto) {
+        await dbRef().update({ [`fiveSFindings/${sheetId}`]: nextSheet });
+      } else {
+        // Keep large photos and finding rows out of each issue-photo annotation request.
+        await dbRef(`fiveSFindings/${sheetId}`).update({
+          photoAnnotationsByRow,
+          updatedAt: nextSheet.updatedAt,
+          updatedBy: nextSheet.updatedBy,
+        });
+      }
     } catch (error) {
       if (state.fiveSFindings[stateIndex] === nextSheet) state.fiveSFindings[stateIndex] = previousSheet;
       throw error;
     }
     const area = getAreaForPeriod(sheet.periodId, sheet.areaId);
     const auditTarget = `Zone ${area?.code || "?"} · dòng ${index + 1}`;
+    const annotationLabel = isAfterPhoto ? "Nét khoanh ảnh sau xử lý 5S" : "Nét khoanh ảnh vấn đề 5S";
     await logDetailedHistoryChange({
       sectionLabel: "Vấn đề 5S",
       action: nextAnnotations.length ? "Sửa" : "Xóa",
       target: auditTarget,
-      summary: `${nextAnnotations.length ? "Sửa" : "Xóa"} nét khoanh ảnh vấn đề 5S · ${auditTarget}`,
+      summary: `${nextAnnotations.length ? "Sửa" : "Xóa"} ${annotationLabel.toLocaleLowerCase("vi")} · ${auditTarget}`,
       scope: FIVE_S_PERIOD_TYPE,
       periodId: sheet.periodId,
       areaId: sheet.areaId,
       areaCode: area?.code || "",
       details: [{
         action: nextAnnotations.length ? "Sửa" : "Xóa",
-        label: "Nét khoanh ảnh vấn đề",
+        label: isAfterPhoto ? "Nét khoanh ảnh sau xử lý" : "Nét khoanh ảnh vấn đề",
         target: auditTarget,
-        before: `${normalizeSafetyPhotoAnnotations(row.photoAnnotations).length} nét khoanh`,
+        before: `${normalizeSafetyPhotoAnnotations(row[annotationKey]).length} nét khoanh`,
         after: `${nextAnnotations.length} nét khoanh`,
       }],
     });
@@ -2163,7 +2323,7 @@
   }
 
   async function deleteSafetyRecordFromDb(recordId, recordSnapshot = null) {
-    await dbRef(`safetyRecords/${recordId}`).remove();
+    await dbRef(`safetyRecords/${recordId}`).remove({ requireServerAcknowledgement: true });
     const record = recordSnapshot || state.safetyRecords.find((item) => item.id === recordId);
     if (!record) return;
     const area = getAreaForPeriod(record.periodId, record.areaId);
@@ -2179,7 +2339,7 @@
       periodId: record.periodId,
       areaId: record.areaId,
       areaCode,
-      details: [{ action: "Xóa", label: "Báo cáo đánh giá an toàn", target: `Zone ${areaCode || "?"}`, before: String(record.note || ""), after: "Đã xóa" }],
+      details: buildSafetyAuditDetails(record, null, areaCode),
     });
   }
 
@@ -2194,7 +2354,10 @@
       [`safetyRecords/${record.id}`]: null,
       [`deletedSafetyRecords/${deletedMarker.id}`]: keepDeletedMarker ? deletedMarker : null,
     };
-    await updateRootWithOptionalRenderSuppression(updates, { suppressRender: true });
+    await updateRootWithOptionalRenderSuppression(updates, {
+      suppressRender: true,
+      requireServerAcknowledgement: true,
+    });
     state.safetyRecords = state.safetyRecords.filter((item) => item.id !== record.id);
     state.deletedSafetyRecords = keepDeletedMarker
       ? [
@@ -2215,7 +2378,7 @@
       periodId: recordCopy.periodId,
       areaId: recordCopy.areaId,
       areaCode,
-      details: [{ action: "Xóa", label: "Báo cáo đánh giá an toàn", target: `Zone ${areaCode || "?"}`, before: String(recordCopy.note || ""), after: "Đã xóa" }],
+      details: buildSafetyAuditDetails(recordCopy, null, areaCode),
     });
     return true;
   }
@@ -2327,6 +2490,9 @@
       return entry.changes
         .filter(isMeaningfulAuditItem)
         .map((change) => ({
+          // A legacy session can contain mixed domains. Its top-level category
+          // must not be copied onto every change in the session.
+          category: String(change.category || (entry.changes.length === 1 ? entry.category : "") || ""),
           section: String(change.section || entry.sectionLabel || entry.subjectLabel || "Dữ liệu"),
           action: ["Thêm", "Sửa", "Xóa"].includes(change.action) ? change.action : getAuditAction(entry),
           label: String(change.label || entry.changeLabel || getHistoryChangeText(entry)),
@@ -2341,6 +2507,7 @@
       return entry.auditChanges
         .filter(isMeaningfulAuditItem)
         .map((change) => ({
+          category: String(change.category || (entry.auditChanges.length === 1 ? entry.category : "") || ""),
           section: String(change.section || entry.sectionLabel || entry.subjectLabel || "Dữ liệu"),
           action: ["Thêm", "Sửa", "Xóa"].includes(change.action) ? change.action : getAuditAction(entry),
           label: String(change.label || entry.changeLabel || getHistoryChangeText(entry)),
@@ -2352,6 +2519,7 @@
         }));
     }
     return [{
+      category: String(entry?.category || ""),
       section: String(entry?.sectionLabel || entry?.subjectLabel || "Dữ liệu"),
       action: getAuditAction(entry),
       label: getHistoryChangeText(entry),
@@ -2364,108 +2532,30 @@
   }
 
   function stageHistoryEntry(entry) {
-    if (!isMeaningfulHistoryChange(entry)) {
-      if (entry?.id) {
-        state.history = (state.history || []).filter((item) => item.id !== entry.id);
-      }
-      return;
-    }
-
-    const timestamp = entry.timestamp || new Date().toISOString();
-    const normalizedEntry = { ...entry, timestamp };
-    if (!currentUser || !currentSessionId) {
-      if (!state.history.some((item) => item.id === normalizedEntry.id)) {
-        state.history.unshift(normalizedEntry);
-      }
-      return normalizedEntry;
-    }
-
-    const sessionHistoryId = currentSessionHistoryId || normalizedEntry.id || makeId("history");
-    currentSessionHistoryId = sessionHistoryId;
-    saveSession(currentUser);
-    const existing = (state.history || []).find((item) => item.id === sessionHistoryId || item.sessionId === currentSessionId);
-    const changeCount = Number(existing?.changeCount || 0) + 1;
-    const latestChange = getHistoryChangeText(normalizedEntry);
-    const addedChanges = getAuditChanges(normalizedEntry).map((change) => ({ ...change, timestamp }));
-    const changes = [...(Array.isArray(existing?.changes) ? existing.changes : []), ...addedChanges];
-    const scopes = [...new Set([
-      ...(Array.isArray(existing?.scopes) ? existing.scopes : existing?.scope ? [existing.scope] : []),
-      ...addedChanges.map((change) => change.scope).filter(Boolean),
-    ].map(normalizeCatalogType))];
-    state.history = (state.history || []).filter((item) => item.id !== normalizedEntry.id && item.id !== sessionHistoryId && item.sessionId !== currentSessionId);
-
-    const sessionPeriodId = normalizedEntry.periodId || existing?.periodId || "";
-    const sessionScope = normalizedEntry.scope || existing?.scope || (sessionPeriodId ? getCatalogTypeForPeriod(sessionPeriodId) : "");
-    const sessionEntry = {
-      ...(existing || {}),
-      id: sessionHistoryId,
-      timestamp,
-      periodId: sessionPeriodId,
-      periodLabel: normalizedEntry.periodLabel || existing?.periodLabel || "",
-      userName: getAccountDisplayName(currentUser, sessionScope, sessionPeriodId),
-      employeeCode: getHistoryEmployeeCode(currentUser, sessionScope, sessionPeriodId) || String(existing?.employeeCode || "").trim(),
-      accountId: currentUser?.id || "",
-      username: currentUser?.username || "",
-      areaId: normalizedEntry.areaId || existing?.areaId || "",
-      areaCode: normalizedEntry.areaCode || existing?.areaCode || "",
-      itemId: normalizedEntry.itemId || existing?.itemId || "",
-      itemCode: normalizedEntry.itemCode || existing?.itemCode || "",
-      itemName: normalizedEntry.itemName || existing?.itemName || "",
-      criterionId: normalizedEntry.criterionId || existing?.criterionId || "",
-      criterionLabel: normalizedEntry.criterionLabel || existing?.criterionLabel || "",
-      subjectLabel: "Phiên đăng nhập",
-      beforeLabel: existing?.beforeLabel || normalizedEntry.beforeLabel || "",
-      afterLabel: normalizedEntry.afterLabel || existing?.afterLabel || "",
-      scoreSource: normalizedEntry.scoreSource || existing?.scoreSource || "",
-      source: normalizedEntry.source || existing?.source || "",
-      sessionId: currentSessionId,
-      sessionStartedAt: currentSessionStartedAt || existing?.sessionStartedAt || timestamp,
-      sessionLastChangedAt: timestamp,
-      changeCount,
-      changes,
-      scopes,
-      latestChange,
-      changeLabel: `Phiên đăng nhập có ${changes.length} thay đổi`,
-      note: changeCount === 1 ? latestChange : `Thay đổi gần nhất: ${latestChange}`,
-    };
-
-    state.history.unshift(sessionEntry);
-    return sessionEntry;
+    if (!isMeaningfulHistoryChange(entry)) return null;
+    // The server is the audit source of truth. Keep this value for legacy write
+    // payloads, but do not show an optimistic log before its data transaction commits.
+    return { ...entry, timestamp: entry.timestamp || new Date().toISOString() };
   }
 
   async function saveHistoryEntry(entry, writeOptions = {}) {
-    const stagedEntry = stageHistoryEntry(entry);
-    if (!stagedEntry) {
-      return;
-    }
-
-    const expired = (state.history || []).filter((item) => isHistoryEntryExpired(item));
-    if (expired.length) {
-      state.history = (state.history || []).filter((item) => !isHistoryEntryExpired(item));
-      if (!currentUser || isAdminAccount(currentUser)) {
-        const cleanupUpdates = {};
-        expired.forEach((item) => {
-          if (item?.id) {
-            cleanupUpdates[`history/${item.id}`] = null;
-          }
-        });
-        cleanupUpdates[`history/${stagedEntry.id}`] = stagedEntry;
-        await dbRef().update(cleanupUpdates, writeOptions);
-        return;
-      }
-    }
-
-    await dbRef(`history/${stagedEntry.id}`).set(stagedEntry, writeOptions);
+    // Audit rows are created by the server in the same transaction as the data write.
+    // Client supplied history is intentionally not written independently.
+    void entry;
+    void writeOptions;
   }
 
-  async function updateRootWithOptionalRenderSuppression(updates, { suppressRender = false } = {}) {
+  async function updateRootWithOptionalRenderSuppression(updates, {
+    suppressRender = false,
+    requireServerAcknowledgement = false,
+  } = {}) {
     const shouldSuppress = suppressRender && Boolean(dataUnsubscribe);
     if (shouldSuppress) {
       suppressNextDataWatchRender += 1;
     }
 
     try {
-      await dbRef().update(updates);
+      await dbRef().update(updates, { requireServerAcknowledgement });
     } catch (error) {
       if (shouldSuppress) {
         suppressNextDataWatchRender = Math.max(0, suppressNextDataWatchRender - 1);
@@ -3012,11 +3102,18 @@
       assessors: isSafety ? source?.safetyAssessors || source?.assessors || [] : source?.assessors || [],
       areas: isSafety ? source?.safetyAreas || source?.areas || [] : source?.areas || [],
       safetyDepartmentGroups: isSafety ? source?.safetyDepartmentGroups || [] : [],
+      at5sMembers: source?.at5sMembers || state?.at5sMembers || [],
     };
   }
 
   function getCatalogTypeForPeriod(periodId) {
-    return normalizeCatalogType(getPeriod(periodId)?.type);
+    if (!periodId) return FIVE_S_PERIOD_TYPE;
+    const period = getPeriod(periodId);
+    if (period?.type) return normalizeCatalogType(period.type);
+    if (String(periodId).toLowerCase().includes("safety") || String(periodId).toLowerCase().includes("an-toan")) {
+      return SAFETY_PERIOD_TYPE;
+    }
+    return FIVE_S_PERIOD_TYPE;
   }
 
   function getMutableManagers(type = FIVE_S_PERIOD_TYPE) {
@@ -3557,8 +3654,53 @@
     return getAssessors(type).find((assessor) => assessor.id === assessorId) || null;
   }
 
-  function getAreaForPeriod(periodId, areaId) {
-    return getAreasForPeriod(periodId).find((area) => area.id === areaId) || null;
+  function getAreaForPeriod(periodId, areaId, locationHint = "") {
+    if (!areaId && !locationHint) return null;
+    const areas = getAreasForPeriod(periodId);
+    let matched = areas.find((area) => area.id === areaId);
+    if (matched) return matched;
+
+    const cleanId = String(areaId || "").trim();
+    if (cleanId) {
+      matched = areas.find((area) =>
+        String(area.code || area.templateCode || "").trim() === cleanId ||
+        String(area.id || "").toLowerCase() === cleanId.toLowerCase()
+      );
+      if (matched) return matched;
+    }
+
+    const safetyCatalogAreas = getAreas(SAFETY_PERIOD_TYPE) || [];
+    matched = safetyCatalogAreas.find((area) => area.id === areaId);
+    if (matched) return matched;
+    if (cleanId) {
+      matched = safetyCatalogAreas.find((area) =>
+        String(area.code || area.templateCode || "").trim() === cleanId ||
+        String(area.id || "").toLowerCase() === cleanId.toLowerCase()
+      );
+      if (matched) return matched;
+    }
+
+    const hint = String(locationHint || "").trim();
+    if (hint) {
+      const zoneMatch = hint.match(/Zone\s*([^\s·,]+)/i);
+      const zoneCode = zoneMatch ? zoneMatch[1].trim() : "";
+      if (zoneCode) {
+        matched = areas.find((area) => String(area.code || area.templateCode || "").trim() === zoneCode)
+          || safetyCatalogAreas.find((area) => String(area.code || area.templateCode || "").trim() === zoneCode);
+        if (matched) return matched;
+      }
+    }
+
+    for (const p of state.periods || []) {
+      if (p.id !== periodId && p.settingsSnapshot?.areas) {
+        matched = p.settingsSnapshot.areas.find((area) =>
+          area.id === areaId || (cleanId && String(area.code || area.templateCode || "").trim() === cleanId)
+        );
+        if (matched) return matched;
+      }
+    }
+
+    return null;
   }
 
   function getManagerForPeriod(periodId, scorerId) {
@@ -3813,12 +3955,23 @@
     return codes.size > 1;
   }
 
+  function personNameMatches(accountName, catalogName) {
+    if (!accountName || !catalogName) return false;
+    if (sameNormalizedText(accountName, catalogName)) return true;
+    const k1 = normalizePersonNameKey(accountName).toLowerCase();
+    const k2 = normalizePersonNameKey(catalogName).toLowerCase();
+    if (!k1 || !k2) return false;
+    if (k1 === k2) return true;
+    if (k1.endsWith(" " + k2) || k2.endsWith(" " + k1)) return true;
+    return false;
+  }
+
   function accountMatchesCatalogPerson(account, person) {
     if (!account || !person) return false;
     const accountCode = employeeCodeKey(account.employeeCode);
     const personCode = employeeCodeKey(person.employeeCode);
     if (accountCode && personCode) return accountCode === personCode;
-    const sameName = getAccountIdentityNames(account).some((name) => sameNormalizedText(name, person.name));
+    const sameName = getAccountIdentityNames(account).some((name) => personNameMatches(name, person.name));
     return sameName && !hasAmbiguousCatalogEmployeeCode(person.name);
   }
 
@@ -3986,15 +4139,19 @@
 
   function isSafetyAssessor(account) {
     return !isViewerAccount(account) && (hasAt5sRole(account) || (hasAccountAccessType(account, SAFETY_PERIOD_TYPE)
-      && getAccountRolesForType(account, SAFETY_PERIOD_TYPE).some((role) => [ROLE_ZONE_OWNER, ROLE_ASSESSOR_SAFETY].includes(role))));
+      && getAccountRolesForType(account, SAFETY_PERIOD_TYPE).includes(ROLE_ASSESSOR_SAFETY)));
   }
 
   function canUseSafety(account) {
     return !isViewerAccount(account) && (isAdminAccount(account) || hasAt5sRole(account) || hasDepartmentHeadRole(account) || hasAccountAccessType(account, SAFETY_PERIOD_TYPE));
   }
 
-  function canAddSafetyEvaluation(account) {
-    return Boolean(account) && !isViewerAccount(account);
+  function canAddSafetyEvaluation(account, periodId = getActivePeriodId(SAFETY_PERIOD_TYPE)) {
+    if (!account || isViewerAccount(account)) return false;
+    if (isAdminAccount(account) || hasAt5sRole(account)) return true;
+    if (hasDepartmentHeadRole(account, periodId)) return true;
+    return hasAccountAccessType(account, SAFETY_PERIOD_TYPE)
+      && getAccountRolesForType(account, SAFETY_PERIOD_TYPE, periodId).includes(ROLE_ASSESSOR_SAFETY);
   }
 
   function sameNormalizedText(left, right) {
@@ -4172,6 +4329,57 @@
     return managerIds.size === 0 && getAccountAreaIds(account, SAFETY_PERIOD_TYPE).includes(area.id);
   }
 
+  function canManageFiveSFindingCountermeasure(sheet, account = currentUser) {
+    if (!sheet || !account || isViewerAccount(account)) return false;
+    if (isAdminAccount(account)) return true;
+    const periods = getPeriodsByType(FIVE_S_PERIOD_TYPE);
+    const periodId = window.FiveSFindingsPage?.resolvePeriodId(sheet, periods) || sheet.periodId || "";
+    if (!periodId) return false;
+    const period = getPeriod(periodId);
+    if (period?.archived) return false;
+
+    const roles = getAccountRolesForType(account, FIVE_S_PERIOD_TYPE, periodId);
+    const isZoneManager = roles.includes(ROLE_ZONE_OWNER)
+      || isZoneOwnerAccount(account, FIVE_S_PERIOD_TYPE)
+      || roles.includes(ROLE_DEPARTMENT_HEAD)
+      || hasDepartmentHeadRole(account, periodId);
+    if (!isZoneManager) return false;
+
+    const areas = getAreasForPeriod(periodId);
+    const areaId = window.FiveSFindingsPage?.resolveAreaId(sheet, areas) || sheet.areaId || "";
+    const targetArea = areas.find((item) => item.id === areaId)
+      || areas.find((item) => String(item.code).trim() === String(sheet.area || "").replace(/^zone\s*/i, "").split("·")[0].trim())
+      || null;
+    if (!targetArea) return false;
+
+    if (isAreaManagedByDepartmentHead(targetArea, account) || getDepartmentHeadManagedAreaIds(account, periodId).has(targetArea.id)) {
+      return true;
+    }
+    if (getAllowedAreaIds(account, periodId).has(targetArea.id)) {
+      return true;
+    }
+
+    const managerIds = new Set(getAccountPersonIdsForRole(account, FIVE_S_PERIOD_TYPE, ROLE_ZONE_OWNER, periodId));
+    const primaryManagerId = getAccountPersonId(account, FIVE_S_PERIOD_TYPE);
+    if (primaryManagerId) managerIds.add(primaryManagerId);
+    if (targetArea.scorerId && managerIds.has(targetArea.scorerId)) return true;
+
+    const assignedAreaIds = new Set(getAccountAreaIds(account, FIVE_S_PERIOD_TYPE));
+    if (assignedAreaIds.has(targetArea.id)
+      || assignedAreaIds.has(String(targetArea.code))
+      || assignedAreaIds.has(`Zone ${targetArea.code}`)) {
+      return true;
+    }
+
+    if (targetArea.scorerId) {
+      const areaManager = getPeriodCatalogManagers(FIVE_S_PERIOD_TYPE, periodId).find((m) => m.id === targetArea.scorerId);
+      if (areaManager && accountMatchesCatalogPerson(account, areaManager)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
   function requireAdminAction(message = "Chỉ admin được thực hiện thao tác này.") {
     if (isAdminAccount(currentUser)) {
       return true;
@@ -4207,8 +4415,8 @@
     const roles = getAccountRolesForType(account, FIVE_S_PERIOD_TYPE, periodId);
     const sources = [];
     if (hasAt5sRole(account)) sources.push(SCORE_SOURCE_AT5S);
-    if (hasDepartmentHeadRole(account, periodId)) sources.push(SCORE_SOURCE_DEPARTMENT_HEAD);
     if (roles.includes(ROLE_ZONE_OWNER)) sources.push(SCORE_SOURCE_SELF);
+    if (hasDepartmentHeadRole(account, periodId)) sources.push(SCORE_SOURCE_DEPARTMENT_HEAD);
     if (roles.includes(ROLE_ASSESSOR_5S)) sources.push(SCORE_SOURCE_ASSESSOR);
     if (isViewerAccount(account)) return [SCORE_SOURCE_ASSESSOR, SCORE_SOURCE_SELF, SCORE_SOURCE_AT5S, SCORE_SOURCE_DEPARTMENT_HEAD];
     const uniqueSources = [...new Set(sources)];
@@ -4221,6 +4429,8 @@
   function getDefaultFiveSScoreSource(account = currentUser, periodId = getActivePeriodId(FIVE_S_PERIOD_TYPE), areaId = "") {
     const sources = getAvailableFiveSScoreSources(account, periodId, areaId);
     if (hasAt5sRole(account) && sources.includes(SCORE_SOURCE_AT5S)) return SCORE_SOURCE_AT5S;
+    if (getAccountRolesForType(account, FIVE_S_PERIOD_TYPE, periodId).includes(ROLE_ZONE_OWNER)
+      && sources.includes(SCORE_SOURCE_SELF)) return SCORE_SOURCE_SELF;
     if (hasDepartmentHeadRole(account, periodId) && sources.includes(SCORE_SOURCE_DEPARTMENT_HEAD)) return SCORE_SOURCE_DEPARTMENT_HEAD;
     const accountDefault = getScoreSourceForAccount(account);
     if (sources.includes(accountDefault)) return accountDefault;
@@ -4273,14 +4483,14 @@
     if (canEditFiveSScoreSource(account, SCORE_SOURCE_AT5S, areaId, periodId)) {
       labels.push("Vai trò Ban AT - 5S");
     }
+    if (canEditFiveSScoreSource(account, SCORE_SOURCE_SELF, areaId, periodId)) {
+      labels.push("Vai trò quản lý zone");
+    }
     if (canEditFiveSScoreSource(account, SCORE_SOURCE_DEPARTMENT_HEAD, areaId, periodId)) {
       labels.push("Vai trò Trưởng phòng");
     }
     if (canEditFiveSScoreSource(account, SCORE_SOURCE_ASSESSOR, areaId, periodId)) {
       labels.push("Vai trò assessor");
-    }
-    if (canEditFiveSScoreSource(account, SCORE_SOURCE_SELF, areaId, periodId)) {
-      labels.push("Vai trò quản lý zone");
     }
     return labels.join(" / ") || "Không có quyền chấm";
   }
@@ -4443,6 +4653,7 @@
     const m = String(month || "");
     if (!y || !m) return 100;
     const num = value === "" || value === null ? 100 : Math.max(0, Math.min(100, Math.round(Number(value) || 0)));
+    const previousTarget = getSafetyMonthlyTarget(y, m);
     await dbRef(`safetyMonthlyTargets/${y}/${m}`).set(num);
     if (!state.safetyMonthlyTargets) {
       state.safetyMonthlyTargets = {};
@@ -4454,6 +4665,20 @@
     try {
       window.localStorage?.setItem("safetyMonthlyTargets", JSON.stringify(state.safetyMonthlyTargets));
     } catch {}
+    if (previousTarget !== num) {
+      const period = getPeriodsByType(SAFETY_PERIOD_TYPE).find((item) => Number(item.year) === Number(y) && Number(item.month) === Number(m));
+      await logDetailedHistoryChange({
+        sectionLabel: "Mục tiêu an toàn",
+        action: "Sửa",
+        target: `Tháng ${m}/${y}`,
+        summary: `Sửa mục tiêu AT tháng ${m}/${y}`,
+        before: `${previousTarget}%`,
+        after: `${num}%`,
+        scope: SAFETY_PERIOD_TYPE,
+        periodId: period?.id || "",
+        details: [{ action: "Sửa", label: "Mục tiêu AT tháng", target: `Tháng ${m}/${y}`, before: `${previousTarget}%`, after: `${num}%` }],
+      });
+    }
     showToast(`Đã lưu mục tiêu T${m}/${y}: ${num}%`);
     renderActiveTab();
     return num;
@@ -4564,6 +4789,33 @@
 
     const newDisplayTarget = target === "" ? (SAFETY_ZONE_TARGETS[targetAreaCode] || 0) : target;
 
+    if (String(oldSafetyTarget ?? "") !== String(target ?? "")) {
+      const describeTarget = (rawValue, displayValue) => (
+        rawValue === "" || rawValue === null || rawValue === undefined
+          ? `Mặc định (${displayValue}%)`
+          : `${displayValue}%`
+      );
+      await logDetailedHistoryChange({
+        sectionLabel: "Mục tiêu an toàn",
+        action: "Sửa",
+        target: `Zone ${targetAreaCode || "?"}`,
+        summary: `Sửa mục tiêu AT Zone ${targetAreaCode || "?"}`,
+        before: describeTarget(oldSafetyTarget, oldDisplayTarget),
+        after: describeTarget(target, newDisplayTarget),
+        scope: SAFETY_PERIOD_TYPE,
+        periodId: period.id,
+        areaId: cleanAreaId,
+        areaCode: targetAreaCode,
+        details: [{
+          action: "Sửa",
+          label: "Mục tiêu AT Zone",
+          target: `Zone ${targetAreaCode || "?"}`,
+          before: describeTarget(oldSafetyTarget, oldDisplayTarget),
+          after: describeTarget(target, newDisplayTarget),
+        }],
+      });
+    }
+
     if (!isUndoRedo && oldDisplayTarget !== newDisplayTarget) {
       pushUndoAction({
         type: "safetyTarget",
@@ -4621,10 +4873,12 @@
     }
     if (roles.includes(ROLE_ZONE_OWNER)) {
       const managerIds = new Set(getAccountPersonIdsForRole(account, catalogType, ROLE_ZONE_OWNER, periodId));
+      const primaryManagerId = getAccountRoleForType(account, catalogType) === ROLE_ZONE_OWNER ? getAccountPersonId(account, catalogType) : "";
+      if (primaryManagerId) managerIds.add(primaryManagerId);
       periodAreas.filter((area) => managerIds.has(area.scorerId)).forEach((area) => allowedIds.add(area.id));
       if (!managerIds.size) {
         const assignedAreaIds = new Set(getAccountAreaIds(account, catalogType));
-        periodAreas.filter((area) => assignedAreaIds.has(area.id)).forEach((area) => allowedIds.add(area.id));
+        periodAreas.filter((area) => assignedAreaIds.has(area.id) || assignedAreaIds.has(String(area.code)) || assignedAreaIds.has(`Zone ${area.code}`)).forEach((area) => allowedIds.add(area.id));
       }
     }
     if (roles.includes(getAssessorRoleForScope(catalogType))) {
@@ -5315,17 +5569,34 @@
       });
   }
 
+  function getSafetyRecordIssueYear(record, period) {
+    if (!record) return new Date().getFullYear();
+    const explicitDate = toIsoDate(record.issueDate || record.date);
+    if (isValidIsoDate(explicitDate)) {
+      return Number(explicitDate.slice(0, 4));
+    }
+    if (record.issueYear && Number.isInteger(Number(record.issueYear))) {
+      return Number(record.issueYear);
+    }
+    const issueDateStr = getSafetyRecordIssueDate(record, period);
+    if (issueDateStr && issueDateStr.length >= 4) {
+      const y = Number(issueDateStr.slice(0, 4));
+      if (Number.isInteger(y)) return y;
+    }
+    return Number(period?.year) || new Date().getFullYear();
+  }
+
   function getSafetyRowsForYear(year, options = {}) {
     const areaId = options.areaId || "";
     return (state.safetyRecords || [])
       .map((record) => ({
         score: record,
-        area: getAreaForPeriod(record.periodId, record.areaId),
+        area: getAreaForPeriod(record.periodId, record.areaId, record.issueLocation),
         item: getItem(record.itemId),
       }))
       .filter((row) => row.area && isReportableSafetyArea(row.area)
-        && (!areaId || row.area.id === areaId)
-        && Number(getSafetyRecordIssueDate(row.score, getPeriod(row.score.periodId)).slice(0, 4)) === Number(year))
+        && (!areaId || row.area.id === areaId || String(row.area.code || row.area.templateCode || "").trim() === String(areaId).trim())
+        && Number(getSafetyRecordIssueYear(row.score, getPeriod(row.score.periodId))) === Number(year))
       .sort((a, b) => {
         const dateOrder = getSafetyRecordIssueDate(b.score, getPeriod(b.score.periodId))
           .localeCompare(getSafetyRecordIssueDate(a.score, getPeriod(a.score.periodId)));
@@ -5337,8 +5608,8 @@
   function getSafetyTimeline(year, areaIds = null) {
     const records = (state.safetyRecords || [])
       .filter((record) => {
-        const area = getAreaForPeriod(record.periodId, record.areaId);
-        return area && isReportableSafetyArea(area) && (!areaIds || areaIds.has(area.id));
+        const area = getAreaForPeriod(record.periodId, record.areaId, record.issueLocation);
+        return area && isReportableSafetyArea(area) && (!areaIds || areaIds.has(area.id) || areaIds.has(String(area.code)));
       })
       .map((record) => ({
         ...record,
@@ -5351,10 +5622,10 @@
   function getSafetyFilterYears(options = {}) {
     const years = (state.safetyRecords || [])
       .filter((record) => {
-        const area = getAreaForPeriod(record.periodId, record.areaId);
-        return area && isReportableSafetyArea(area) && (!options.areaId || area.id === options.areaId);
+        const area = getAreaForPeriod(record.periodId, record.areaId, record.issueLocation);
+        return area && isReportableSafetyArea(area) && (!options.areaId || area.id === options.areaId || String(area.code) === String(options.areaId));
       })
-      .map((record) => Number(getSafetyRecordIssueDate(record, getPeriod(record.periodId)).slice(0, 4)))
+      .map((record) => getSafetyRecordIssueYear(record, getPeriod(record.periodId)))
       .filter((year) => Number.isInteger(year));
     const actualYears = (state.safetyRecords || []).filter((record) => !options.areaId || record.areaId === options.areaId)
       .flatMap((record) => [record.countermeasureDate, record.completedDate])
@@ -5368,7 +5639,19 @@
       .filter((month) => Number.isInteger(month) && month >= 1 && month <= 12);
     const timeline = getSafetyTimeline(year, options.areaId ? new Set([options.areaId]) : null);
     const actualMonths = timeline.implemented.map((value, index) => value || timeline.completed[index] ? index + 1 : 0).filter(Boolean);
-    return [...new Set([...months, ...actualMonths])].sort((a, b) => b - a);
+    const activePeriod = getPeriod(getActivePeriodId(SAFETY_PERIOD_TYPE));
+    const activeYear = Number(activePeriod?.year) || new Date().getFullYear();
+    const activeMonth = Number(activePeriod?.month) || (new Date().getMonth() + 1);
+    const currentYear = new Date().getFullYear();
+    const currentMonth = new Date().getMonth() + 1;
+    const additional = [];
+    if (Number(year) === activeYear && activeMonth >= 1 && activeMonth <= 12) {
+      additional.push(activeMonth);
+    }
+    if (Number(year) === currentYear && currentMonth >= 1 && currentMonth <= 12) {
+      additional.push(currentMonth);
+    }
+    return [...new Set([...months, ...actualMonths, ...additional])].sort((a, b) => b - a);
   }
 
   function getSafetyReportForPeriod(periodId) {
@@ -5431,11 +5714,7 @@
     }
 
     if (day && month) {
-      if (periodMonth && day === periodMonth && month !== periodMonth && month <= 31) {
-        const temp = day;
-        day = month;
-        month = temp;
-      } else if (day <= 12 && month > 12 && month <= 31) {
+      if (day <= 12 && month > 12 && month <= 31) {
         const temp = day;
         day = month;
         month = temp;
@@ -5526,16 +5805,21 @@
   }
 
   function getIssueMonth(row, periodId) {
-    const period = getPeriod(periodId || row?.score?.periodId);
-    const norm = getNormalizedSafetyIssueDate(row?.score, period);
+    const record = row?.score || row || {};
+    const explicitDate = toIsoDate(record.issueDate || record.date);
+    if (isValidIsoDate(explicitDate)) {
+      const parts = explicitDate.split("-");
+      if (parts[1]) return String(Number(parts[1]));
+    }
+    if (record.issueMonth && Number.isInteger(Number(record.issueMonth))) {
+      return String(Number(record.issueMonth));
+    }
+    const period = getPeriod(periodId || record?.periodId);
+    const norm = getNormalizedSafetyIssueDate(record, period);
     if (norm.month) {
       return String(norm.month);
     }
-    if (row?.score?.issueMonth) {
-      return row.score.issueMonth;
-    }
-
-    const parts = formatDateParts(row?.score?.updatedAt);
+    const parts = formatDateParts(record?.updatedAt);
     return parts.month || period?.month || "";
   }
 
@@ -5673,14 +5957,19 @@
 
   function buildDepartmentSummaryGroups(areas) {
     const deptGroups = buildConsecutiveGroups(areas, "departmentHead", false);
-    return deptGroups.map((group) => {
-      const explicitSummary = group.areas.find((area) => String(area.summaryGroup || "").trim())?.summaryGroup?.trim();
-      const label = explicitSummary || group.label || "";
-      return {
-        label,
-        departmentHead: group.label,
-        areas: group.areas,
-      };
+    return deptGroups.flatMap((departmentGroup) => {
+      const summaryGroups = [];
+      departmentGroup.areas.forEach((area) => {
+        const explicitSummary = String(area.summaryGroup || "").trim();
+        const label = explicitSummary || departmentGroup.label || "";
+        const currentGroup = summaryGroups[summaryGroups.length - 1];
+        if (currentGroup && currentGroup.label === label && (label || !departmentGroup.label)) {
+          currentGroup.areas.push(area);
+        } else {
+          summaryGroups.push({ label, departmentHead: departmentGroup.label, areas: [area] });
+        }
+      });
+      return summaryGroups;
     });
   }
 
@@ -6003,7 +6292,7 @@
         button.dataset.periodId = periodId;
         button.dataset.areaIds = group.areas.map((area) => area.id).join(",");
         button.dataset.deptHead = group.departmentHead || "";
-        button.title = "Sửa nhóm tổng điểm cho các zone này";
+        button.title = "Sửa nhóm tổng điểm và chọn riêng zone áp dụng";
         cell.appendChild(button);
       } else {
         cell.textContent = group.label;
@@ -6357,6 +6646,8 @@
 
   function syncRouteFromLocation() {
     const routeTarget = getRouteTarget();
+    const previousTab = activeTab;
+    const previousSafetyReport = activeSafetyReport;
     if (!currentUser) {
       if (routeTarget.type === "tab") {
         pendingRouteTab = routeTarget.tab;
@@ -6391,6 +6682,14 @@
       activeSafetyReport = "";
     }
 
+    if (activeTab === "five-s-findings" && previousTab !== "five-s-findings") {
+      window.FiveSFindingsPage?.resetFilters?.(document.getElementById("tab-five-s-findings"));
+    }
+    if (activeTab === "safety" && (previousTab !== "safety" || activeSafetyReport !== previousSafetyReport)) {
+      if (elements.safetyYearFilter) elements.safetyYearFilter.value = "";
+      if (elements.safetyMonthFilter) elements.safetyMonthFilter.value = "";
+    }
+
     showAppScreen();
     if (["mobile-5s", "mobile-safety", "mobile-findings"].includes(activeTab)) {
       const initialTab = activeTab === "mobile-findings" ? "findings" : activeTab === "mobile-5s" ? "5s" : "safety";
@@ -6422,6 +6721,9 @@
     }
     if (activeTab === "issue-stats") {
       return "Thống kê AT";
+    }
+    if (activeTab === "safety-live") {
+      return "Safety Live";
     }
     if (activeTab === "catalog") {
       return normalizeCatalogType(activeCatalogScope) === SAFETY_PERIOD_TYPE ? "Thiết lập An toàn" : "Thiết lập 5S";
@@ -6887,7 +7189,8 @@
     const isAdmin = isAdminAccount(currentUser);
     const isViewer = isViewerAccount(currentUser);
     const hasFiveSAccess = !isAdmin && (Boolean(hasAccountAccessType(currentUser, FIVE_S_PERIOD_TYPE))
-      || hasDepartmentHeadRole(currentUser, getActivePeriodId(FIVE_S_PERIOD_TYPE)));
+      || hasDepartmentHeadRole(currentUser, getActivePeriodId(FIVE_S_PERIOD_TYPE))
+      || hasAt5sRole(currentUser, getActivePeriodId(FIVE_S_PERIOD_TYPE)));
     const hasSafetyAccess = !isAdmin && canAddSafetyEvaluation(currentUser);
     const isDepartmentHead = isDepartmentHeadAccount(currentUser);
     const isReadOnlyPageAccess = (element) => element.matches(".tab-button, .tab-panel, .nav-group, .account-menu-divider") ||
@@ -6903,8 +7206,14 @@
       }
       element.hidden = !isAdmin && !isReadOnlyPageAccess(element);
     });
-    document.querySelectorAll("[data-tab='score-sheets'], #tab-score-sheets").forEach((element) => {
+    document.querySelectorAll("[data-tab='score-sheets'], [data-go-tab='score-sheets'], #tab-score-sheets").forEach((element) => {
       element.hidden = !isAdmin && !isViewer;
+    });
+    document.querySelectorAll(".viewer-only").forEach((element) => {
+      element.hidden = !isViewer;
+    });
+    document.querySelectorAll(".safety-live-access-only").forEach((element) => {
+      element.hidden = !currentUser;
     });
 
     // 2. 5S: điều hướng được mở để xem, thao tác nghiệp vụ vẫn theo quyền.
@@ -6977,6 +7286,7 @@
     if (!currentUser) {
       return false;
     }
+    if (tab === "safety-live") return true;
     if (tab === "score-sheets") return isAdminAccount(currentUser) || isViewerAccount(currentUser);
     if (tab === "audit-log") return isAdminAccount(currentUser);
     if (tab === "guide-setup") return isAdminAccount(currentUser);
@@ -6993,7 +7303,7 @@
     if (["five-s-findings", "mobile-findings", "mobile-safety"].includes(tab)) return true;
 
     if (isViewerAccount(currentUser)) {
-      return ["home", "summary", "safety", "issue-stats"].includes(tab);
+      return ["home", "summary", "safety", "issue-stats", "safety-live"].includes(tab);
     }
     if (isDepartmentHeadAccount(currentUser)) {
       return ["home", "assessor", "summary", "safety", "five-s-findings", "issue-stats", "mobile-5s", "mobile-safety", "mobile-findings"].includes(tab);
@@ -7027,6 +7337,7 @@
   function setActiveTab(tab, options = {}) {
     tab = resolveTabForAccount(tab);
     const previousTab = activeTab;
+    const previousSafetyReport = activeSafetyReport;
     if (tab !== previousTab && !options.force && window.FormDraftManager?.hasAnyDirty()) {
       window.FormDraftManager.showUnsavedConfirmModal({
         title: "Bạn có thay đổi chưa lưu!",
@@ -7045,6 +7356,13 @@
     }
     activeTab = isTabAllowed(tab) ? tab : getFallbackTab();
     if (activeTab !== previousTab) {
+      if (activeTab === "five-s-findings") {
+        window.FiveSFindingsPage?.resetFilters?.(document.getElementById("tab-five-s-findings"));
+      }
+      if (activeTab === "safety" && previousTab !== "safety") {
+        if (elements.safetyYearFilter) elements.safetyYearFilter.value = "";
+        if (elements.safetyMonthFilter) elements.safetyMonthFilter.value = "";
+      }
       if (activeTab === "catalog") {
         expandedCatalogScope = "";
       }
@@ -7057,6 +7375,10 @@
         activeSafetyReport = normalizeSafetyReportId(options.safetyReport) || "assessment";
       } else if (!options.preserveSafetyReport) {
         activeSafetyReport = "assessment";
+      }
+      if (previousTab === "safety" && activeSafetyReport !== previousSafetyReport) {
+        if (elements.safetyYearFilter) elements.safetyYearFilter.value = "";
+        if (elements.safetyMonthFilter) elements.safetyMonthFilter.value = "";
       }
     } else {
       activeSafetyReport = "";
@@ -7136,7 +7458,9 @@
 
   function assertFiveSFindingAccess(sheet) {
     if (isAdminAccount(currentUser)) return;
-    if (!sheet || !(hasAt5sRole(currentUser) || isDepartmentHeadAccount(currentUser) || isFiveSAssessor(currentUser) || (hasAccountAccessType(currentUser, FIVE_S_PERIOD_TYPE) && isZoneOwnerAccount(currentUser, FIVE_S_PERIOD_TYPE)))) {
+    if (canManageFiveSFindingCountermeasure(sheet, currentUser)) return;
+    if (!sheet || !(hasAt5sRole(currentUser) || isDepartmentHeadAccount(currentUser) || isFiveSAssessor(currentUser)
+      || (hasAccountAccessType(currentUser, FIVE_S_PERIOD_TYPE) && isZoneOwnerAccount(currentUser, FIVE_S_PERIOD_TYPE)))) {
       throw new Error("Bạn không có quyền thay đổi phiếu 5S.");
     }
     const periodId = window.FiveSFindingsPage.resolvePeriodId(sheet, getPeriodsByType(FIVE_S_PERIOD_TYPE));
@@ -7150,12 +7474,23 @@
     assertFiveSFindingAccess(sheet);
     const existing = state.fiveSFindings.find((item) => item.id === sheet.id);
     if (existing) assertFiveSFindingAccess(existing);
-    if (!getPeriodsByType(FIVE_S_PERIOD_TYPE).some((period) => period.id === sheet.periodId)) {
-      throw new Error("Kỳ chấm 5S của phiếu không còn tồn tại. Vui lòng chọn lại kỳ.");
+    if (!sheet.periodId) {
+      sheet.periodId = window.FiveSFindingsPage.resolvePeriodId(sheet, getPeriodsByType(FIVE_S_PERIOD_TYPE));
     }
-    const findingArea = getAreasForPeriod(sheet.periodId).find((area) => area.id === sheet.areaId);
-    if (!findingArea) throw new Error("Zone không còn trong danh mục 5S của kỳ này. Vui lòng chọn lại Zone.");
-    sheet.area = `Zone ${findingArea.code}`;
+    if (!sheet.areaId && sheet.periodId) {
+      sheet.areaId = window.FiveSFindingsPage.resolveAreaId(sheet, getAreasForPeriod(sheet.periodId));
+    }
+    const periodAreas = sheet.periodId ? getAreasForPeriod(sheet.periodId) : [];
+    const findingArea = periodAreas.find((area) => area.id === sheet.areaId);
+    if (!isAdminAccount(currentUser)) {
+      if (!getPeriodsByType(FIVE_S_PERIOD_TYPE).some((period) => period.id === sheet.periodId)) {
+        throw new Error("Kỳ chấm 5S của phiếu không còn tồn tại. Vui lòng chọn lại kỳ.");
+      }
+      if (!findingArea) throw new Error("Zone không còn trong danh mục 5S của kỳ này. Vui lòng chọn lại Zone.");
+    }
+    const responseOnly = Boolean(existing && canManageFiveSFindingCountermeasure(existing, currentUser)
+      && !window.FiveSFindingsPage?.canEditSheet?.(createPageContext(), existing));
+    if (!responseOnly && findingArea) sheet.area = `Zone ${findingArea.code}`;
   }
 
   function fiveSFindingResponseIdentity(row) {
@@ -7202,6 +7537,9 @@
     fiveS: "Hạng mục 5S",
     shift: "Ca",
     photoDataUrl: "Ảnh vấn đề",
+    afterPhotoDataUrl: "Ảnh sau xử lý",
+    afterPhotoName: "Tên ảnh sau xử lý",
+    afterPhotoAnnotations: "Nét khoanh ảnh sau xử lý",
     countermeasure: "Đối sách",
     owner: "Người phụ trách",
     dueDate: "Hạn hoàn thành",
@@ -7209,27 +7547,51 @@
   });
 
   function findingRowHasAuditContent(row) {
-    return Object.keys(FIVE_S_FINDING_AUDIT_FIELDS).some((field) => !isAuditValueEmpty(row?.[field]));
+    return Object.keys(FIVE_S_FINDING_AUDIT_FIELDS).some((field) => {
+      if (field === "progress") return Number(row?.progress) > 0;
+      return !isAuditValueEmpty(row?.[field]);
+    });
   }
 
   function getFiveSFindingAuditDetails(previous, next, areaCode) {
     const zone = `Zone ${areaCode || "?"}`;
     const details = [];
-    if (!previous) {
-      (next.rows || []).forEach((row, index) => {
-        if (!findingRowHasAuditContent(row)) return;
+    const headerFields = { area: "Zone", inspector: "Người kiểm tra", inspectionDate: "Ngày kiểm tra" };
+    if (!previous || !next) {
+      const isDelete = Boolean(previous);
+      const source = previous || next || {};
+      Object.entries(headerFields).forEach(([field, label]) => {
+        const value = source[field];
+        if (isAuditValueEmpty(value)) return;
         details.push({
-          action: "Thêm",
-          label: "Vấn đề 5S",
-          target: `${zone} · dòng ${index + 1}`,
-          before: "",
-          after: String(row.problem || "").trim(),
+          action: isDelete ? "Xóa" : "Thêm",
+          label,
+          target: zone,
+          before: isDelete ? formatAuditValue(value) : "",
+          after: isDelete ? "Đã xóa" : formatAuditValue(value),
         });
       });
-      return details.length ? details : [{ action: "Thêm", label: "Phiếu vấn đề 5S", target: zone }];
+      (source.rows || []).forEach((row, index) => {
+        if (!findingRowHasAuditContent(row)) return;
+        const rowTarget = `${zone} · dòng ${index + 1}`;
+        Object.entries(FIVE_S_FINDING_AUDIT_FIELDS).forEach(([field, label]) => {
+          const value = row?.[field];
+          if (isAuditValueEmpty(value)) return;
+          if (field === "progress" && !findingRowHasAuditContent(row)) return;
+          details.push({
+            action: isDelete ? "Xóa" : "Thêm",
+            label,
+            target: rowTarget,
+            before: isDelete ? formatAuditValue(value, field) : "",
+            after: isDelete ? "Đã xóa" : formatAuditValue(value, field),
+          });
+        });
+      });
+      return details.length
+        ? details
+        : [{ action: isDelete ? "Xóa" : "Thêm", label: "Phiếu vấn đề 5S", target: zone }];
     }
 
-    const headerFields = { area: "Zone", inspector: "Người kiểm tra", inspectionDate: "Ngày kiểm tra" };
     Object.entries(headerFields).forEach(([field, label]) => {
       const before = previous[field] || "";
       const after = next[field] || "";
@@ -7260,7 +7622,11 @@
         continue;
       }
       if (beforeHasContent && !afterHasContent) {
-        details.push({ action: "Xóa", label: "Vấn đề 5S", target: rowTarget, before: String(beforeRow.problem || "").trim(), after: "" });
+        Object.entries(FIVE_S_FINDING_AUDIT_FIELDS).forEach(([field, label]) => {
+          const before = beforeRow?.[field];
+          if (isAuditValueEmpty(before)) return;
+          details.push({ action: "Xóa", label, target: rowTarget, before: formatAuditValue(before, field), after: "Đã xóa" });
+        });
         continue;
       }
       if (!beforeHasContent || !afterHasContent) continue;
@@ -7312,6 +7678,8 @@
       hasAt5sRole,
       isAt5sAccount,
       isViewerAccount,
+      isAdminAccount,
+      getAreaForPeriod,
       getAvailableScoreDates,
       defaultScoreDateForPeriod,
       normalizeScoreDateForSource,
@@ -7330,6 +7698,7 @@
       TAB_ROUTES,
       canManageSafetyRecord,
       canManageSafetyCountermeasure,
+      canManageFiveSFindingCountermeasure,
       elements,
       openFormModal,
       closeModal,
@@ -7412,7 +7781,7 @@
       deleteSafetyRecordDirect,
       deleteSafetyRecordFromDb,
       showToast,
-      prepareScorePhoto: (file, existingRecord, removePhoto, periodId, category) => prepareScorePhoto(file, existingRecord, removePhoto, periodId, category),
+      prepareScorePhoto: (file, existingRecord, removePhoto, periodId, category, phase) => prepareScorePhoto(file, existingRecord, removePhoto, periodId, category, phase),
       deleteUnusedPhotoFiles,
       normalizeSafetyRecord,
       getAreaForPeriod,
@@ -7427,11 +7796,13 @@
       exportFiveSFindings,
       saveFiveSFinding: async (sheet) => {
         const previous = cloneValue(state.fiveSFindings.find((item) => item.id === sheet.id) || null);
+        const responseOnly = Boolean(previous && canManageFiveSFindingCountermeasure(previous, currentUser)
+          && !window.FiveSFindingsPage?.canEditSheet?.(createPageContext(), previous));
         stampFiveSFindingCountermeasureMetadata(sheet);
         validateFiveSFindingSave(sheet);
         // Rows already contain the merged annotations; avoid leaving a stale
         // row-index override after photos are replaced or findings reordered.
-        delete sheet.photoAnnotationsByRow;
+        if (!responseOnly) delete sheet.photoAnnotationsByRow;
         const area = getAreaForPeriod(sheet.periodId, sheet.areaId);
         const areaCode = area?.code || String(sheet.area || "").replace(/^zone\s*/i, "").trim();
         const details = getFiveSFindingAuditDetails(previous, sheet, areaCode);
@@ -7490,6 +7861,7 @@
         if (existing) {
           const area = getAreaForPeriod(existing.periodId, existing.areaId);
           const areaCode = area?.code || String(existing.area || "").replace(/^zone\s*/i, "").trim();
+          const details = getFiveSFindingAuditDetails(existing, null, areaCode);
           addDetailedHistoryChangeToUpdates({
             sectionLabel: "Vấn đề 5S",
             action: "Xóa",
@@ -7501,7 +7873,7 @@
             periodId: existing.periodId,
             areaId: existing.areaId,
             areaCode,
-            details: [{ action: "Xóa", label: "Phiếu vấn đề 5S", target: `Zone ${areaCode || "?"}`, before: `${(existing.rows || []).filter(findingRowHasAuditContent).length} dòng vấn đề`, after: "Đã xóa" }],
+            details,
           }, updates);
         }
         await dbRef().update(updates);
@@ -7533,6 +7905,61 @@
     hydrateAuthenticatedPhotos(elements.appShell);
   }
 
+  function getVisibleFiveSPeriods() {
+    const periods = getPeriodsByType(FIVE_S_PERIOD_TYPE);
+    const activePeriodId = getActivePeriodId(FIVE_S_PERIOD_TYPE);
+    const canViewAllPeriods = isAdminAccount(currentUser) || isViewerAccount(currentUser)
+      || hasDepartmentHeadRole(currentUser) || hasAt5sRole(currentUser);
+    return canViewAllPeriods ? periods : periods.filter((period) => period.id === activePeriodId);
+  }
+
+  function syncSummaryPeriodFilters(periods, preferredPeriodId = "", preferredYear = 0, preferredMonth = 0) {
+    const periodSelect = elements.summaryPeriodSelect;
+    const monthFilter = elements.summaryPeriodMonthFilter;
+    const yearFilter = elements.summaryPeriodYearFilter;
+    const validPeriods = (periods || []).filter((period) => {
+      const year = Number(period.year);
+      const month = Number(period.month);
+      return Number.isInteger(year) && year > 0 && Number.isInteger(month) && month >= 1 && month <= 12;
+    });
+
+    if (!validPeriods.length) {
+      if (periodSelect) periodSelect.value = "";
+      if (yearFilter) yearFilter.innerHTML = '<option value="">Không có kỳ</option>';
+      if (monthFilter) monthFilter.innerHTML = '<option value="">Không có kỳ</option>';
+      return "";
+    }
+
+    const preferred = validPeriods.find((period) => period.id === preferredPeriodId)
+      || validPeriods.find((period) => period.id === getActivePeriodId(FIVE_S_PERIOD_TYPE))
+      || validPeriods[0];
+    const years = [...new Set(validPeriods.map((period) => Number(period.year)))].sort((a, b) => b - a);
+    const selectedYear = years.includes(Number(preferredYear))
+      ? Number(preferredYear)
+      : years.includes(Number(preferred.year)) ? Number(preferred.year) : years[0];
+    const months = [...new Set(validPeriods
+      .filter((period) => Number(period.year) === selectedYear)
+      .map((period) => Number(period.month)))].sort((a, b) => b - a);
+    const selectedMonth = months.includes(Number(preferredMonth))
+      ? Number(preferredMonth)
+      : Number(preferred.year) === selectedYear && months.includes(Number(preferred.month))
+        ? Number(preferred.month)
+        : months[0];
+
+    if (yearFilter) {
+      yearFilter.innerHTML = years.map((year) => `<option value="${year}">${year}</option>`).join("");
+      yearFilter.value = String(selectedYear);
+    }
+    if (monthFilter) {
+      monthFilter.innerHTML = months.map((month) => `<option value="${month}">Tháng ${month}</option>`).join("");
+      monthFilter.value = String(selectedMonth);
+    }
+
+    const selectedPeriod = validPeriods.find((period) => Number(period.year) === selectedYear && Number(period.month) === selectedMonth) || preferred;
+    if (periodSelect) periodSelect.value = selectedPeriod?.id || "";
+    return selectedPeriod?.id || "";
+  }
+
   function populatePeriodSelects() {
     const makeOptions = (periods) => periods.length
       ? periods
@@ -7542,15 +7969,20 @@
     const fiveSPeriods = getPeriodsByType(FIVE_S_PERIOD_TYPE);
     const fiveSActive = getActivePeriodId(FIVE_S_PERIOD_TYPE);
     const isAdmin = isAdminAccount(currentUser);
-    const canViewAllPeriods = isAdmin || isViewerAccount(currentUser) || hasDepartmentHeadRole(currentUser) || hasAt5sRole(currentUser);
-    const visibleFiveSPeriods = canViewAllPeriods
-      ? fiveSPeriods
-      : fiveSPeriods.filter((period) => period.id === fiveSActive);
-    [elements.assessorPeriodSelect, elements.summaryPeriodSelect].forEach((select) => {
-      if (!select) return;
-      select.innerHTML = makeOptions(visibleFiveSPeriods);
-      select.value = visibleFiveSPeriods.some((period) => period.id === fiveSActive) ? fiveSActive : visibleFiveSPeriods[0]?.id || "";
-    });
+    const visibleFiveSPeriods = getVisibleFiveSPeriods();
+    if (elements.assessorPeriodSelect) {
+      elements.assessorPeriodSelect.innerHTML = makeOptions(visibleFiveSPeriods);
+      elements.assessorPeriodSelect.value = visibleFiveSPeriods.some((period) => period.id === fiveSActive) ? fiveSActive : visibleFiveSPeriods[0]?.id || "";
+    }
+    if (elements.summaryPeriodSelect) {
+      const previousPeriodId = elements.summaryPeriodSelect.value;
+      elements.summaryPeriodSelect.innerHTML = makeOptions(visibleFiveSPeriods);
+      const preferredPeriodId = visibleFiveSPeriods.some((period) => period.id === previousPeriodId)
+        ? previousPeriodId
+        : visibleFiveSPeriods.some((period) => period.id === fiveSActive) ? fiveSActive : visibleFiveSPeriods[0]?.id || "";
+      elements.summaryPeriodSelect.value = preferredPeriodId;
+      syncSummaryPeriodFilters(visibleFiveSPeriods, preferredPeriodId);
+    }
     if (elements.adminScoreSheetPeriod) {
       const selectedPeriodId = elements.adminScoreSheetPeriod.value;
       const adminPeriods = isAdmin || isViewerAccount(currentUser) ? fiveSPeriods : [];
@@ -8044,7 +8476,11 @@
     const period = getPeriod(elements.assessorPeriodSelect?.value || getActivePeriodId(FIVE_S_PERIOD_TYPE));
     const periodId = period?.id || "";
 
-    if (!isAdminAccount(currentUser) && !isViewerAccount(currentUser) && !hasDepartmentHeadRole(currentUser, periodId) && (!periodId || !isPeriodOpen(periodId, FIVE_S_PERIOD_TYPE))) {
+    if (!isAdminAccount(currentUser)
+      && !isViewerAccount(currentUser)
+      && !hasDepartmentHeadRole(currentUser, periodId)
+      && !hasAt5sRole(currentUser, periodId)
+      && (!periodId || !isPeriodOpen(periodId, FIVE_S_PERIOD_TYPE))) {
       elements.assessorTitle.textContent = "Phiếu chấm 5S";
       elements.assessorProgress.textContent = "Kỳ đánh giá này hiện không mở. Bạn chỉ có thể xem và chấm điểm kỳ đang mở.";
       elements.assessorSheet.innerHTML = '<div class="admin-card-chart-empty" style="padding: 40px; text-align: center; color: var(--text-muted, #64748b);">Kỳ đánh giá này hiện không mở. Bạn chỉ có thể xem và chấm điểm kỳ đang mở.</div>';
@@ -8147,6 +8583,88 @@
     return areas;
   }
 
+  function getAdminScoreSheetDateKey(periodId, areaId, scoreSource) {
+    return [periodId, areaId, normalizeScoreSource(scoreSource)].join("\u001f");
+  }
+
+  function getAdminScoreSheetDateChoices(periodId, areaId, scoreSource) {
+    const period = getPeriod(periodId);
+    const year = Number(period?.year);
+    const month = Number(period?.month);
+    if (!Number.isInteger(year) || !Number.isInteger(month) || month < 1 || month > 12) return [];
+    const usedDates = new Set(getAvailableScoreDates(periodId, areaId, scoreSource));
+    const daysInMonth = new Date(Date.UTC(year, month, 0)).getUTCDate();
+    return Array.from({ length: daysInMonth }, (_, index) => {
+      const date = `${year}-${String(month).padStart(2, "0")}-${String(index + 1).padStart(2, "0")}`;
+      return { date, exists: usedDates.has(date) };
+    });
+  }
+
+  function openAddAdminScoreSheetDateModal() {
+    const periodId = elements.adminScoreSheetPeriod?.value || "";
+    const areaId = elements.adminScoreSheetArea?.value || "";
+    const scoreSource = normalizeScoreSource(elements.adminScoreSheetSource?.value || SCORE_SOURCE_ASSESSOR);
+    const area = getAreaForPeriod(periodId, areaId);
+    if (!isAdminAccount(currentUser) || !isMultiDayScoreSource(scoreSource) || !area) {
+      showToast("Chỉ quản trị viên có thể thêm phiếu cho Ban AT - 5S hoặc Trưởng phòng.", true);
+      return;
+    }
+    if (!isPeriodOpen(periodId, FIVE_S_PERIOD_TYPE) || isPeriodArchived(periodId)) {
+      showToast("Kỳ đánh giá này không mở để thêm phiếu chấm.", true);
+      return;
+    }
+
+    const choices = getAdminScoreSheetDateChoices(periodId, area.id, scoreSource);
+    const availableChoices = choices.filter((item) => !item.exists);
+    if (!availableChoices.length) {
+      showToast("Các ngày trong kỳ này đã có phiếu chấm.", true);
+      return;
+    }
+    const today = todayIsoDate();
+    const defaultDate = availableChoices.find((item) => item.date === today)?.date || availableChoices[0].date;
+    const dateOptions = choices.map(({ date, exists }) => `
+      <option value="${escapeHtml(date)}" ${date === defaultDate ? "selected" : ""} ${exists ? "disabled" : ""}>
+        Ngày ${escapeHtml(formatDateDisplay(date))}${exists ? " · Đã có phiếu" : ""}
+      </option>
+    `).join("");
+
+    openFormModal({
+      title: "Thêm phiếu đánh giá",
+      submitText: "Mở phiếu chấm",
+      html: `
+        <div class="modal-context">
+          <span><strong>Nguồn:</strong> ${escapeHtml(getScoreSourceLabel(scoreSource))}</span>
+          <span><strong>Kỳ:</strong> ${escapeHtml(periodLabel(getPeriod(periodId)))}</span>
+          <span><strong>Zone:</strong> ${escapeHtml(area.code)}</span>
+        </div>
+        <label>
+          <span>Ngày chấm</span>
+          <select name="scoreDate" required>${dateOptions}</select>
+        </label>
+        <p class="form-hint">Ngày đã có phiếu được khóa. Phiếu mới sẽ được ghi nhận khi lưu điểm đầu tiên.</p>
+      `,
+      onSubmit(formData) {
+        const selectedDate = String(formData.get("scoreDate") || "");
+        const latestContextMatches = periodId === (elements.adminScoreSheetPeriod?.value || "")
+          && area.id === (elements.adminScoreSheetArea?.value || "")
+          && scoreSource === normalizeScoreSource(elements.adminScoreSheetSource?.value || SCORE_SOURCE_ASSESSOR);
+        const latestChoices = getAdminScoreSheetDateChoices(periodId, area.id, scoreSource);
+        if (!latestContextMatches || !latestChoices.some((item) => item.date === selectedDate && !item.exists)) {
+          showToast("Ngày này đã có phiếu hoặc không còn khả dụng. Hãy chọn ngày khác.", true);
+          return false;
+        }
+        adminScoreSheetPendingDate = {
+          key: getAdminScoreSheetDateKey(periodId, area.id, scoreSource),
+          date: selectedDate,
+        };
+        if (elements.adminScoreSheetDate) elements.adminScoreSheetDate.value = selectedDate;
+        renderAdminScoreSheetTab();
+        showToast(`Đã mở phiếu đánh giá ngày ${formatDateDisplay(selectedDate)}. Nhập điểm để lưu phiếu.`);
+        return true;
+      },
+    });
+  }
+
   function renderAdminScoreSheetTab() {
     if (!elements.adminScoreSheet) return;
     const periodId = elements.adminScoreSheetPeriod?.value || "";
@@ -8160,13 +8678,30 @@
     if (elements.adminScoreSheetDateField) {
       elements.adminScoreSheetDateField.hidden = false;
     }
+    const canAddDate = Boolean(
+      isAdminAccount(currentUser)
+      && area
+      && isMultiDay
+      && isPeriodOpen(periodId, FIVE_S_PERIOD_TYPE)
+      && !isPeriodArchived(periodId),
+    );
+    if (elements.adminScoreSheetAddDateButton) {
+      elements.adminScoreSheetAddDateButton.hidden = !canAddDate;
+      elements.adminScoreSheetAddDateButton.disabled = !canAddDate;
+    }
     if (isMultiDay && area) {
       if (elements.adminScoreSheetDate) {
         elements.adminScoreSheetDate.disabled = false;
         const scoredDates = getAvailableScoreDates(periodId, area.id, scoreSource);
         const cur = elements.adminScoreSheetDate?.value || "";
+        const dateKey = getAdminScoreSheetDateKey(periodId, area.id, scoreSource);
+        const pendingDate = adminScoreSheetPendingDate?.key === dateKey ? adminScoreSheetPendingDate.date : "";
+        const visibleDates = [...scoredDates];
+        if (pendingDate && !visibleDates.includes(pendingDate)) visibleDates.push(pendingDate);
+        visibleDates.sort((left, right) => left.localeCompare(right));
+        if (pendingDate && scoredDates.includes(pendingDate)) adminScoreSheetPendingDate = null;
         elements.adminScoreSheetDate.innerHTML = '<option value="">Trung bình tháng</option>' +
-          scoredDates.map((d) => `<option value="${escapeHtml(d)}" ${d === cur ? "selected" : ""}>Ngày ${escapeHtml(formatDateDisplay(d))}</option>`).join("");
+          visibleDates.map((d) => `<option value="${escapeHtml(d)}" ${d === cur ? "selected" : ""}>Ngày ${escapeHtml(formatDateDisplay(d))}${d === pendingDate && !scoredDates.includes(d) ? " · Phiếu mới" : ""}</option>`).join("");
       }
       selectedDate = elements.adminScoreSheetDate?.value || "";
     } else {
@@ -8191,15 +8726,23 @@
     const completed = getCompletedCellCount(periodId, area, scoreSource, selectedDate);
     const required = getRequiredCellsForArea(area);
     const dateTitleSuffix = isMultiDay && selectedDate ? ` - Ngày ${formatDateDisplay(selectedDate)}` : (isMultiDay ? " - Trung bình tháng" : "");
+    const canEditMonthlyAdminSource = isAdminAccount(currentUser)
+      && [SCORE_SOURCE_ASSESSOR, SCORE_SOURCE_SELF].includes(scoreSource);
+    const canEditSelectedDate = Boolean(
+      isPeriodOpen(periodId, FIVE_S_PERIOD_TYPE)
+      && !isPeriodArchived(periodId)
+      && canEditFiveSScoreSource(currentUser, scoreSource, area.id, periodId)
+      && (isMultiDay ? Boolean(selectedDate) : canEditMonthlyAdminSource),
+    );
     elements.adminScoreSheetTitle.textContent = `Phiếu chấm 5S - Zone ${area.code}${dateTitleSuffix} - ${periodLabel(period)}`;
-    elements.adminScoreSheetProgress.textContent = `Đã chấm ${completed}/${required} ô. Điểm TB zone: ${formatNumber(areaAverage(periodId, area, scoreSource, selectedDate), 2)}`;
+    elements.adminScoreSheetProgress.textContent = `Đã chấm ${completed}/${required} ô. Điểm TB zone: ${formatNumber(areaAverage(periodId, area, scoreSource, selectedDate), 2)}${isMultiDay && !selectedDate ? " · Chọn ngày chấm cụ thể để nhập điểm; Trung bình tháng chỉ xem." : ""}`;
     elements.adminScoreSheet.innerHTML = '<div class="assessor-4m-wrap" data-drag-scroll><table class="matrix-table standard-reference-table assessor-4m-table"></table></div>';
     renderAssessorFourMTable(elements.adminScoreSheet.querySelector(".assessor-4m-table"), {
       periodId,
       area,
       scoreSource,
       scoreDate: selectedDate,
-      editable: false,
+      editable: canEditSelectedDate,
       evaluatorName,
       evaluatorLabel: scoreSource === SCORE_SOURCE_SELF ? "Người phụ trách zone" : "Đánh giá viên",
     });
@@ -8486,14 +9029,12 @@
       return;
     }
 
-    const nextScope = normalizeCatalogType(scope);
-    if (expandedHistoryScope === nextScope) {
-      expandedHistoryScope = "";
-    } else {
-      expandedHistoryScope = nextScope;
-      activeHistoryScope = nextScope;
-      auditLogPagination.page = 1;
-    }
+    const nextScope = normalizeAuditLogScope(scope);
+    expandedHistoryScope = nextScope;
+    activeHistoryScope = nextScope;
+    auditLogFilters.scope = nextScope;
+    auditLogPagination.page = 1;
+    persistAuditLogFilters();
 
     if (activeTab === "audit-log") {
       renderActiveTab();
@@ -8681,9 +9222,25 @@
       updates[catalogDbPath(type, "assessors")] = rootAssessors;
       updates[catalogDbPath(type, "departmentHeadContacts")] = rootContacts;
       updates[catalogDbPath(type, "areas")] = rootAreas;
+      if (Array.isArray(snapshot?.at5sMembers)) {
+        snapshot.at5sMembers.forEach((member) => {
+          if (matchesIdentity(member)) {
+            member.name = nextName;
+            member.employeeCode = nextEmployeeCode;
+          }
+        });
+      }
       if (snapshot) updates[`periods/${periodId}/settingsSnapshot`] = snapshot;
       stateUpdates.push({ type, rootManagers, rootAssessors, rootContacts, rootAreas, period, snapshot });
     }
+
+    (state.at5sMembers || []).forEach((member) => {
+      if (matchesIdentity(member)) {
+        member.name = nextName;
+        member.employeeCode = nextEmployeeCode;
+        updates[`at5sMembers/${member.id}`] = member;
+      }
+    });
 
     state.accounts.forEach((account) => {
       const accountCode = employeeCodeKey(account.employeeCode);
@@ -9427,31 +9984,66 @@
           return false;
         }
 
-        const input = { employeeCode: nextEmployeeCode, name: nextName, areaIds };
-        const fakeEvent = { preventDefault() {} };
         let saved = true;
         if (option.role === ROLE_ZONE_OWNER) {
-          saved = await handleScorerSubmit(fakeEvent, input, type);
-          if (saved) {
-            const manager = getPeriodCatalogManagers(type, periodId)
-              .find((person) => catalogPersonMatchesIdentity(person, nextName, nextEmployeeCode));
-            if (manager) await saveManagerWithAreas(manager, areaIds, type, periodId);
+          const beforeSnapshot = capturePeriodSnapshot(periodId);
+          const beforeCatalog = captureCatalogState(type);
+          let manager = currentRoleRows[0] || null;
+          const isNewManager = !manager;
+          if (!manager) {
+            manager = {
+              id: makeId(type === SAFETY_PERIOD_TYPE ? "safety-scorer" : "scorer"),
+              employeeCode: nextEmployeeCode,
+              name: nextName,
+              emails: [],
+              createdAt: new Date().toISOString(),
+            };
+            getMutableManagers(type).push(manager);
           }
-        } else if ([ROLE_ASSESSOR_5S, ROLE_ASSESSOR_SAFETY].includes(option.role)) {
-          saved = await handleAssessorSubmit(fakeEvent, input, type);
-          if (saved) {
-            const assessor = getPeriodCatalogAssessors(type, periodId)
-              .find((person) => catalogPersonMatchesIdentity(person, nextName, nextEmployeeCode));
-            if (assessor) {
-              const updates = setAssessorAreaIds(assessor.id, areaIds, type, periodId);
-              if (Object.keys(updates).length) await dbRef("").update(updates);
+          try {
+            // The account editor has already checked zone availability. Save the
+            // manager and the exact selected zones in one write for this scope.
+            await saveManagerWithAreas(manager, areaIds, type, periodId);
+          } catch (error) {
+            if (isNewManager) {
+              const managers = getMutableManagers(type);
+              const index = managers.findIndex((item) => item.id === manager.id);
+              if (index >= 0) managers.splice(index, 1);
             }
+            showToast(error?.message || "Không lưu được phân công quản lý zone.", true);
+            return false;
           }
+          pushUndoAction({
+            type: "catalogOrSettings",
+            description: `Cập nhật zone quản lý: ${nextName}`,
+            targetPeriodId: periodId,
+            catalogType: type,
+            beforeSnapshot,
+            afterSnapshot: capturePeriodSnapshot(periodId),
+            beforeCatalog,
+            afterCatalog: captureCatalogState(type),
+          });
         } else {
-          saved = await handleDepartmentHeadSubmit(fakeEvent, input, type);
-          if (saved) await syncEmployeeDepartmentHeadAreas(nextProfile, type, areaIds);
+          const input = { employeeCode: nextEmployeeCode, name: nextName, areaIds };
+          const fakeEvent = { preventDefault() {} };
+          if ([ROLE_ASSESSOR_5S, ROLE_ASSESSOR_SAFETY].includes(option.role)) {
+            saved = await handleAssessorSubmit(fakeEvent, input, type);
+            if (saved) {
+              const assessor = getPeriodCatalogAssessors(type, periodId)
+                .find((person) => catalogPersonMatchesIdentity(person, nextName, nextEmployeeCode));
+              if (assessor) {
+                const updates = setAssessorAreaIds(assessor.id, areaIds, type, periodId);
+                if (Object.keys(updates).length) await dbRef("").update(updates);
+              }
+            }
+          } else if (option.role === ROLE_AT5S) {
+            saved = await handleAt5sMemberSubmit(fakeEvent, input);
+          } else {
+            saved = await handleDepartmentHeadSubmit(fakeEvent, input, type);
+            if (saved) await syncEmployeeDepartmentHeadAreas(nextProfile, type, areaIds);
+          }
+          if (!saved) return false;
         }
-        if (!saved) return false;
       }
     }
 
@@ -9506,6 +10098,17 @@
   }
 
   async function removeCatalogEmployeeRole(profile, type, role) {
+    if (role === ROLE_AT5S) {
+      const member = (state.at5sMembers || []).find((m) => accountMatchesCatalogPerson(profile, m));
+      if (member) {
+        state.at5sMembers = (state.at5sMembers || []).filter((m) => m.id !== member.id);
+        await dbRef(`at5sMembers/${member.id}`).remove();
+        if (typeof syncAt5sMemberToSnapshots === "function") {
+          syncAt5sMemberToSnapshots(member, true);
+        }
+      }
+      return;
+    }
     const collection = role === ROLE_ZONE_OWNER ? "managers" : role === ROLE_DEPARTMENT_HEAD ? "departmentHeadContacts" : "assessors";
     const rootRows = collection === "managers" ? getMutableManagers(type)
       : collection === "assessors" ? getMutableAssessors(type)
@@ -10994,7 +11597,6 @@
         periodId,
       }],
     };
-    state.history.unshift(historyEntry);
     const result = await deleteScoreFromDb(record.id, {
       expectedValue: recordCopy,
       slot: scoreSlotFor(recordCopy),
@@ -11116,8 +11718,6 @@
       ],
       changeLabel: `${score === null && !status && existing ? "Xóa" : existing ? "Sửa" : "Thêm"} điểm 5S · Zone ${area.code} · ${item.code} (${criterion.label})`,
     };
-    state.history.unshift(historyEntry);
-
     const dbWrites = [];
     if (score === null && !status) {
       if (existingIndex >= 0) {
@@ -11252,27 +11852,15 @@
   }
 
   function addAdminChangeToUpdates(change, updates) {
-    const historyEntry = createAdminChangeEntry(change);
-    state.history.unshift(historyEntry);
-    const stagedEntry = stageHistoryEntry(historyEntry);
-    if (!stagedEntry) return;
-
-    const expired = (state.history || []).filter((item) => isHistoryEntryExpired(item));
-    if (expired.length) {
-      state.history = (state.history || []).filter((item) => !isHistoryEntryExpired(item));
-      if (!currentUser || isAdminAccount(currentUser)) {
-        expired.forEach((item) => {
-          if (item?.id) updates[`history/${item.id}`] = null;
-        });
-      }
-    }
-    updates[`history/${stagedEntry.id}`] = stagedEntry;
+    // The server derives audit details from the data updates in this batch.
+    void change;
+    void updates;
   }
 
   async function logAdminChange(change) {
-    const historyEntry = createAdminChangeEntry(change);
-    state.history.unshift(historyEntry);
-    await saveHistoryEntry(historyEntry);
+    // Kept as a compatibility shim for existing callers. The server records the
+    // associated data mutation, so there is no separate client-side log request.
+    void change;
   }
 
   async function logDetailedHistoryChange({
@@ -11854,6 +12442,8 @@
     `;
 
     const form = document.getElementById("modal-form");
+    const submitButton = elements.modalActions.querySelector('button[type="submit"][form="modal-form"]');
+    const submitButtonText = submitButton?.textContent || submitText;
     const serializeGenericModalForm = (f) => {
       if (!f) return "";
       const entries = [];
@@ -11940,6 +12530,10 @@
       event.preventDefault();
       if (modalSubmissionPending) return;
       modalSubmissionPending = true;
+      if (submitButton) {
+        submitButton.disabled = true;
+        submitButton.textContent = /lưu/i.test(submitButtonText) ? "Đang lưu..." : "Đang xử lý...";
+      }
       try {
         const shouldClose = await onSubmit(new FormData(form), form);
         if (shouldClose !== false && document.getElementById("modal-form") === form) {
@@ -11958,6 +12552,10 @@
         else showToast("Không lưu được dữ liệu. Vui lòng thử lại.", true);
       } finally {
         modalSubmissionPending = false;
+        if (submitButton?.isConnected) {
+          submitButton.disabled = false;
+          submitButton.textContent = submitButtonText;
+        }
       }
     });
 
@@ -12077,6 +12675,7 @@
       const rowIndexText = image.dataset.findingPhotoRowIndex || "";
       const rowIndex = rowIndexText === "" ? -1 : Number(rowIndexText);
       const expectedPhotoUrl = image.dataset.findingPhotoUrl || "";
+      const photoField = image.dataset.findingPhotoField || "photoDataUrl";
       const initialCircles = (() => {
         try { return JSON.parse(image.dataset.findingPhotoAnnotations || image.dataset.safetyAnnotations || "[]"); } catch (_) { return []; }
       })();
@@ -12084,7 +12683,10 @@
       const isPendingPhoto = image.dataset.findingPhotoSourcePending === "true";
       const canEdit = isPendingPhoto
         ? image.dataset.findingPhotoEditable === "true"
-        : Boolean(sheet && Number.isInteger(rowIndex) && rowIndex >= 0 && window.FiveSFindingsPage?.canEditSheet?.(createPageContext(), sheet));
+        : Boolean(sheet && Number.isInteger(rowIndex) && rowIndex >= 0 && (
+          window.FiveSFindingsPage?.canEditSheet?.(createPageContext(), sheet)
+          || (photoField === "afterPhotoDataUrl" && canManageFiveSFindingCountermeasure(sheet, currentUser))
+        ));
       imageAnnotatorCleanup = window.mountImageCircleAnnotator?.(
         elements.modalBody.querySelector(".image-fullscreen-stage"),
         elements.modalBody,
@@ -12096,7 +12698,7 @@
                 if (typeof image.__findingPhotoAnnotationSave === "function") {
                   await image.__findingPhotoAnnotationSave(annotations);
                 } else if (!isPendingPhoto && sheetId && rowIndex >= 0) {
-                  await saveFiveSFindingPhotoAnnotations(sheetId, rowIndex, annotations, expectedPhotoUrl);
+                  await saveFiveSFindingPhotoAnnotations(sheetId, rowIndex, annotations, expectedPhotoUrl, photoField);
                 }
                 const serialized = JSON.stringify(annotations);
                 image.dataset.findingPhotoAnnotations = serialized;
@@ -12225,23 +12827,28 @@
     }
   }
 
-  async function prepareScorePhoto(file, existingRecord, removePhoto, periodId, category = "") {
+  async function prepareScorePhoto(file, existingRecord, removePhoto, periodId, category = "", phase = "") {
     if (removePhoto) {
       return { photoDataUrl: "", photoName: "" };
     }
 
     if (!file) {
+      const existingDataUrl = String(existingRecord?.photoDataUrl || "");
+      const existingName = existingRecord?.photoName || "anh-minh-hoa.jpg";
+      if (existingDataUrl.startsWith("data:image/") && dataStore?.savePhoto) {
+        return savePhotoFile(existingDataUrl, existingName, periodId, category, phase);
+      }
       return {
-        photoDataUrl: existingRecord?.photoDataUrl || "",
+        photoDataUrl: existingDataUrl,
         photoName: existingRecord?.photoName || "",
       };
     }
 
     const compressedDataUrl = await resizeImageFile(file, PHOTO_MAX_SIZE, PHOTO_JPEG_QUALITY);
-    return savePhotoFile(compressedDataUrl, file.name || "anh-minh-hoa.jpg", periodId, category);
+    return savePhotoFile(compressedDataUrl, file.name || "anh-minh-hoa.jpg", periodId, category, phase);
   }
 
-  async function savePhotoFile(dataUrl, fileName, periodId, category = "") {
+  async function savePhotoFile(dataUrl, fileName, periodId, category = "", phase = "") {
     if (!dataStore?.savePhoto) {
       throw new Error("Ứng dụng cần chạy bằng npm start để lưu ảnh vào thư mục data/photos.");
     }
@@ -12254,6 +12861,7 @@
       month: period?.month,
       year: period?.year,
       category: resolvedCategory,
+      phase,
     });
 
     return {
@@ -12271,7 +12879,7 @@
       record?.photoDataUrl === url || record?.afterPhotoDataUrl === url
     ));
     const isFindingPhoto = (state.fiveSFindings || []).some((sheet) => (
-      (sheet?.rows || []).some((row) => row?.photoDataUrl === url)
+      (sheet?.rows || []).some((row) => row?.photoDataUrl === url || row?.afterPhotoDataUrl === url)
     ));
     const isGuidePhoto = Object.values(state.userGuides || {}).some((guide) => (
       (guide?.steps || []).some((step) => (
@@ -12368,6 +12976,17 @@
       }
 
       image.dataset.photoSrc = originalUrl;
+      image.addEventListener("error", () => {
+        const fallbackUrl = image.dataset.photoFallbackSrc || "";
+        if (!fallbackUrl || fallbackUrl === originalUrl || image.dataset.photoFallbackTried === "true") return;
+        image.dataset.photoFallbackTried = "true";
+        image.dataset.photoSrc = fallbackUrl;
+        getAuthenticatedPhotoObjectUrl(fallbackUrl).then((objectUrl) => {
+          if (image.isConnected && image.dataset.photoSrc === fallbackUrl && objectUrl) {
+            image.src = objectUrl;
+          }
+        });
+      }, { once: true });
       getAuthenticatedPhotoObjectUrl(originalUrl).then((objectUrl) => {
         if (image.isConnected && image.dataset.photoSrc === originalUrl && objectUrl) {
           image.src = objectUrl;
@@ -12548,6 +13167,56 @@
     catalogPersonSelectedAreaIdsByRole = {};
   }
 
+  function getAt5sMembers() {
+    const list = state.at5sMembers || [];
+    const memberMap = new Map();
+    list.forEach((m) => {
+      if (m && m.id) memberMap.set(m.id, m);
+    });
+    (state.periods || []).forEach((p) => {
+      const snapMembers = snapshotToArray(p?.settingsSnapshot?.at5sMembers);
+      snapMembers.forEach((m) => {
+        if (m && m.id && !memberMap.has(m.id)) {
+          memberMap.set(m.id, m);
+          if (!list.some((existing) => existing.id === m.id)) {
+            list.push(m);
+            dbRef(`at5sMembers/${m.id}`).set(m).catch(() => {});
+          }
+        }
+      });
+    });
+    return [...memberMap.values()];
+  }
+
+  function syncAt5sMemberToSnapshots(member, isDelete = false) {
+    if (!member?.id) return;
+    const updates = {};
+    (state.periods || []).forEach((period) => {
+      if (!period?.settingsSnapshot) return;
+      if (!Array.isArray(period.settingsSnapshot.at5sMembers)) {
+        period.settingsSnapshot.at5sMembers = [];
+      }
+      if (isDelete) {
+        period.settingsSnapshot.at5sMembers = period.settingsSnapshot.at5sMembers.filter(
+          (m) => m.id !== member.id && !sameEmployeeCode(m.employeeCode, member.employeeCode) && !sameNormalizedText(m.name, member.name)
+        );
+      } else {
+        const idx = period.settingsSnapshot.at5sMembers.findIndex(
+          (m) => m.id === member.id || sameEmployeeCode(m.employeeCode, member.employeeCode) || sameNormalizedText(m.name, member.name)
+        );
+        if (idx >= 0) {
+          period.settingsSnapshot.at5sMembers[idx] = { ...period.settingsSnapshot.at5sMembers[idx], ...member };
+        } else {
+          period.settingsSnapshot.at5sMembers.push({ ...member });
+        }
+      }
+      updates[`periods/${period.id}/settingsSnapshot`] = period.settingsSnapshot;
+    });
+    if (Object.keys(updates).length) {
+      dbRef("").update(updates).catch(() => {});
+    }
+  }
+
   async function handleAt5sMemberSubmit(event, input = {}) {
     if (event?.preventDefault) event.preventDefault();
     if (!requireAdminAction()) return false;
@@ -12562,6 +13231,8 @@
       existing.name = name;
       existing.employeeCode = employeeCode;
       await dbRef(`at5sMembers/${existing.id}`).set(existing);
+      syncAt5sMemberToSnapshots(existing);
+      renderAll();
       return true;
     }
     const member = {
@@ -12572,6 +13243,7 @@
     };
     state.at5sMembers = [...(state.at5sMembers || []), member];
     await dbRef(`at5sMembers/${member.id}`).set(member);
+    syncAt5sMemberToSnapshots(member);
     await logAdminChange({
       subjectLabel: "Ban AT - 5S",
       afterLabel: `${employeeCode} · ${name}`,
@@ -12583,9 +13255,9 @@
 
   function renderAt5sMemberList() {
     if (!elements.catalogAt5sList) return;
-    const members = state.at5sMembers || [];
+    const members = getAt5sMembers();
     elements.catalogAt5sList.innerHTML = members.map((member) => {
-      const accountBadge = catalogAccountBadgeHtml(member);
+      const accountBadge = catalogAccountBadgeHtml(member, activeCatalogScope);
       return `<article class="compact-item at5s-member-item">
         <div class="compact-main">
           <div class="compact-title-row">
@@ -12600,7 +13272,7 @@
           <button class="tiny-button danger-text-button" type="button" data-action="delete-at5s-member" data-id="${escapeHtml(member.id)}">Xóa</button>
         </div>
       </article>`;
-    }).join("") || '<article class="compact-item"><span>Chưa có thành viên nào trong Ban AT - 5S.</span></article>';
+    }).join("") || '<article class="compact-item"><strong>Chưa có thành viên Ban AT - 5S</strong><span>Dùng mục "Thêm người mới" và chọn vai trò Ban AT - 5S để tạo thành viên.</span></article>';
   }
 
   function deleteAt5sMember(id) {
@@ -12615,6 +13287,7 @@
       async onConfirm() {
         state.at5sMembers = (state.at5sMembers || []).filter((m) => m.id !== id);
         await dbRef(`at5sMembers/${id}`).remove();
+        syncAt5sMemberToSnapshots(member, true);
         (state.accounts || []).forEach((acc) => {
           if (acc && accountMatchesCatalogPerson(acc, member)) {
             if (acc.role === ROLE_AT5S) acc.role = "unassigned";
@@ -14239,47 +14912,10 @@
           ? nextDepartmentHead
           : rawSummaryGroup;
         const allPeriodAreas = isSnapshotEdit ? getAreasForPeriod(targetPeriodId) : getAreas(catalogType);
-        const otherPeerAreas = allPeriodAreas.filter((a) => a.id !== area.id);
-        const summaryGroupWasRenamed = previousSummaryGroup
-          && submittedSummaryGroup
-          && previousSummaryGroup !== submittedSummaryGroup
-          && (departmentHeadWasRenamed || departmentHeadKey(nextDepartmentHead) === departmentHeadKey(previousDepartmentHead));
-
-        if (summaryGroupWasRenamed) {
-          mutableAreas.forEach((peer) => {
-            if (departmentHeadKey(peer.summaryGroup) === departmentHeadKey(previousSummaryGroup)) {
-              peer.summaryGroup = submittedSummaryGroup;
-            }
-          });
-          area.summaryGroup = submittedSummaryGroup;
-        } else if (nextDepartmentHead) {
-          const peerAreasOfNextDept = otherPeerAreas.filter((a) => (
-            a.departmentHead && a.departmentHead.trim() === nextDepartmentHead
-          ));
-          const existingSummaryOfNextDept = peerAreasOfNextDept.find((a) => String(a.summaryGroup || "").trim())?.summaryGroup?.trim();
-
-          if (nextDepartmentHead !== previousDepartmentHead) {
-            if (existingSummaryOfNextDept) {
-              if (!submittedSummaryGroup || submittedSummaryGroup === previousSummaryGroup || submittedSummaryGroup === existingSummaryOfNextDept) {
-                area.summaryGroup = existingSummaryOfNextDept;
-              } else {
-                area.summaryGroup = submittedSummaryGroup;
-                peerAreasOfNextDept.forEach((peer) => {
-                  peer.summaryGroup = submittedSummaryGroup;
-                });
-              }
-            } else {
-              area.summaryGroup = submittedSummaryGroup || nextDepartmentHead;
-            }
-          } else {
-            area.summaryGroup = submittedSummaryGroup || existingSummaryOfNextDept || nextDepartmentHead;
-            peerAreasOfNextDept.forEach((peer) => {
-              peer.summaryGroup = area.summaryGroup;
-            });
-          }
-        } else {
-          area.summaryGroup = submittedSummaryGroup;
-        }
+        area.summaryGroup = submittedSummaryGroup || (departmentHeadWasRenamed
+          && departmentHeadKey(previousSummaryGroup) === departmentHeadKey(previousDepartmentHead)
+          ? nextDepartmentHead
+          : "");
 
         if (scorerMode === "catalog") {
           const selectedScorerId = String(formData.get("scorerId") || "").trim();
@@ -14480,8 +15116,8 @@
           const departmentHeadContactWrites = getDepartmentHeadContacts(catalogType).map((contact) => saveDepartmentHeadContact(contact, catalogType));
           const managerWrites = getManagers(catalogType).map((m) => dbRef(`${catalogDbPath(catalogType, "managers")}/${m.id}`).set(m));
           const assessorWrites = getAssessors(catalogType).map((a) => dbRef(`${catalogDbPath(catalogType, "assessors")}/${a.id}`).set(a));
-          const peerWrites = !isSnapshotEdit && deptHead
-            ? allPeriodAreas.filter((a) => a.id !== area.id && a.departmentHead === deptHead).map((a) => dbRef(`${catalogDbPath(catalogType, "areas")}/${a.id}`).set(a))
+          const peerWrites = !isSnapshotEdit && area.departmentHead
+            ? allPeriodAreas.filter((a) => a.id !== area.id && a.departmentHead === area.departmentHead).map((a) => dbRef(`${catalogDbPath(catalogType, "areas")}/${a.id}`).set(a))
             : [];
           const managerChanged = Boolean(previousScorerId && area.scorerId && previousScorerId !== area.scorerId);
           if (managerChanged) await Promise.all(managerWrites);
@@ -14948,36 +15584,47 @@
       return;
     }
 
-    const deptHeads = new Set(affectedAreas.map((a) => a.departmentHead).filter(Boolean));
-    if (deptHeads.size > 0) {
-      affectedAreas = allAreas.filter((area) => (area.departmentHead && deptHeads.has(area.departmentHead)) || affectedAreas.includes(area));
-    }
-
     openFormModal({
       title: "Sửa nhóm tổng điểm",
       html: `
         <div class="modal-context">
-          <span>Áp dụng cho zone: ${escapeHtml(affectedAreas.map((area) => area.code).join(", "))}</span>
+          <span>Chọn zone cần áp dụng. Bỏ chọn zone muốn tách khỏi nhóm.</span>
           ${isSnapshotEdit ? `<span>Chỉ áp dụng cho ${escapeHtml(periodLabel(period))}; kỳ khác không bị đổi.</span>` : ""}
         </div>
         <label>
           <span>Tên nhóm tổng điểm</span>
           <input name="summaryGroup" type="text" value="${escapeHtml(currentName)}" placeholder="vd: Mr/Ms ...">
         </label>
+        <div class="zone-check-list">
+          <div class="zone-check-items">
+            ${affectedAreas.map((area) => `
+              <label class="check-line zone-check-item">
+                <input name="summaryGroupAreaIds" type="checkbox" value="${escapeHtml(area.id)}" checked>
+                <span>Zone ${escapeHtml(area.code)}${area.departmentHead ? ` · ${escapeHtml(area.departmentHead)}` : ""}</span>
+              </label>
+            `).join("")}
+          </div>
+        </div>
       `,
       async onSubmit(formData) {
         const beforeSnapshot = capturePeriodSnapshot(targetPeriodId);
         const beforeCatalog = captureCatalogState(catalogType);
         const nextName = String(formData.get("summaryGroup") || "").trim();
+        const selectedAreaIds = new Set(formData.getAll("summaryGroupAreaIds").map((value) => String(value)));
+        const areasToUpdate = affectedAreas.filter((area) => selectedAreaIds.has(area.id));
+        if (!areasToUpdate.length) {
+          showToast("Chọn ít nhất một zone để cập nhật.", true);
+          return false;
+        }
         const beforeLabel = currentName || "Chưa có";
-        affectedAreas.forEach((area) => {
+        areasToUpdate.forEach((area) => {
           area.summaryGroup = nextName;
         });
         if (isSnapshotEdit) {
           await savePeriodSnapshot(getPeriod(targetPeriodId));
         } else {
           await Promise.all([
-            ...affectedAreas.map((area) => dbRef(`${catalogDbPath(catalogType, "areas")}/${area.id}`).set(area)),
+            ...areasToUpdate.map((area) => dbRef(`${catalogDbPath(catalogType, "areas")}/${area.id}`).set(area)),
             refreshLatestPeriodSnapshot(catalogType),
           ]);
         }
@@ -14987,7 +15634,7 @@
             beforeLabel,
             afterLabel: nextName || "Chưa có",
             changeLabel: `Sửa nhóm tổng điểm ${beforeLabel}`,
-            note: `${isSnapshotEdit ? `${periodLabel(period)} · ` : ""}Áp dụng zone ${affectedAreas.map((area) => area.code).join(", ")}`,
+            note: `${isSnapshotEdit ? `${periodLabel(period)} · ` : ""}Áp dụng zone ${areasToUpdate.map((area) => area.code).join(", ")}`,
             scope: catalogType,
             periodId: targetPeriodId,
           }),
@@ -14996,7 +15643,7 @@
         const afterCatalog = captureCatalogState(catalogType);
         pushUndoAction({
           type: "catalogOrSettings",
-          description: `Nhóm tổng điểm Zone ${affectedAreas.map((area) => area.code).join(", ")}: ${beforeLabel} → ${nextName || "Chưa có"}`,
+          description: `Nhóm tổng điểm Zone ${areasToUpdate.map((area) => area.code).join(", ")}: ${beforeLabel} → ${nextName || "Chưa có"}`,
           targetPeriodId: isSnapshotEdit ? targetPeriodId : null,
           catalogType,
           beforeSnapshot,
@@ -15812,6 +16459,9 @@
         showToast("Đã xóa báo cáo an toàn.");
         renderAll();
       },
+      onError(error) {
+        showToast(error?.message || "Không xóa được báo cáo an toàn. Vui lòng thử lại.", true);
+      },
     });
   }
 
@@ -15854,25 +16504,29 @@
     const safetyPhotoAnnotationAttrs = (field, editable) =>
       "data-safety-record-id=\"" + escapeHtml(record?.id || "") + "\" data-safety-photo-field=\"" + field + "\" data-safety-annotations=\"" +
       escapeHtml(JSON.stringify(record?.[field] || [])) + "\" data-safety-annotation-editable=\"" + (editable ? "true" : "false") + "\" data-safety-source-pending=\"false\"";
+    const canEditIssue = isNew ? canAddSafetyEvaluation(currentUser) : canManageSafetyRecord(record);
+    const canEditCountermeasure = isNew
+      ? (isAdminAccount(currentUser) || Boolean(hasDepartmentHeadRole?.(currentUser, periodId)))
+      : canManageSafetyCountermeasure(record);
     const safetyPhotoEditorHtml = (inputName, removeName, photoUrl, alt, annotationField, editable) => {
       const hasPhoto = Boolean(photoUrl);
-      return "<div class=\"photo-upload-box photo-edit-widget safety-photo-editor " + (hasPhoto ? "has-photo" : "") + "\" data-safety-photo-editor>" +
-        "<input class=\"photo-file-input safety-photo-file-input " + (hasPhoto ? "is-hidden" : "") + "\" name=\"" + inputName + "\" type=\"file\" accept=\"image/*\" capture=\"environment\">" +
+      return "<div class=\"photo-upload-box photo-edit-widget safety-photo-editor " + (hasPhoto ? "has-photo " : "") + (editable ? "is-editable" : "is-disabled") + "\" data-safety-photo-editor>" +
+        "<input class=\"photo-file-input safety-photo-file-input " + (hasPhoto ? "is-hidden" : "") + "\" name=\"" + inputName + "\" type=\"file\" accept=\"image/*\" capture=\"environment\"" + (editable ? "" : " disabled") + ">" +
         "<div class=\"photo-placeholder photo-editor-empty " + (hasPhoto ? "is-hidden" : "") + "\"><div class=\"photo-icon-circle\"><i class=\"fa-solid fa-camera\"></i></div>" +
           "<p class=\"photo-primary-prompt\">" + escapeHtml(alt) + "</p><p class=\"photo-sub-prompt\">Chụp ảnh hoặc tải ảnh minh họa</p>" +
-          "<button type=\"button\" class=\"photo-action-chip\" data-photo-add><i class=\"fa-solid fa-plus\"></i> Thêm ảnh</button></div>" +
+          "<button type=\"button\" class=\"photo-action-chip\" data-photo-add" + (editable ? "" : " disabled") + "><i class=\"fa-solid fa-plus\"></i> Thêm ảnh</button></div>" +
         "<div class=\"photo-preview-wrap " + (hasPhoto ? "" : "is-hidden") + "\"><img class=\"photo-preview-img safety-thumb\" src=\"" + (hasPhoto ? escapeHtml(photoUrl) : "") + "\" alt=\"" + escapeHtml(alt) + "\" " +
           (hasPhoto ? safetyPhotoAnnotationAttrs(annotationField, editable) : "") + (hasPhoto ? "" : " hidden") + " title=\"Chạm để phóng to ảnh\">" +
-          "<div class=\"photo-preview-actions\"><button type=\"button\" class=\"photo-btn annotate-btn\" data-photo-annotate title=\"Vẽ nét & chú thích ảnh\" aria-label=\"Vẽ nét & chú thích ảnh\" " + (hasPhoto ? "" : "hidden") + "><i class=\"fa-solid fa-pen-to-square\"></i></button>" +
+          "<div class=\"photo-preview-actions\"><button type=\"button\" class=\"photo-btn annotate-btn\" data-photo-annotate title=\"Vẽ nét & chú thích ảnh\" aria-label=\"Vẽ nét & chú thích ảnh\" " + (editable && hasPhoto ? "" : "hidden") + "><i class=\"fa-solid fa-pen-to-square\"></i></button>" +
             "<button type=\"button\" class=\"photo-btn open-btn\" data-photo-open title=\"Mở ảnh lớn\" aria-label=\"Mở ảnh lớn\" " + (hasPhoto ? "" : "hidden") + "><i class=\"fa-solid fa-expand\"></i></button>" +
-            "<button type=\"button\" class=\"photo-btn retake-btn\" data-photo-change title=\"Đổi ảnh\" aria-label=\"Đổi ảnh\" " + (hasPhoto ? "" : "hidden") + "><i class=\"fa-solid fa-arrows-rotate\"></i></button>" +
-            "<button type=\"button\" class=\"photo-btn delete-btn\" data-photo-delete title=\"Xóa ảnh\" aria-label=\"Xóa ảnh\" " + (hasPhoto ? "" : "hidden") + "><i class=\"fa-solid fa-trash-can\"></i></button></div>" +
+            "<button type=\"button\" class=\"photo-btn retake-btn\" data-photo-change title=\"Đổi ảnh\" aria-label=\"Đổi ảnh\" " + (editable && hasPhoto ? "" : "hidden") + "><i class=\"fa-solid fa-arrows-rotate\"></i></button>" +
+            "<button type=\"button\" class=\"photo-btn delete-btn\" data-photo-delete title=\"Xóa ảnh\" aria-label=\"Xóa ảnh\" " + (editable && hasPhoto ? "" : "hidden") + "><i class=\"fa-solid fa-trash-can\"></i></button></div>" +
           "</div>" +
         "<input type=\"checkbox\" name=\"" + removeName + "\" hidden aria-hidden=\"true\"></div>";
     };
     const afterPhotoEditor = safetyPhotoEditorHtml(
       "afterPhoto", "removeAfterPhoto", record?.afterPhotoDataUrl, "Ảnh sau cải tiến, xử lý",
-      "afterPhotoAnnotations", canManageSafetyCountermeasure(record),
+      "afterPhotoAnnotations", canEditCountermeasure,
     );
     const bindSafetyPhotoEditors = (root) => {
       root?.querySelectorAll?.("[data-safety-photo-editor]").forEach((editor) => {
@@ -15886,6 +16540,7 @@
         const changeButton = editor.querySelector("[data-photo-change]");
         const deleteButton = editor.querySelector("[data-photo-delete]");
         const choosePhoto = () => {
+          if (input?.disabled) return;
           input?.click();
         };
         const openPreview = () => {
@@ -16114,6 +16769,7 @@
             formData.get("removeAfterPhoto") === "on",
             periodId,
             "an-toan",
+            "anh-sau-xu-ly",
           );
           const payload = normalizeSafetyRecord({
             ...record,
@@ -16182,7 +16838,7 @@
     const displayIssueDate = formatDateDisplay(issueDate);
     const photoEditor = safetyPhotoEditorHtml(
       "photo", "removePhoto", record?.photoDataUrl, "Ảnh hiện trường",
-      "photoAnnotations", canManageSafetyRecord(record),
+      "photoAnnotations", canEditIssue,
     );
 
     const requestedAreaId = safetyDraft?.areaId || (isNew ? "" : selectedArea.id);
@@ -16219,30 +16875,131 @@
       html: "<div class=\"modal-context\">" +
           "<span><strong>Nguồn:</strong> Đánh giá an toàn nhà máy</span>" +
         "</div>" +
-        "<div class=\"safety-record-entry-wrap\"><table class=\"safety-record-entry-table\">" +
-          "<thead><tr>" +
-            "<th>Zone</th><th>Ngày phát hiện (dd/mm/yyyy)</th><th>Mối nguy hiểm phát hiện được</th><th>Ảnh minh họa</th><th>Số lần</th><th>STOP 6</th><th>Cấp bậc</th><th>Phát hiện</th><th>Tình trạng</th><th>Phát hiện bởi</th><th>Mã nhân viên</th><th>Hạng mục</th><th>Nội dung cải tiến, xử lý</th><th>Ảnh sau cải tiến</th><th>Đảm nhiệm</th><th>Kế hoạch</th><th>Ngày dự kiến hoàn thành</th>" +
-          "</tr></thead>" +
-          "<tbody><tr>" +
-            "<td><select name=\"areaId\" required>" + getSafetyAreaOptions(periodId, effectiveAreaId, isNew ? null : allowedIds, isNew ? "Chọn Zone AT" : "") + "</select></td>" +
-            "<td><span class=\"safety-date-editor\"><input name=\"issueDate\" type=\"text\" data-safety-date placeholder=\"dd/mm/yyyy\" inputmode=\"numeric\" maxlength=\"10\" value=\"" + escapeHtml(effectiveDisplayIssueDate) + "\" required autocomplete=\"off\"><input type=\"date\" class=\"safety-date-calendar\" aria-label=\"Mở lịch chọn ngày\" value=\"" + escapeHtml(effectiveIssueDate) + "\"></span></td>" +
-            "<td><textarea name=\"note\" required>" + escapeHtml(effectiveNote) + "</textarea></td>" +
-            "<td>" + photoEditor + "</td>" +
-            "<td><input name=\"issueCount\" type=\"number\" min=\"1\" step=\"1\" value=\"" + escapeHtml(effectiveIssueCount) + "\"></td>" +
-            "<td><select name=\"issueType\">" + optionHtml(STOP6_OPTIONS, effectiveIssueType) + "</select></td>" +
-            "<td><select name=\"issueLevel\">" + optionHtml(ISSUE_LEVEL_OPTIONS, effectiveIssueLevel) + "</select></td>" +
-            "<td><select name=\"foundChannel\">" + optionHtml(SAFETY_FOUND_OPTIONS, effectiveFoundChannel) + "</select></td>" +
-            "<td><select name=\"issueStatus\">" + optionHtml(ISSUE_STATUS_OPTIONS, effectiveIssueStatus) + "</select></td>" +
-            "<td><input name=\"issueFoundBy\" type=\"text\" value=\"" + escapeHtml(effectiveIssueFoundBy) + "\"></td>" +
-            "<td><input name=\"employeeCode\" type=\"text\" value=\"" + escapeHtml(effectiveEmployeeCode) + "\"></td>" +
-            "<td><input name=\"issueItemLabel\" type=\"text\" value=\"" + escapeHtml(effectiveIssueItemLabel) + "\"></td>" +
-            "<td><textarea name=\"improvementContent\">" + escapeHtml(effectiveImprovementContent) + "</textarea></td>" +
-            "<td>" + afterPhotoEditor + "</td>" +
-            "<td><input name=\"actionOwner\" type=\"text\" value=\"" + escapeHtml(effectiveActionOwner) + "\"></td>" +
-            "<td><input name=\"actionPlan\" type=\"text\" value=\"" + escapeHtml(effectiveActionPlan) + "\"></td>" +
-            "<td><input name=\"completionDate\" type=\"date\" value=\"" + escapeHtml(effectiveCompletionDate) + "\"></td>" +
-          "</tr></tbody>" +
-        "</table></div>" + actualDateFields,
+        "<div class=\"safety-vertical-form\">" +
+          "<div class=\"finding-form-group\">" +
+            "<label class=\"finding-form-label\">Zone <span class=\"required-star\">*</span></label>" +
+            "<div class=\"finding-form-control\">" +
+              "<select name=\"areaId\" required aria-label=\"Zone\">" + getSafetyAreaOptions(periodId, effectiveAreaId, isNew ? null : allowedIds, isNew ? "Chọn Zone AT" : "") + "</select>" +
+            "</div>" +
+          "</div>" +
+
+          "<div class=\"finding-form-group\">" +
+            "<label class=\"finding-form-label\">Mối nguy hiểm phát hiện được <span class=\"required-star\">*</span></label>" +
+            "<div class=\"finding-form-control\">" +
+              "<textarea name=\"note\" required placeholder=\"Mô tả chi tiết vị trí và nội dung mối nguy hiểm phát hiện...\">" + escapeHtml(effectiveNote) + "</textarea>" +
+            "</div>" +
+          "</div>" +
+
+          "<div class=\"finding-form-group\">" +
+            "<label class=\"finding-form-label\">Ảnh minh họa (Hiện trường)</label>" +
+            "<div class=\"finding-form-control\">" +
+              photoEditor +
+            "</div>" +
+          "</div>" +
+
+          "<div class=\"finding-form-row finding-form-row-2\">" +
+            "<div class=\"finding-form-group\">" +
+              "<label class=\"finding-form-label safety-detected-date-label\">Ngày phát hiện <span class=\"required-star\">*</span></label>" +
+              "<div class=\"finding-form-control\">" +
+                "<span class=\"safety-date-editor\"><input name=\"issueDate\" type=\"text\" data-safety-date placeholder=\"dd/mm/yyyy\" inputmode=\"numeric\" maxlength=\"10\" value=\"" + escapeHtml(effectiveDisplayIssueDate) + "\" required autocomplete=\"off\"><input type=\"date\" class=\"safety-date-calendar\" aria-label=\"Mở lịch chọn ngày\" value=\"" + escapeHtml(effectiveIssueDate) + "\"></span>" +
+              "</div>" +
+            "</div>" +
+            "<div class=\"finding-form-group\">" +
+              "<label class=\"finding-form-label\">Số lần phát hiện</label>" +
+              "<div class=\"finding-form-control\">" +
+                "<input name=\"issueCount\" type=\"number\" min=\"1\" step=\"1\" value=\"" + escapeHtml(effectiveIssueCount) + "\">" +
+              "</div>" +
+            "</div>" +
+          "</div>" +
+
+          "<div class=\"finding-form-row finding-form-row-2\">" +
+            "<div class=\"finding-form-group\">" +
+              "<label class=\"finding-form-label\">STOP 6</label>" +
+              "<div class=\"finding-form-control\">" +
+                "<select name=\"issueType\">" + optionHtml(STOP6_OPTIONS, effectiveIssueType) + "</select>" +
+              "</div>" +
+            "</div>" +
+            "<div class=\"finding-form-group\">" +
+              "<label class=\"finding-form-label\">Cấp bậc (Rank)</label>" +
+              "<div class=\"finding-form-control\">" +
+                "<select name=\"issueLevel\">" + optionHtml(ISSUE_LEVEL_OPTIONS, effectiveIssueLevel) + "</select>" +
+              "</div>" +
+            "</div>" +
+          "</div>" +
+
+          "<div class=\"finding-form-row finding-form-row-2\">" +
+            "<div class=\"finding-form-group\">" +
+              "<label class=\"finding-form-label\">Kênh phát hiện</label>" +
+              "<div class=\"finding-form-control\">" +
+                "<select name=\"foundChannel\">" + optionHtml(SAFETY_FOUND_OPTIONS, effectiveFoundChannel) + "</select>" +
+              "</div>" +
+            "</div>" +
+            "<div class=\"finding-form-group\">" +
+              "<label class=\"finding-form-label\">Tình trạng</label>" +
+              "<div class=\"finding-form-control\">" +
+                "<select name=\"issueStatus\">" + optionHtml(ISSUE_STATUS_OPTIONS, effectiveIssueStatus) + "</select>" +
+              "</div>" +
+            "</div>" +
+          "</div>" +
+
+          "<div class=\"finding-form-row finding-form-row-2\">" +
+            "<div class=\"finding-form-group\">" +
+              "<label class=\"finding-form-label\">Phát hiện bởi</label>" +
+              "<div class=\"finding-form-control\">" +
+                "<input name=\"issueFoundBy\" type=\"text\" placeholder=\"Người phát hiện\" value=\"" + escapeHtml(effectiveIssueFoundBy) + "\">" +
+              "</div>" +
+            "</div>" +
+            "<div class=\"finding-form-group\">" +
+              "<label class=\"finding-form-label\">Mã nhân viên</label>" +
+              "<div class=\"finding-form-control\">" +
+                "<input name=\"employeeCode\" type=\"text\" placeholder=\"Mã NV\" value=\"" + escapeHtml(effectiveEmployeeCode) + "\">" +
+              "</div>" +
+            "</div>" +
+          "</div>" +
+
+          "<div class=\"finding-form-group\">" +
+            "<label class=\"finding-form-label\">Hạng mục</label>" +
+            "<div class=\"finding-form-control\">" +
+              "<input name=\"issueItemLabel\" type=\"text\" value=\"" + escapeHtml(effectiveIssueItemLabel) + "\">" +
+            "</div>" +
+          "</div>" +
+
+          "<div class=\"finding-form-group\">" +
+            "<label class=\"finding-form-label\">Nội dung cải tiến, xử lý</label>" +
+            "<div class=\"finding-form-control\">" +
+              "<textarea name=\"improvementContent\" placeholder=\"Phương án, đối sách cải tiến và khắc phục...\"" + (canEditCountermeasure ? "" : " disabled") + ">" + escapeHtml(effectiveImprovementContent) + "</textarea>" +
+            "</div>" +
+          "</div>" +
+
+          "<div class=\"finding-form-group\">" +
+            "<label class=\"finding-form-label\">Ảnh sau cải tiến, xử lý</label>" +
+            "<div class=\"finding-form-control\">" +
+              afterPhotoEditor +
+            "</div>" +
+          "</div>" +
+
+          "<div class=\"finding-form-row finding-form-row-2\">" +
+            "<div class=\"finding-form-group\">" +
+              "<label class=\"finding-form-label\">Đảm nhiệm</label>" +
+              "<div class=\"finding-form-control\">" +
+                "<input name=\"actionOwner\" type=\"text\" placeholder=\"Người đảm nhiệm\" value=\"" + escapeHtml(effectiveActionOwner) + "\"" + (canEditCountermeasure ? "" : " disabled") + ">" +
+              "</div>" +
+            "</div>" +
+            "<div class=\"finding-form-group\">" +
+              "<label class=\"finding-form-label\">Kế hoạch</label>" +
+              "<div class=\"finding-form-control\">" +
+                "<input name=\"actionPlan\" type=\"text\" placeholder=\"Kế hoạch xử lý\" value=\"" + escapeHtml(effectiveActionPlan) + "\"" + (canEditCountermeasure ? "" : " disabled") + ">" +
+              "</div>" +
+            "</div>" +
+          "</div>" +
+
+          "<div class=\"finding-form-group\">" +
+            "<label class=\"finding-form-label\">Ngày dự kiến hoàn thành</label>" +
+            "<div class=\"finding-form-control\">" +
+              "<input name=\"completionDate\" type=\"date\" value=\"" + escapeHtml(effectiveCompletionDate) + "\"" + (canEditCountermeasure ? "" : " disabled") + ">" +
+            "</div>" +
+          "</div>" +
+        "</div>" + actualDateFields,
       async onSubmit(formData, form) {
         if (blockIfArchivedPeriod(periodId, SAFETY_PERIOD_TYPE)) {
           return false;
@@ -16272,13 +17029,14 @@
         const beforeLabel = record ? getIssueLocation(row) + " · " + (record.note || "") : "Tạo mới";
         const photoInput = form.elements.photo;
         const afterPhotoInput = form.elements.afterPhoto;
-        const nextPhoto = await prepareScorePhoto(photoInput?.files?.[0], record, formData.get("removePhoto") === "on", periodId, "an-toan");
+        const nextPhoto = await prepareScorePhoto(photoInput?.files?.[0], record, formData.get("removePhoto") === "on", periodId, "an-toan", "anh-truoc-xu-ly");
         const nextAfterPhoto = await prepareScorePhoto(
           afterPhotoInput?.files?.[0],
           { photoDataUrl: record?.afterPhotoDataUrl, photoName: record?.afterPhotoName },
           formData.get("removeAfterPhoto") === "on",
           periodId,
           "an-toan",
+          "anh-sau-xu-ly",
         );
         const issueType = String(formData.get("issueType") || "");
         const issueLevel = String(formData.get("issueLevel") || "");
@@ -16313,13 +17071,15 @@
           employeeCode: String(formData.get("employeeCode") || "").trim(),
           issueItemLabel: String(formData.get("issueItemLabel") || "").trim(),
           foundChannel: normalizeFoundChannel(formData.get("foundChannel")),
-          improvementContent: String(formData.get("improvementContent") || "").trim(),
-          afterPhotoDataUrl: nextAfterPhoto.photoDataUrl,
-          afterPhotoName: nextAfterPhoto.photoName,
-          afterPhotoAnnotations: nextAfterPhoto.photoDataUrl !== (record?.afterPhotoDataUrl || "") ? [] : (record?.afterPhotoAnnotations || []),
-          actionOwner: String(formData.get("actionOwner") || "").trim(),
-          actionPlan: String(formData.get("actionPlan") || "").trim(),
-          completionDate: String(formData.get("completionDate") || "").trim() || defaultCompletionDate,
+          improvementContent: canEditCountermeasure ? String(formData.get("improvementContent") || "").trim() : String(record?.improvementContent || ""),
+          afterPhotoDataUrl: canEditCountermeasure ? nextAfterPhoto.photoDataUrl : String(record?.afterPhotoDataUrl || ""),
+          afterPhotoName: canEditCountermeasure ? nextAfterPhoto.photoName : String(record?.afterPhotoName || ""),
+          afterPhotoAnnotations: canEditCountermeasure
+            ? (nextAfterPhoto.photoDataUrl !== (record?.afterPhotoDataUrl || "") ? [] : (record?.afterPhotoAnnotations || []))
+            : (record?.afterPhotoAnnotations || []),
+          actionOwner: canEditCountermeasure ? String(formData.get("actionOwner") || "").trim() : String(record?.actionOwner || ""),
+          actionPlan: canEditCountermeasure ? String(formData.get("actionPlan") || "").trim() : String(record?.actionPlan || ""),
+          completionDate: canEditCountermeasure ? (String(formData.get("completionDate") || "").trim() || defaultCompletionDate) : String(record?.completionDate || defaultCompletionDate || ""),
           countermeasureDate: String(formData.get("countermeasureDate") || record?.countermeasureDate || ""),
           completedDate: String(formData.get("completedDate") || record?.completedDate || ""),
           completionLevelConfirm: getSafetyLevelConfirm({ issueLevel }),
@@ -16365,9 +17125,18 @@
           isNew,
         });
         window.FormDraftManager?.clearDraft(safetyDraftKey);
+        if (elements.safetyMonthFilter && parsedIssueDate.month) {
+          elements.safetyMonthFilter.value = String(parsedIssueDate.month);
+        }
+        if (elements.safetyYearFilter && parsedIssueDate.year) {
+          elements.safetyYearFilter.value = String(parsedIssueDate.year);
+        }
         showToast(isNew ? "Đã thêm báo cáo an toàn." : "Đã cập nhật báo cáo an toàn.");
         renderAll();
         return true;
+      },
+      onError(error) {
+        showToast(error?.message || "Không lưu được báo cáo An toàn. Vui lòng thử lại.", true);
       },
     });
 
@@ -16441,19 +17210,20 @@
       || String(b.inspectionDate || "").localeCompare(String(a.inspectionDate || ""))
       || String(b.updatedAt || "").localeCompare(String(a.updatedAt || "")));
     const fields = ["location", "problem", "fiveS", "shift", "countermeasure", "dueDate", "progress"];
-    const headers = ["STT", "Zone", "Ngày kiểm tra", "Vị trí", "Vấn đề / Problem", "Ảnh vấn đề", "Hạng mục", "Ca / Shift", "Biện pháp khắc phục / CM", "Hạn / Due date", "Tiến độ / Progress"];
-    const widths = [6, 12, 16, 18, 42, 22, 28, 11, 42, 16, 14];
-    const excelColumnByField = { location: 4, problem: 5, fiveS: 7, shift: 8, countermeasure: 9, dueDate: 10, progress: 11 };
+    const headers = ["STT", "Zone", "Ngày kiểm tra", "Vị trí", "Vấn đề / Problem", "Ảnh vấn đề", "Hạng mục", "Ca / Shift", "Biện pháp khắc phục / CM", "Ảnh sau xử lý", "Hạn / Due date", "Tiến độ / Progress"];
+    const widths = [6, 12, 16, 18, 42, 22, 28, 11, 42, 22, 16, 14];
+    const excelColumnByField = { location: 4, problem: 5, fiveS: 7, shift: 8, countermeasure: 9, dueDate: 11, progress: 12 };
     const findingRows = records.flatMap((sheet) => (sheet.rows || [])
-      .filter((row) => (Boolean(row?.photoDataUrl) || fields.some((key) => key === "progress" ? Number(row?.[key]) > 0 : Boolean(row?.[key])))
+      .filter((row) => (Boolean(row?.photoDataUrl || row?.afterPhotoDataUrl) || fields.some((key) => key === "progress" ? Number(row?.[key]) > 0 : Boolean(row?.[key])))
         && (status === "all" || (status === "resolved" ? window.FiveSFindingsPage?.isFindingResolved?.(row) : !window.FiveSFindingsPage?.isFindingResolved?.(row))))
       .map((row) => ({ sheet, row })));
     const images = [];
+    const skippedPhotos = [];
     const logo = await loadWorkbookLogoImage("images/Logo.jpg", "legroup-logo.png", 1, 1);
     if (logo) images.push(logo);
     const model = {
-      rows: new Map(), rowHeights: new Map(), merges: ["A1:C2"], maxColumn: 11, maxRow: 6,
-      lastTableColumn: 11, tabColor: "FF059669",
+      rows: new Map(), rowHeights: new Map(), merges: ["A1:C2"], maxColumn: 12, maxRow: 6,
+      lastTableColumn: 12, tabColor: "FF059669",
       columnsXml: widths.map((width, col) => `<col min="${col + 1}" max="${col + 1}" width="${width}" customWidth="1"/>`).join(""),
     };
     const merged = (row, start, end, value, style = 24) => {
@@ -16465,12 +17235,12 @@
     const reportLabel = year && month ? `Tháng ${month}/${year}` : periodLabel(period);
     merged(2, 4, 8, `5S find out · ${reportLabel}`, 24);
     addModelCell(model, 1, 9, "Người kiểm tra", 31);
-    merged(1, 10, 11, "", 31);
+    merged(1, 10, 12, "", 31);
     addModelCell(model, 2, 9, "Ngày kiểm tra", 31);
-    merged(2, 10, 11, "", 31);
-    merged(3, 1, 11, "Khu vực (Zone): Tất cả Zone", 31);
+    merged(2, 10, 12, "", 31);
+    merged(3, 1, 12, "Khu vực (Zone): Tất cả Zone", 31);
     merged(4, 1, 6, year && month ? `Tháng báo cáo: ${month}/${year}` : `Kỳ: ${reportLabel}`, 31);
-    merged(4, 7, 11, `Tổng số vấn đề: ${findingRows.length}`, 31);
+    merged(4, 7, 12, `Tổng số vấn đề: ${findingRows.length}`, 31);
     model.rowHeights.set(1, 34);
     model.rowHeights.set(2, 26);
     model.rowHeights.set(3, 25);
@@ -16495,21 +17265,44 @@
         addModelCell(model, excelRow, excelColumn, value, key === "progress" ? 28 : 31);
       });
       if (row.photoDataUrl) {
-        const photo = await photoSourceToImage(row.photoDataUrl, ++imageIndex, excelRow, 6, row.photoAnnotations || []);
-        if (!photo) throw new Error("Không tải được ảnh vấn đề 5S để xuất Excel.");
-        photo.toColumnNumber = 6;
-        photo.toRowNumber = excelRow;
-        images.push(photo);
+        let photo;
+        try {
+          photo = await photoSourceToImage(row.photoDataUrl, ++imageIndex, excelRow, 6, row.photoAnnotations || []);
+        } catch (error) {
+          skippedPhotos.push({ row: rowIndex + 1, type: "Ảnh vấn đề", reason: error?.message || "Ảnh không hợp lệ." });
+        }
+        if (photo) {
+          photo.toColumnNumber = 6;
+          photo.toRowNumber = excelRow;
+          images.push(photo);
+        } else if (!skippedPhotos.some((item) => item.row === rowIndex + 1 && item.type === "Ảnh vấn đề")) {
+          skippedPhotos.push({ row: rowIndex + 1, type: "Ảnh vấn đề", reason: "Không thể đọc ảnh." });
+        }
+      }
+      if (row.afterPhotoDataUrl) {
+        let photo;
+        try {
+          photo = await photoSourceToImage(row.afterPhotoDataUrl, ++imageIndex, excelRow, 10, row.afterPhotoAnnotations || []);
+        } catch (error) {
+          skippedPhotos.push({ row: rowIndex + 1, type: "Ảnh sau xử lý", reason: error?.message || "Ảnh không hợp lệ." });
+        }
+        if (photo) {
+          photo.toColumnNumber = 10;
+          photo.toRowNumber = excelRow;
+          images.push(photo);
+        } else if (!skippedPhotos.some((item) => item.row === rowIndex + 1 && item.type === "Ảnh sau xử lý")) {
+          skippedPhotos.push({ row: rowIndex + 1, type: "Ảnh sau xử lý", reason: "Không thể đọc ảnh." });
+        }
       }
       const lines = fields.reduce((max, key) => {
         const excelColumn = excelColumnByField[key];
         return Math.max(max, String(row[key] || "").split("\n").reduce((sum, line) => sum + Math.max(1, Math.ceil(line.length / Math.max(5, widths[excelColumn - 1] - 3))), 0));
       }, 1);
-      model.rowHeights.set(excelRow, Math.min(409, Math.max(row.photoDataUrl ? 72 : 56, lines * 15 + 12)));
+      model.rowHeights.set(excelRow, Math.min(409, Math.max(row.photoDataUrl || row.afterPhotoDataUrl ? 72 : 56, lines * 15 + 12)));
     }
     const tableEndRow = 6 + findingRows.length;
-    fillRangeBorders(model, 1, 1, 4, 11);
-    fillRangeBorders(model, 6, 1, tableEndRow, 11);
+    fillRangeBorders(model, 1, 1, 4, 12);
+    fillRangeBorders(model, 6, 1, tableEndRow, 12);
     model.drawingRelId = images.length ? "rId1" : "";
     const xml = buildWorksheetXml(model)
       .replace('</sheetPr>', '<pageSetUpPr fitToPage="1"/></sheetPr>')
@@ -16517,6 +17310,7 @@
       .replace('</pageMargins>', '</pageMargins><pageSetup paperSize="9" orientation="landscape" fitToWidth="1" fitToHeight="0"/>');
     const bytes = buildWorkbookFromSheets([{ name: "Vấn đề 5S", xml, images }]);
     downloadFile(`van-de-5s-${year && month ? `${month}-${year}` : period ? `${period.month}-${period.year}` : "chua-gan-ky"}.xlsx`, bytes, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+    return { skippedPhotos };
   }
 
   function exportExcel(periodId) {
@@ -17577,60 +18371,54 @@
   }
 
   async function photoSourceToImage(source, index, rowNumber, columnNumber = 6, annotations = []) {
-    if (Array.isArray(annotations) && annotations.length) {
-      const sourceText = String(source || "");
-      if (!sourceText) return null;
-      let imageSource = sourceText;
-      let objectUrl = "";
-      try {
-        if (!sourceText.startsWith("data:")) {
-          const response = await fetch(sourceText, { credentials: "include" });
-          if (!response.ok) throw new Error("Không tải được ảnh an toàn để xuất Excel.");
-          objectUrl = URL.createObjectURL(await response.blob());
-          imageSource = objectUrl;
-        }
-        const sourceImage = new Image();
-        await new Promise((resolve, reject) => {
-          sourceImage.onload = resolve;
-          sourceImage.onerror = () => reject(new Error("Không đọc được ảnh an toàn để xuất Excel."));
-          sourceImage.src = imageSource;
-        });
-        const width = sourceImage.naturalWidth;
-        const height = sourceImage.naturalHeight;
-        if (!width || !height) throw new Error("Ảnh an toàn không có kích thước hợp lệ.");
-        const canvas = document.createElement("canvas");
-        canvas.width = width;
-        canvas.height = height;
-        const ctx = canvas.getContext("2d");
-        if (!ctx) throw new Error("Không thể xử lý ảnh an toàn để xuất Excel.");
-        ctx.drawImage(sourceImage, 0, 0, width, height);
-        ctx.strokeStyle = "#ff3b30";
-        ctx.lineWidth = Math.max(3, Math.min(width, height) * 0.006);
-        annotations.forEach((circle) => {
-          const x = Number(circle?.x);
-          const y = Number(circle?.y);
-          const radius = Number(circle?.radius);
-          if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(radius) || radius <= 0) return;
-          ctx.beginPath();
-          ctx.arc(Math.max(0, Math.min(1, x)) * width, Math.max(0, Math.min(1, y)) * height, Math.max(0, Math.min(2, radius)) * Math.min(width, height), 0, Math.PI * 2);
-          ctx.stroke();
-        });
-        const pngImage = dataUrlToImage(canvas.toDataURL("image/png"), index, rowNumber, columnNumber);
-        if (!pngImage) throw new Error("Không tạo được ảnh đã khoanh để xuất Excel.");
-        return pngImage;
-      } finally {
-        if (objectUrl) URL.revokeObjectURL(objectUrl);
+    const sourceText = String(source || "");
+    if (!sourceText) return null;
+    let imageSource = sourceText;
+    let objectUrl = "";
+    try {
+      if (!sourceText.startsWith("data:")) {
+        const response = await fetch(sourceText, { credentials: "include" });
+        if (!response.ok) throw new Error(`Ảnh không tồn tại hoặc không được phép tải (HTTP ${response.status}).`);
+        objectUrl = URL.createObjectURL(await response.blob());
+        imageSource = objectUrl;
       }
-    }
-    const dataUrlImage = dataUrlToImage(source, index, rowNumber, columnNumber);
-    if (dataUrlImage || !source) {
-      return dataUrlImage;
-    }
 
-    const cleanSource = String(source);
-    const urlExtension = cleanSource.split("?")[0].split("#")[0].split(".").pop()?.toLowerCase();
-    const extension = urlExtension === "jpeg" ? "jpg" : ["jpg", "png", "webp"].includes(urlExtension) ? urlExtension : "jpg";
-    return loadWorkbookImage(cleanSource, `image${index}.${extension}`, rowNumber, columnNumber);
+      const sourceImage = new Image();
+      await new Promise((resolve, reject) => {
+        sourceImage.onload = resolve;
+        sourceImage.onerror = () => reject(new Error("Tệp ảnh không đọc được."));
+        sourceImage.src = imageSource;
+      });
+      const width = sourceImage.naturalWidth;
+      const height = sourceImage.naturalHeight;
+      if (!width || !height) throw new Error("Ảnh không có kích thước hợp lệ.");
+
+      const canvas = document.createElement("canvas");
+      canvas.width = width;
+      canvas.height = height;
+      const ctx = canvas.getContext("2d");
+      if (!ctx) throw new Error("Không thể xử lý ảnh để xuất Excel.");
+      ctx.fillStyle = "#ffffff";
+      ctx.fillRect(0, 0, width, height);
+      ctx.drawImage(sourceImage, 0, 0, width, height);
+      ctx.strokeStyle = "#ff3b30";
+      ctx.lineWidth = Math.max(3, Math.min(width, height) * 0.006);
+      (Array.isArray(annotations) ? annotations : []).forEach((circle) => {
+        const x = Number(circle?.x);
+        const y = Number(circle?.y);
+        const radius = Number(circle?.radius);
+        if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(radius) || radius <= 0) return;
+        ctx.beginPath();
+        ctx.arc(Math.max(0, Math.min(1, x)) * width, Math.max(0, Math.min(1, y)) * height, Math.max(0, Math.min(2, radius)) * Math.min(width, height), 0, Math.PI * 2);
+        ctx.stroke();
+      });
+
+      const jpegImage = dataUrlToImage(canvas.toDataURL("image/jpeg", 0.92), index, rowNumber, columnNumber);
+      if (!jpegImage) throw new Error("Không thể chuyển ảnh sang định dạng Excel hỗ trợ.");
+      return jpegImage;
+    } finally {
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    }
   }
 
   function dataUrlToImage(dataUrl, index, rowNumber, columnNumber = 6) {
@@ -17653,23 +18441,6 @@
       columnNumber,
       extension,
     };
-  }
-
-  async function loadWorkbookImage(src, name, rowNumber, columnNumber, toColumnNumber, toRowNumber) {
-    try {
-      const response = await fetch(src, {
-        credentials: "include",
-      });
-      if (!response.ok) {
-        return null;
-      }
-
-      const bytes = new Uint8Array(await response.arrayBuffer());
-      const extension = String(name).split(".").pop()?.toLowerCase() || "jpg";
-      return { name, bytes, rowNumber, columnNumber, toColumnNumber, toRowNumber, extension };
-    } catch (error) {
-      return null;
-    }
   }
 
   async function loadWorkbookLogoImage(src, name, rowNumber, columnNumber) {
@@ -19895,17 +20666,55 @@
       && document.getElementById("mobileProtoOverlay");
     if (useMobileToast) {
       elements.toast?.classList.remove("is-visible", "is-error");
+      clearTimeout(elements.toast?.__popoverCloseTimer);
+      try {
+        if (elements.toast?.matches(":popover-open")) elements.toast.hidePopover();
+      } catch (_) {}
       window.showMobileToast(message, isError);
       return;
     }
     if (elements.toast) {
+      clearTimeout(elements.toast.__popoverCloseTimer);
       elements.toast.textContent = message;
       elements.toast.classList.toggle("is-error", isError);
+      if (typeof elements.toast.showPopover === "function") {
+        try {
+          if (elements.toast.matches(":popover-open")) elements.toast.hidePopover();
+          elements.toast.showPopover();
+        } catch (_) {}
+      }
       elements.toast.classList.add("is-visible");
       toastTimer = window.setTimeout(() => {
         elements.toast.classList.remove("is-visible");
+        elements.toast.__popoverCloseTimer = window.setTimeout(() => {
+          try {
+            if (elements.toast.matches(":popover-open")) elements.toast.hidePopover();
+          } catch (_) {}
+        }, 220);
       }, 2600);
     }
+  }
+
+  function promoteVisibleToastsAboveDialog() {
+    [elements.toast, document.getElementById("mobileToast")].forEach((toast) => {
+      if (!toast?.classList.contains("is-visible") || typeof toast.showPopover !== "function") return;
+      try {
+        if (toast.matches(":popover-open")) toast.hidePopover();
+        toast.showPopover();
+      } catch (_) {}
+    });
+  }
+
+  function observeDialogToastStacking() {
+    if (typeof MutationObserver === "undefined" || !document.body) return;
+    const observer = new MutationObserver((changes) => {
+      const dialogOpened = changes.some((change) => change.type === "attributes"
+        && change.attributeName === "open"
+        && change.target?.tagName === "DIALOG"
+        && change.target.open);
+      if (dialogOpened) promoteVisibleToastsAboveDialog();
+    });
+    observer.observe(document.body, { subtree: true, attributes: true, attributeFilter: ["open"] });
   }
 
   function handleLocalDataSyncStatus(event) {
@@ -20007,7 +20816,7 @@
   }
 
   function getHistoryEntries(scope = "") {
-    const normalizedScope = scope ? normalizeCatalogType(scope) : "";
+    const normalizedScope = scope ? normalizeAuditLogScope(scope) : "";
     return [...(state.history || [])]
       .filter((entry) => !isHistoryEntryExpired(entry))
       .filter((entry) => !normalizedScope || getHistoryChangesForScope(entry, normalizedScope).length > 0)
@@ -20015,10 +20824,10 @@
   }
 
   function getHistoryChangesForScope(entry, scope = "") {
-    const inferredScope = entry?.scope ? normalizeCatalogType(entry.scope) : getHistoryEntryScope(entry);
+    const normalizedScope = scope ? normalizeAuditLogScope(scope) : "";
     return getAuditChanges(entry).filter((change) => {
-      if (!scope) return true;
-      return normalizeCatalogType(change.scope || inferredScope) === normalizeCatalogType(scope);
+      if (!normalizedScope) return true;
+      return getAuditChangeCategory(change, entry) === normalizedScope;
     });
   }
 
@@ -20049,44 +20858,153 @@
   }
 
   const AUDIT_LOG_PAGE_SIZE = 25;
-  const auditLogPagination = {
-    page: 1,
-  };
+  const AUDIT_FILTER_STORAGE_KEY = "legroup-audit-log-filters-v1";
+  const savedAuditLogState = (() => {
+    try { return JSON.parse(sessionStorage.getItem(AUDIT_FILTER_STORAGE_KEY) || "{}"); } catch (_) { return {}; }
+  })();
+  const { page: savedAuditPage, ...savedAuditFilters } = savedAuditLogState;
+  const auditLogPagination = { page: Math.max(1, Math.trunc(Number(savedAuditPage) || 1)) };
+  const auditLogFilters = { scope: "", search: "", from: "", to: "", action: "", actor: "", zone: "", ...savedAuditFilters };
+  if (auditLogFilters.scope) expandedHistoryScope = normalizeAuditLogScope(auditLogFilters.scope);
+  let expandedAuditEntryId = "";
+
+  function persistAuditLogFilters() {
+    try { sessionStorage.setItem(AUDIT_FILTER_STORAGE_KEY, JSON.stringify({ ...auditLogFilters, page: auditLogPagination.page })); } catch (_) {}
+  }
+
+  function auditEntryActorKey(entry) {
+    return String(entry?.username || entry?.accountId || entry?.employeeCode || entry?.userName || "unknown");
+  }
+
+  function auditEntryChanges(entry, scope = activeHistoryScope) {
+    return getHistoryChangesForScope(entry, scope);
+  }
+
+  function auditEntryZone(entry, scope = activeHistoryScope) {
+    const values = auditEntryChanges(entry, scope).map((change) => String(change.target || "").match(/Zone\s+[^·,]+/i)?.[0]?.trim()).filter(Boolean);
+    return [...new Set(values)].join(", ");
+  }
+
+  function filteredAuditChanges(entry, scope = activeHistoryScope) {
+    const search = String(auditLogFilters.search || "").trim().toLocaleLowerCase("vi");
+    const entryText = [entry.username, entry.userName, entry.employeeCode, entry.note, entry.changeLabel, entry.subjectLabel, entry.periodLabel].filter(Boolean).join(" ").toLocaleLowerCase("vi");
+    const searchMatchesEntry = Boolean(search && entryText.includes(search));
+    return auditEntryChanges(entry, scope).filter((change) => {
+      const date = new Date(change.timestamp || entry.sessionLastChangedAt || entry.timestamp || 0);
+      if (auditLogFilters.from && (!Number.isFinite(date.getTime()) || date.toISOString().slice(0, 10) < auditLogFilters.from)) return false;
+      if (auditLogFilters.to && (!Number.isFinite(date.getTime()) || date.toISOString().slice(0, 10) > auditLogFilters.to)) return false;
+      if (auditLogFilters.action && change.action !== auditLogFilters.action) return false;
+      if (auditLogFilters.zone) {
+        const zone = String(change.target || "").match(/Zone\s+[^·,]+/i)?.[0]?.trim() || "";
+        if (zone !== auditLogFilters.zone) return false;
+      }
+      if (search && !searchMatchesEntry) {
+        const text = [change.target, change.label, change.section, change.before, change.after].filter(Boolean).join(" ").toLocaleLowerCase("vi");
+        if (!text.includes(search)) return false;
+      }
+      return true;
+    });
+  }
+
+  function filterAuditEntries(entries, scope = activeHistoryScope) {
+    return entries.filter((entry) => {
+      if (auditLogFilters.actor && auditEntryActorKey(entry) !== auditLogFilters.actor) return false;
+      return filteredAuditChanges(entry, scope).length > 0;
+    });
+  }
+
+  function renderAuditFilterToolbar(entries, canExport = false) {
+    const actors = new Map();
+    const zones = new Set();
+    entries.forEach((entry) => {
+      const key = auditEntryActorKey(entry);
+      const label = `${entry.userName || entry.username || "Không rõ"}${entry.employeeCode ? ` · ${entry.employeeCode}` : ""}`;
+      actors.set(key, label);
+      auditEntryZone(entry).split(", ").filter(Boolean).forEach((zone) => zones.add(zone));
+    });
+    const options = (items, selected, placeholder) => '<option value="">' + escapeHtml(placeholder) + '</option>' + items.map(([value, label]) => '<option value="' + escapeHtml(value) + '"' + (selected === value ? ' selected' : '') + '>' + escapeHtml(label) + '</option>').join("");
+    return '<div class="audit-filter-toolbar">' +
+      '<label><span>Mục</span><select data-audit-filter="scope">' +
+        AUDIT_LOG_SCOPE_OPTIONS.map((option) => '<option value="' + escapeHtml(option.value) + '"' + (activeHistoryScope === option.value ? ' selected' : '') + '>' + escapeHtml(option.label) + '</option>').join("") +
+      '</select></label>' +
+      '<label class="audit-filter-search"><span>Tìm kiếm</span><input type="search" data-audit-filter="search" value="' + escapeHtml(auditLogFilters.search) + '" placeholder="Tên, mã NV, nội dung, Zone..."></label>' +
+      '<label><span>Từ ngày</span><input type="date" data-audit-filter="from" value="' + escapeHtml(auditLogFilters.from) + '"></label>' +
+      '<label><span>Đến ngày</span><input type="date" data-audit-filter="to" value="' + escapeHtml(auditLogFilters.to) + '"></label>' +
+      '<label><span>Thao tác</span><select data-audit-filter="action">' + options([["Thêm", "Thêm"], ["Sửa", "Sửa"], ["Xóa", "Xóa"]], auditLogFilters.action, "Tất cả thao tác") + '</select></label>' +
+      '<label><span>Người thực hiện</span><select data-audit-filter="actor">' + options([...actors.entries()].sort((a, b) => a[1].localeCompare(b[1], "vi")), auditLogFilters.actor, "Tất cả người dùng") + '</select></label>' +
+      '<label><span>Zone</span><select data-audit-filter="zone">' + options([...zones].sort((a, b) => a.localeCompare(b, "vi", { numeric: true })).map((zone) => [zone, zone]), auditLogFilters.zone, "Tất cả Zone") + '</select></label>' +
+      '<button type="button" class="primary-button" data-action="export-audit-log"' + (canExport ? '' : ' disabled') + '>Xuất Excel</button>' +
+    '</div>';
+  }
+
+  function renderAuditEntryDetails(entry, scope) {
+    return filteredAuditChanges(entry, scope).map((change) => {
+      const actionClass = change.action === "Thêm" ? "is-added" : change.action === "Xóa" ? "is-deleted" : "is-edited";
+      const appliedPeriod = change.periodId ? getPeriod(change.periodId) : null;
+      const target = [appliedPeriod ? periodLabel(appliedPeriod) : "", change.target || "-"].filter(Boolean).join(" · ");
+      return '<div class="audit-diff-row"><span class="history-action-badge ' + actionClass + '">' + escapeHtml(change.action) + '</span>' +
+        '<strong>' + escapeHtml(change.section || "Dữ liệu") + ' · ' + escapeHtml(change.label || "Thay đổi") + '</strong>' +
+        '<span>' + escapeHtml(target) + '</span>' +
+        '<div><span><b>Trước:</b> ' + escapeHtml(change.before || "(trống)") + '</span><span><b>Sau:</b> ' + escapeHtml(change.after || "(trống)") + '</span></div></div>';
+    }).join("");
+  }
+
+  function buildAuditLogWorksheet(entries, scope, sheetName) {
+    const rows = [["Thời gian", "Người thực hiện", "Mã nhân viên", "Thao tác", "Đối tượng", "Zone", "Trường", "Giá trị trước", "Giá trị sau"]];
+    entries.forEach((entry) => filteredAuditChanges(entry, scope).forEach((change) => rows.push([
+      formatDateTimeDisplay(change.timestamp || entry.sessionLastChangedAt || entry.timestamp),
+      entry.userName || entry.username || "Không rõ", entry.employeeCode || "", change.action || "", change.target || "",
+      String(change.target || "").match(/Zone\s+[^·,]+/i)?.[0]?.trim() || "", `${change.section || "Dữ liệu"} · ${change.label || "Thay đổi"}`, change.before || "", change.after || "",
+    ])));
+    if (rows.length === 1) rows.push(["Không có dữ liệu phù hợp với bộ lọc hiện tại."]);
+    const model = { rows: new Map(), rowHeights: new Map(), merges: [], maxColumn: 9, maxRow: rows.length, lastTableColumn: 9,
+      columnsXml: '<col min="1" max="1" width="20" customWidth="1"/><col min="2" max="2" width="24" customWidth="1"/><col min="3" max="3" width="16" customWidth="1"/><col min="4" max="4" width="12" customWidth="1"/><col min="5" max="6" width="24" customWidth="1"/><col min="7" max="7" width="30" customWidth="1"/><col min="8" max="9" width="36" customWidth="1"/>' };
+    rows.forEach((row, rowIndex) => row.forEach((value, columnIndex) => addModelCell(model, rowIndex + 1, columnIndex + 1, value, rowIndex === 0 ? 10 : 31)));
+    fillRangeBorders(model, 1, 1, rows.length, 9);
+    let xml = buildWorksheetXml(model)
+      .replace('<sheetView workbookViewId="0"/>', '<sheetView workbookViewId="0"><pane ySplit="1" topLeftCell="A2" activePane="bottomLeft" state="frozen"/></sheetView>');
+    return { name: sheetName, xml, images: [] };
+  }
+
+  function exportAuditLogExcel() {
+    const allEntries = getHistoryEntries();
+    const sheets = AUDIT_LOG_SCOPE_OPTIONS.map((option) => buildAuditLogWorksheet(
+      filterAuditEntries(allEntries, option.value), option.value, option.sheet,
+    ));
+    const bytes = buildWorkbookFromSheets(sheets);
+    downloadFile(`audit-log-${new Date().toISOString().slice(0, 10)}.xlsx`, bytes, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+  }
 
   function setAuditLogPage(page) {
     auditLogPagination.page = Math.max(1, Math.trunc(Number(page) || 1));
+    persistAuditLogFilters();
   }
 
   function renderAuditLogPager(page, totalPages, totalRows, startIndex, endIndex) {
     if (totalRows <= 0) return "";
-    const currentCount = endIndex - startIndex;
+    const firstRow = startIndex + 1;
 
-    const pages = [];
-    if (totalPages <= 7) {
-      for (let i = 1; i <= totalPages; i++) pages.push(i);
-    } else {
-      pages.push(1);
-      if (page > 3) pages.push("...");
-      const startP = Math.max(2, page - 1);
-      const endP = Math.min(totalPages - 1, page + 1);
-      for (let i = startP; i <= endP; i++) {
-        if (!pages.includes(i)) pages.push(i);
-      }
-      if (page < totalPages - 2) pages.push("...");
-      if (!pages.includes(totalPages)) pages.push(totalPages);
+    const visiblePages = new Set([1, totalPages]);
+    for (let current = Math.max(1, page - 1); current <= Math.min(totalPages, page + 1); current += 1) {
+      visiblePages.add(current);
     }
+    const pages = [];
+    [...visiblePages].sort((left, right) => left - right).forEach((current, index, sorted) => {
+      if (index > 0 && current - sorted[index - 1] > 1) pages.push("...");
+      pages.push(current);
+    });
 
     const numberButtons = pages.map((item) => {
       if (item === "...") {
         return '<span class="audit-log-pager-ellipsis">...</span>';
       }
-      const isActive = item === page;
-      return '<button type="button" class="tiny-button audit-log-page-btn' + (isActive ? ' is-active' : '') + '" data-action="set-audit-log-page" data-page="' + item + '" ' + (isActive ? 'aria-current="page"' : '') + '>' + item + '</button>';
+      const isActive = Number(item) === Number(page);
+      return '<button type="button" class="tiny-button audit-log-page-btn' + (isActive ? ' is-active is-current-page' : '') + '" data-action="set-audit-log-page" data-page="' + item + '" aria-label="Trang ' + item + '" ' + (isActive ? 'aria-current="page"' : '') + '>' + item + '</button>';
     }).join("");
 
     return '<div class="audit-log-pager" aria-label="Phân trang lịch sử chỉnh sửa">' +
       '<div class="audit-log-pager-info">' +
-        '<strong>' + currentCount + '/' + totalRows + '</strong> · Trang <strong>' + page + '</strong>/<strong>' + totalPages + '</strong>' +
+        '<strong>' + firstRow + '–' + endIndex + '/' + totalRows + '</strong> · Trang <strong>' + page + '</strong>/<strong>' + totalPages + '</strong>' +
       '</div>' +
       '<div class="audit-log-pager-controls">' +
         '<button type="button" class="tiny-button" data-action="set-audit-log-page" data-page="1"' + (page <= 1 ? ' disabled' : '') + ' title="Trang đầu">« Đầu</button>' +
@@ -20123,7 +21041,7 @@
     '</article>';
   }
 
-  function renderAuditLogTab() {
+  function renderLegacyAuditLogTab() {
     const container = document.getElementById("tab-audit-log");
     if (!container) {
       return;
@@ -20134,7 +21052,7 @@
       return;
     }
 
-    const activeScope = expandedHistoryScope ? normalizeCatalogType(expandedHistoryScope) : "";
+    const activeScope = expandedHistoryScope ? normalizeAuditLogScope(expandedHistoryScope) : auditLogFilters.scope ? normalizeAuditLogScope(auditLogFilters.scope) : "";
     const otherScope = activeScope === SAFETY_PERIOD_TYPE ? FIVE_S_PERIOD_TYPE : SAFETY_PERIOD_TYPE;
 
     if (!activeScope) {
@@ -20175,10 +21093,10 @@
         topCardHtml +
         '<div class="audit-log-card">' +
           '<div class="history-empty">' +
-            '<strong>Chưa có log chỉnh sửa ' + escapeHtml(getAccountScopeLabel(activeHistoryScope)) + ' (3 tháng gần nhất)</strong>' +
+            '<strong>Chưa có log chỉnh sửa ' + escapeHtml(getAccountScopeLabel(activeHistoryScope)) + ' (12 tháng gần nhất)</strong>' +
             '<span>Khi admin hoặc assessor cập nhật dữ liệu, lịch sử sẽ hiện ở đây.</span>' +
           '</div>' +
-          '<p class="history-retention-note">💡 <em>Hệ thống tự động lưu giữ lịch sử chỉnh sửa trong vòng 3 tháng gần nhất để tối ưu hiệu năng và dung lượng.</em></p>' +
+          '<p class="history-retention-note">💡 <em>Hệ thống lưu giữ lịch sử chỉnh sửa trong vòng 12 tháng gần nhất.</em></p>' +
         '</div>' +
         bottomCardHtml +
       '</div>';
@@ -20273,7 +21191,7 @@
         '<div class="audit-log-card-header">' +
           '<div class="history-summary">' +
             '<strong>' + totalRows + '</strong>' +
-            '<span>phiên có chỉnh sửa ' + escapeHtml(getAccountScopeLabel(activeHistoryScope)) + ' trong 3 tháng gần nhất từ tất cả tài khoản.</span>' +
+            '<span>phiên có chỉnh sửa ' + escapeHtml(getAccountScopeLabel(activeHistoryScope)) + ' trong 12 tháng gần nhất từ tất cả tài khoản.</span>' +
           '</div>' +
           topPagerHtml +
         '</div>' +
@@ -20296,10 +21214,77 @@
         '</div>' +
         '<div class="audit-log-card-footer">' +
           bottomPagerHtml +
-          '<p class="history-retention-note">💡 <em>Hệ thống tự động lưu giữ lịch sử chỉnh sửa trong vòng 3 tháng gần nhất để tối ưu hiệu năng và dung lượng.</em></p>' +
+          '<p class="history-retention-note">💡 <em>Hệ thống lưu giữ lịch sử chỉnh sửa trong vòng 12 tháng gần nhất.</em></p>' +
         '</div>' +
       '</div>' +
       bottomCardHtml +
+    '</div>';
+  }
+
+  function renderAuditLogTab() {
+    const container = document.getElementById("tab-audit-log");
+    if (!container) return;
+    if (!isAdminAccount(currentUser)) {
+      container.innerHTML = '<div class="history-empty" style="margin: 20px;"><strong>Không có quyền truy cập</strong><span>Chỉ tài khoản admin mới có quyền xem lịch sử chỉnh sửa.</span></div>';
+      return;
+    }
+
+    const activeScope = expandedHistoryScope
+      ? normalizeAuditLogScope(expandedHistoryScope)
+      : auditLogFilters.scope ? normalizeAuditLogScope(auditLogFilters.scope) : SAFETY_PERIOD_TYPE;
+
+    activeHistoryScope = activeScope;
+    const allRows = getHistoryEntries(activeHistoryScope);
+    const rows = filterAuditEntries(allRows);
+    const exportableEntries = getHistoryEntries();
+    const hasExportRows = AUDIT_LOG_SCOPE_OPTIONS.some((option) => filterAuditEntries(exportableEntries, option.value).length > 0);
+    const totalRows = rows.length;
+    const totalPages = Math.max(1, Math.ceil(totalRows / AUDIT_LOG_PAGE_SIZE));
+    auditLogPagination.page = Math.min(Math.max(1, auditLogPagination.page), totalPages);
+    const startIndex = (auditLogPagination.page - 1) * AUDIT_LOG_PAGE_SIZE;
+    const endIndex = Math.min(startIndex + AUDIT_LOG_PAGE_SIZE, totalRows);
+    const pagedRows = rows.slice(startIndex, endIndex);
+    const tableRows = pagedRows.map((entry) => {
+      const changes = filteredAuditChanges(entry, activeHistoryScope);
+      const actions = [...new Set(changes.map((change) => change.action).filter(Boolean))];
+      const action = actions.length === 1 ? actions[0] : actions.length ? "Sửa" : "-";
+      const actionClass = action === "Thêm" ? "is-added" : action === "Xóa" ? "is-deleted" : "is-edited";
+      const actor = entry.userName || (entry.username && state.accounts?.find((a) => a.username === entry.username)?.displayName) || entry.username || "Không rõ";
+      const target = [...new Set(changes.map((change) => {
+        const period = change.periodId ? getPeriod(change.periodId) : null;
+        return [period ? periodLabel(period) : "", change.section || change.label].filter(Boolean).join(" · ");
+      }).filter(Boolean))].slice(0, 3).join(" · ") || formatHistoryChange(entry);
+      const zone = [...new Set(changes.map((change) => String(change.target || "").match(/Zone\s+[^·,]+/i)?.[0]?.trim()).filter(Boolean))].join(", ") || "—";
+      const expanded = expandedAuditEntryId === String(entry.id || "");
+      const rowTimestamp = changes.map((change) => change.timestamp).filter(Boolean).sort().at(-1) || entry.sessionLastChangedAt || entry.timestamp;
+      const row = '<tr class="audit-entry-summary' + (expanded ? ' is-expanded' : '') + '" data-action="toggle-audit-entry" data-id="' + escapeHtml(entry.id || "") + '" aria-expanded="' + expanded + '">' +
+        '<td data-label="Thời gian">' + escapeHtml(formatDateTimeDisplay(rowTimestamp)) + '</td>' +
+        '<td data-label="Người sửa"><strong>' + escapeHtml(actor) + '</strong><span>' + escapeHtml([entry.employeeCode ? `Mã NV: ${entry.employeeCode}` : "", entry.username ? `@${entry.username}` : ""].filter(Boolean).join(" · ") || "-") + '</span></td>' +
+        '<td data-label="Thao tác"><span class="history-action-badge ' + actionClass + '">' + escapeHtml(actions.join(" / ") || "Cập nhật") + '</span></td>' +
+        '<td data-label="Đối tượng"><strong>' + escapeHtml(target) + '</strong><span>' + escapeHtml(`${changes.length} trường thay đổi`) + '</span></td>' +
+        '<td data-label="Zone">' + escapeHtml(zone) + '</td>' +
+        '</tr>';
+      if (!expanded) return row;
+      return row + '<tr class="audit-entry-details"><td colspan="5"><div class="audit-diff-list">' + renderAuditEntryDetails(entry, activeHistoryScope) + '</div></td></tr>';
+    }).join("");
+
+    const emptyText = allRows.length
+      ? "Không có lịch sử phù hợp bộ lọc."
+      : `Chưa có log chỉnh sửa ${auditLogScopeLabel(activeHistoryScope)} trong 12 tháng gần nhất.`;
+    const pagerTop = renderAuditLogPager(auditLogPagination.page, totalPages, totalRows, startIndex, endIndex);
+    const pagerBottom = renderAuditLogPager(auditLogPagination.page, totalPages, totalRows, startIndex, endIndex);
+    container.innerHTML = '<div class="audit-log-page">' +
+      '<div class="audit-log-card">' +
+        '<div class="audit-log-card-header"><div class="history-summary"><strong>' + totalRows + '</strong><span>phiên có thay đổi phù hợp bộ lọc · ' + allRows.length + ' phiên trong 12 tháng gần nhất</span></div>' +
+          pagerTop +
+        '</div>' +
+        renderAuditFilterToolbar(allRows, hasExportRows) +
+        '<div class="history-table-wrap audit-log-table-wrap" data-drag-scroll><table class="history-table audit-log-table audit-log-compact-table">' +
+          '<thead><tr><th>Thời gian</th><th>Người sửa</th><th>Thao tác</th><th>Đối tượng</th><th>Zone</th></tr></thead>' +
+          '<tbody>' + (tableRows || '<tr><td colspan="5" class="audit-log-empty-cell">' + escapeHtml(emptyText) + '</td></tr>') + '</tbody>' +
+        '</table></div>' +
+        '<div class="audit-log-card-footer">' + pagerBottom + '<p class="history-retention-note">Lịch sử được lưu tối đa 12 tháng. Mở một dòng để xem giá trị trước và sau.</p></div>' +
+      '</div>' +
     '</div>';
   }
 
@@ -20310,7 +21295,7 @@
 
     closeAccountMenu();
     closeModal();
-    activeHistoryScope = normalizeCatalogType(scope);
+    activeHistoryScope = normalizeAuditLogScope(scope);
     auditLogPagination.page = 1;
     goToTab("audit-log");
   }
@@ -21823,6 +22808,9 @@
       "set-history-scope",
       "set-audit-log-page",
       "toggle-history-row",
+      "toggle-audit-entry",
+      "clear-audit-filters",
+      "export-audit-log",
       "delete-period",
       "edit-five-s-period-date",
       "edit-scorer",
@@ -21917,6 +22905,18 @@
           }
         }
       },
+      "toggle-audit-entry": () => {
+        expandedAuditEntryId = expandedAuditEntryId === String(id || "") ? "" : String(id || "");
+        renderActiveTab();
+      },
+      "clear-audit-filters": () => {
+        Object.assign(auditLogFilters, { scope: activeHistoryScope || "", search: "", from: "", to: "", action: "", actor: "", zone: "" });
+        auditLogPagination.page = 1;
+        expandedAuditEntryId = "";
+        persistAuditLogFilters();
+        renderActiveTab();
+      },
+      "export-audit-log": () => exportAuditLogExcel(),
       "set-safety-department-filter": () => {
         if (elements.safetyDepartmentFilter) {
           elements.safetyDepartmentFilter.value = id || "";
@@ -22108,10 +23108,22 @@
       select.addEventListener("change", () => activatePeriod(select.value, type));
     };
     elements.assessorPeriodSelect?.addEventListener("change", renderAssessorTab);
+    const updateSummaryPeriodFromFilters = () => {
+      const selectedPeriodId = syncSummaryPeriodFilters(
+        getVisibleFiveSPeriods(),
+        "",
+        Number(elements.summaryPeriodYearFilter?.value),
+        Number(elements.summaryPeriodMonthFilter?.value)
+      );
+      if (selectedPeriodId) renderActiveTab();
+    };
+    elements.summaryPeriodMonthFilter?.addEventListener("change", updateSummaryPeriodFromFilters);
+    elements.summaryPeriodYearFilter?.addEventListener("change", updateSummaryPeriodFromFilters);
     elements.summaryPeriodSelect?.addEventListener("change", renderActiveTab);
     elements.adminScoreSheetPeriod?.addEventListener("change", renderAdminScoreSheetTab);
     elements.adminScoreSheetArea?.addEventListener("change", renderAdminScoreSheetTab);
     elements.adminScoreSheetSource?.addEventListener("change", renderAdminScoreSheetTab);
+    elements.adminScoreSheetAddDateButton?.addEventListener("click", openAddAdminScoreSheetDateModal);
     elements.assessorAreaSelect?.addEventListener("change", renderAssessorTab);
     elements.assessorScoreDate?.addEventListener("change", () => {
       if (elements.assessorScoreDateDisplay) elements.assessorScoreDateDisplay.value = formatDateDisplay(elements.assessorScoreDate.value);
@@ -22145,7 +23157,7 @@
       select?.addEventListener("change", renderActiveTab);
     });
     elements.addSafetyRecordButton?.addEventListener("click", addSafetyRecord);
-    elements.exportExcelButton?.addEventListener("click", () => confirmExportExcel(getActivePeriodId(FIVE_S_PERIOD_TYPE)));
+    elements.exportExcelButton?.addEventListener("click", () => confirmExportExcel(elements.summaryPeriodSelect?.value || getActivePeriodId(FIVE_S_PERIOD_TYPE)));
     elements.exportAdminScoreSheetButton?.addEventListener("click", exportAdminZoneScoreSheet);
     elements.editSafetyMetaButton?.addEventListener("click", editSafetyMeta);
     elements.exportSafetyExcelButton?.addEventListener("click", confirmExportActiveSafetyReportExcel);
@@ -22345,6 +23357,20 @@
     document.addEventListener("dragover", handleInlineScoreDragDrop, { capture: true });
     document.addEventListener("drop", handleInlineScoreDragDrop, { capture: true });
     document.addEventListener("input", (event) => {
+      const auditFilter = event.target?.closest?.("[data-audit-filter='search']");
+      if (auditFilter) {
+        const start = auditFilter.selectionStart;
+        const end = auditFilter.selectionEnd;
+        auditLogFilters.search = auditFilter.value;
+        auditLogPagination.page = 1;
+        expandedAuditEntryId = "";
+        persistAuditLogFilters();
+        renderActiveTab();
+        const nextSearch = document.querySelector("#tab-audit-log [data-audit-filter='search']");
+        nextSearch?.focus();
+        if (typeof start === "number") nextSearch?.setSelectionRange?.(start, end);
+        return;
+      }
       const assessorScoreSelect = event.target?.closest?.("[data-assessor-score-select]");
       if (assessorScoreSelect) {
         handleAssessorScoreSelectChange(assessorScoreSelect);
@@ -22507,6 +23533,22 @@
     });
 
     document.addEventListener("change", (event) => {
+      const auditFilter = event.target?.closest?.("[data-audit-filter]");
+      if (auditFilter) {
+        if (auditFilter.dataset.auditFilter !== "search") {
+          const filterName = auditFilter.dataset.auditFilter;
+          auditLogFilters[filterName] = auditFilter.value || "";
+          if (filterName === "scope") {
+            activeHistoryScope = normalizeAuditLogScope(auditFilter.value);
+            expandedHistoryScope = activeHistoryScope;
+          }
+          auditLogPagination.page = 1;
+          expandedAuditEntryId = "";
+          persistAuditLogFilters();
+          renderActiveTab();
+        }
+        return;
+      }
       const selectAll = event.target?.closest?.("input[data-select-all]");
       if (selectAll) {
         const targetName = selectAll.getAttribute("data-select-all");
@@ -22638,6 +23680,7 @@
   }
 
   async function init() {
+    observeDialogToastStacking();
     bindEvents();
 
     try {

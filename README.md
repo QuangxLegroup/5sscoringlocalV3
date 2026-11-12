@@ -8,7 +8,7 @@ Web app cham diem 5S theo bang mau `Tong Hop diem 5S thang 12.2025`.
 - CSS: giao dien, bang diem giong Excel, dashboard, popup.
 - JavaScript thuan: dang nhap, phan quyen, cham diem, luu du lieu noi bo, xuat Excel.
 
-Du lieu nghiep vu duoc luu trong PostgreSQL. Anh minh hoa duoc luu rieng theo thang-nam trong `data/photos/MM-YYYY`; PostgreSQL chi luu duong dan `/api/photos/...`, khong luu noi dung anh.
+Dữ liệu nghiệp vụ được lưu trong PostgreSQL. Ảnh minh họa được lưu riêng theo loại hồ sơ và kỳ: `data/photos/an-toan/anh-truoc-xu-ly/MM-YYYY`, `data/photos/an-toan/anh-sau-xu-ly/MM-YYYY`, `data/photos/van-de-5s/anh-truoc-xu-ly/MM-YYYY`, `data/photos/van-de-5s/anh-sau-xu-ly/MM-YYYY`; ảnh hướng dẫn nằm trong `data/photos/huong-dan/MM-YYYY`. Thumbnail lưu trong `.thumbs` theo cùng cấu trúc. PostgreSQL chỉ lưu đường dẫn `/api/photos/...`, không lưu nội dung ảnh.
 Sau khi nhap va doi chieu PostgreSQL thanh cong, tep JSON nguon va cac ban JSON duoc to chuc lai da duoc xoa khoi may nay. Server khong doc/ghi JSON de luu du lieu khi chay.
 
 ## Chay app
@@ -122,7 +122,7 @@ Backend Node duoc tach theo Controller-Service-Repository:
 - `scripts/migrate-json-to-postgres.js`: nhap mot lan du lieu JSON cu, co transaction, checksum va doi chieu truoc khi commit.
 - `src/server/http/request.js` va `src/server/http/response.js`: helper HTTP dung chung.
 
-Luong luu du lieu: View -> `local-data-api.js` -> DataController -> DataService -> PostgreSQL repository. Cac danh sach lon co endpoint phan trang `/api/data/page`; kiem tra thay doi su dung ETag de khong tai lai toan bo root khi du lieu khong doi. Anh di qua `/api/photos` -> `data/photos/MM-YYYY`.
+Luồng lưu dữ liệu: View -> `local-data-api.js` -> DataController -> DataService -> PostgreSQL repository. Các danh sách lớn có endpoint phân trang `/api/data/page`; kiểm tra thay đổi sử dụng ETag để không tải lại toàn bộ root khi dữ liệu không đổi. Ảnh đi qua `/api/photos` -> thư mục theo loại hồ sơ, ảnh trước/sau xử lý và kỳ trong `data/photos`.
 ## Chay bang Docker production
 
 Cau hinh Docker dung image Debian-based, khong dung Alpine:

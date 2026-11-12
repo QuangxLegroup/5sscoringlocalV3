@@ -281,6 +281,23 @@ function isAreaManagedByDepartmentHead(area, account) {
   return Boolean(headName && sameNormalizedText(area?.departmentHead, headName));
 }
 
+function normalizePersonNameKey(name) {
+  return String(name || "")
+    .replace(/^(mrs\b\.?|ms\b\.?|mr\b\.?)\s*/i, "")
+    .trim();
+}
+
+function personNameMatches(accountName, catalogName) {
+  if (!accountName || !catalogName) return false;
+  if (sameNormalizedText(accountName, catalogName)) return true;
+  const k1 = normalizePersonNameKey(accountName).toLowerCase();
+  const k2 = normalizePersonNameKey(catalogName).toLowerCase();
+  if (!k1 || !k2) return false;
+  if (k1 === k2) return true;
+  if (k1.endsWith(" " + k2) || k2.endsWith(" " + k1)) return true;
+  return false;
+}
+
 function accountIdentityNames(account) {
   return [...new Set([account?.name, account?.displayName, isDepartmentHeadAccount(account) ? account?.departmentHeadName : ""]
     .map((value) => String(value || "").trim())
@@ -323,7 +340,7 @@ function getAccountRoleAssignments(root, account, periodId, type = FIVE_S_PERIOD
   const matchesPerson = (person) => {
     const personCode = employeeCodeKey(person?.employeeCode);
     if (accountCode && personCode) return accountCode === personCode;
-    return !isNameAmbiguous(person?.name) && names.some((name) => sameNormalizedText(name, person?.name));
+    return !isNameAmbiguous(person?.name) && names.some((name) => personNameMatches(name, person?.name));
   };
   const matchesDepartmentHeadArea = (area) => {
     const areaCode = employeeCodeKey(area?.departmentHeadEmployeeCode);
@@ -442,7 +459,7 @@ class AuthService {
 
     if (shouldPrepare("history") && root.history) {
       const cutoff = new Date();
-      cutoff.setMonth(cutoff.getMonth() - 3);
+      cutoff.setMonth(cutoff.getMonth() - 12);
       const cutoffMs = cutoff.getTime();
 
       const isFreshHistory = (entry) => {
@@ -563,7 +580,13 @@ class AuthService {
         .filter(Boolean)
         .map((part) => {
           const separator = part.indexOf("=");
-          return separator >= 0 ? [part.slice(0, separator), decodeURIComponent(part.slice(separator + 1))] : [part, ""];
+          if (separator < 0) return [part, ""];
+          const rawValue = part.slice(separator + 1);
+          try {
+            return [part.slice(0, separator), decodeURIComponent(rawValue)];
+          } catch (_) {
+            return [part.slice(0, separator), rawValue];
+          }
         }),
     );
     return cookies[TOKEN_COOKIE_NAME] || "";
@@ -578,10 +601,15 @@ class AuthService {
 
     let result = null;
     const nextRoot = await this.repository.updateRoot((currentRoot) => {
-      const preparedRoot = this.prepareRootForStorage(currentRoot || {}, currentRoot || {});
+      const preparedRoot = this.prepareRootForStorage(currentRoot || {}, currentRoot || {}, {
+        collections: new Set(["accounts"]),
+      });
       const account = this.findAccount(preparedRoot, (item) => item.username === cleanUsername);
       if (!account || !this.verifyAccountPassword(account, candidatePassword)) {
         throw createHttpError("Sai tài khoản hoặc mật khẩu.", 401);
+      }
+      if (account.active === false || (typeof account.active === "string" && ["false", "0", "no", "inactive"].includes(account.active.trim().toLowerCase()))) {
+        throw createHttpError("Tài khoản đã bị khóa hoặc ngừng kích hoạt.", 403);
       }
 
       const previousSessionId = String(account.activeSessionId || "");
@@ -604,7 +632,7 @@ class AuthService {
         username: account.username || "",
       };
       return preparedRoot;
-    });
+    }, { touchedRootKeys: ["accounts"] });
 
     const account = this.findAccount(nextRoot, (item) => item.id === result.accountId)
       || this.findAccount(nextRoot, (item) => item.username === result.username);
@@ -615,17 +643,21 @@ class AuthService {
     };
   }
 
-  async authenticateRequest(request) {
+  async authenticateRequest(request, options = {}) {
+    const cloneRoot = options.cloneRoot !== false;
     const token = this.extractToken(request);
     const payload = this.verifyToken(token);
     const snapshot = typeof this.repository.readRootSnapshot === "function"
-      ? await this.repository.readRootSnapshot()
+      ? await this.repository.readRootSnapshot({ cloneRoot })
       : null;
     const root = snapshot?.root ?? await this.repository.readRoot();
     const account = this.findAccount(root, (item) => item.id === payload.sub)
       || this.findAccount(root, (item) => item.username === payload.username);
     if (!account) {
       throw createHttpError("Tài khoản không còn tồn tại.", 401);
+    }
+    if (account.active === false || (typeof account.active === "string" && ["false", "0", "no", "inactive"].includes(account.active.trim().toLowerCase()))) {
+      throw createHttpError("Tài khoản đã bị khóa hoặc ngừng kích hoạt.", 403);
     }
     if (String(account.activeSessionId || "") !== String(payload.sid || "")) {
       throw createHttpError("Phiên đăng nhập đã bị thay thế.", 401);
@@ -647,11 +679,16 @@ class AuthService {
     const payload = this.verifyToken(token);
     let result = null;
     const nextRoot = await this.repository.updateRoot((currentRoot) => {
-      const root = this.prepareRootForStorage(currentRoot || {}, currentRoot || {});
+      const root = this.prepareRootForStorage(currentRoot || {}, currentRoot || {}, {
+        collections: new Set(["accounts"]),
+      });
       const account = this.findAccount(root, (item) => item.id === payload.sub)
         || this.findAccount(root, (item) => item.username === payload.username);
       if (!account || String(account.activeSessionId || "") !== String(payload.sid || "")) {
         throw createHttpError("Phiên đăng nhập đã bị thay thế.", 401);
+      }
+      if (account.active === false || (typeof account.active === "string" && ["false", "0", "no", "inactive"].includes(account.active.trim().toLowerCase()))) {
+        throw createHttpError("Tài khoản đã bị khóa hoặc ngừng kích hoạt.", 403);
       }
 
       const now = new Date();
@@ -671,7 +708,7 @@ class AuthService {
         account: this.sanitizeAccount(account),
       };
       return root;
-    });
+    }, { touchedRootKeys: ["accounts"] });
 
     return {
       ...result,
@@ -701,8 +738,10 @@ class AuthService {
         account.activeSessionExpiresAt = "";
         account.activeSessionStartedAt = "";
       }
-      return this.prepareRootForStorage(currentRoot || {}, currentRoot || {});
-    });
+      return this.prepareRootForStorage(currentRoot || {}, currentRoot || {}, {
+        collections: new Set(["accounts"]),
+      });
+    }, { touchedRootKeys: ["accounts"] });
 
     return { ok: true };
   }
@@ -768,7 +807,7 @@ class AuthService {
       areas.filter((area) => managerIds.has(area.scorerId)).forEach((area) => allowedIds.add(area.id));
       if (!managerIds.size) {
         const assignedAreaIds = new Set(getAccountAreaIds(account, type));
-        areas.filter((area) => assignedAreaIds.has(area.id)).forEach((area) => allowedIds.add(area.id));
+        areas.filter((area) => assignedAreaIds.has(area.id) || assignedAreaIds.has(String(area.code)) || assignedAreaIds.has(`Zone ${area.code}`)).forEach((area) => allowedIds.add(area.id));
       }
     }
     const assessorRole = type === SAFETY_PERIOD_TYPE ? ROLE_ASSESSOR_SAFETY : ROLE_ASSESSOR_5S;
@@ -1101,7 +1140,8 @@ class AuthService {
       const periodId = String(candidate.periodId || "");
       const areaId = String(candidate.areaId || "");
       const assignments = getAccountRoleAssignments(root, account, periodId, FIVE_S_PERIOD_TYPE);
-      if (!periodId || !areaId || (!hasAccountAccessType(account, FIVE_S_PERIOD_TYPE, root, periodId) && !assignments.hasDepartmentHead && !assignments.hasAt5s)) {
+      const isAdmin = isAdminAccount(account);
+      if (!periodId || !areaId || (!isAdmin && !hasAccountAccessType(account, FIVE_S_PERIOD_TYPE, root, periodId) && !assignments.hasDepartmentHead && !assignments.hasAt5s)) {
         throw createHttpError("Bạn không có quyền ghi điểm 5S.", 403);
       }
 
@@ -1111,6 +1151,8 @@ class AuthService {
           throw createHttpError("Vui lòng chọn ngày chấm hợp lệ.", 400);
         }
       }
+      if (isAdmin) return;
+
       const canWriteSource = source === SCORE_SOURCE_SELF
         ? assignments.roles.includes(ROLE_ZONE_OWNER)
         : source === SCORE_SOURCE_AT5S
@@ -1244,6 +1286,13 @@ class AuthService {
       const recordId = String(recordIdFromPath || "");
       if (String(record.id || "") !== recordId) {
         throw createHttpError("Dữ liệu đánh giá an toàn không hợp lệ.", 400);
+      }
+      const canCreateSafety = isAdminAccount(account)
+        || safetyAssignments.hasAt5s
+        || safetyAssignments.roles.includes(ROLE_ASSESSOR_SAFETY)
+        || safetyAssignments.hasDepartmentHead;
+      if (!canCreateSafety) {
+        throw createHttpError("Bạn không có quyền tạo mới báo cáo đánh giá an toàn.", 403);
       }
       const reportableArea = this.getAreasForPeriod(root, record.periodId, SAFETY_PERIOD_TYPE).find((area) => (
         area?.id === record.areaId
@@ -1457,29 +1506,89 @@ class AuthService {
     });
   }
 
-  assertFiveSFindingWriteAllowed(root, account, command) {
-    const activePeriodId = String(root?.activeFiveSPeriodId || root?.activePeriodId || "");
-    const assignments = getAccountRoleAssignments(root, account, activePeriodId, FIVE_S_PERIOD_TYPE);
-    const hasFiveSAssessorAccess = hasAccountAccessType(account, FIVE_S_PERIOD_TYPE, root, activePeriodId)
-      && assignments.roles.includes(ROLE_ASSESSOR_5S);
-    const hasAt5sAccess = assignments.hasAt5s;
-    const hasZoneOwnerAccess = hasAccountAccessType(account, FIVE_S_PERIOD_TYPE, root, activePeriodId)
-      && assignments.roles.includes(ROLE_ZONE_OWNER);
-    if (!assignments.hasDepartmentHead && !hasZoneOwnerAccess && !hasFiveSAssessorAccess && !hasAt5sAccess) {
-      throw createHttpError("Chỉ assessor 5S, Ban AT - 5S, quản lý Zone, Trưởng bộ phận và admin được thay đổi phiếu 5S.", 403);
+  assertFiveSFindingCountermeasureOnly(existingSheet, nextSheet) {
+    if (!existingSheet || !nextSheet) {
+      throw createHttpError("Quản lý Zone chỉ được cập nhật đối sách của vấn đề 5S đã có.", 403);
     }
+    // A legacy finding may not have persisted its period ID or area ID. Its active period
+    // and area are checked against the issue date and area label in assertScope before this comparison.
+    const allowedSheetKeys = new Set([
+      "rows",
+      "periodId",
+      "updatedAt",
+      "updatedBy",
+      ...(!existingSheet.areaId ? ["areaId"] : []),
+      ...(!existingSheet.area ? ["area"] : []),
+    ]);
+    const sheetKeys = new Set([...Object.keys(existingSheet), ...Object.keys(nextSheet)]);
+    for (const key of sheetKeys) {
+      if (allowedSheetKeys.has(key)) continue;
+      if (JSON.stringify(existingSheet[key]) !== JSON.stringify(nextSheet[key])) {
+        throw createHttpError("Quản lý Zone chỉ được sửa biện pháp, ảnh sau xử lý, hạn và tiến độ.", 403);
+      }
+    }
+
+    const rowsAsEntries = (rows) => Array.isArray(rows)
+      ? rows.map((row, index) => [String(index), row])
+      : Object.entries(isPlainObject(rows) ? rows : {}).sort(([left], [right]) => left.localeCompare(right, "vi", { numeric: true }));
+    const previousRows = rowsAsEntries(existingSheet.rows);
+    const nextRows = rowsAsEntries(nextSheet.rows);
+    if (previousRows.length !== nextRows.length || previousRows.some(([key], index) => key !== nextRows[index]?.[0])) {
+      throw createHttpError("Quản lý Zone không được thêm hoặc xóa dòng vấn đề 5S.", 403);
+    }
+
+    const allowedRowKeys = new Set([
+      "countermeasure", "dueDate", "progress", "afterPhotoDataUrl", "afterPhotoName", "afterPhotoAnnotations",
+      "countermeasureUpdatedBy", "countermeasureUpdatedAt",
+    ]);
+    for (let index = 0; index < previousRows.length; index += 1) {
+      const previousRow = isPlainObject(previousRows[index][1]) ? previousRows[index][1] : {};
+      const nextRow = isPlainObject(nextRows[index][1]) ? nextRows[index][1] : {};
+      const rowKeys = new Set([...Object.keys(previousRow), ...Object.keys(nextRow)]);
+      for (const key of rowKeys) {
+        if (allowedRowKeys.has(key)) continue;
+        if (JSON.stringify(previousRow[key]) !== JSON.stringify(nextRow[key])) {
+          throw createHttpError("Quản lý Zone chỉ được sửa biện pháp, ảnh sau xử lý, hạn và tiến độ.", 403);
+        }
+      }
+    }
+  }
+
+  assertFiveSFindingWriteAllowed(root, account, command) {
+    if (isAdminAccount(account)) return;
+    const activePeriodId = String(root?.activeFiveSPeriodId || root?.activePeriodId || "");
     const parts = pathParts(command.path);
     // Scope checks require a complete record, never a collection or nested patch.
     if (parts.length !== 2 || !["set", "update", "remove"].includes(command.operation)) {
       throw createHttpError("Vui lòng cập nhật từng phiếu 5S.", 403);
     }
     const existing = valueAtPath(root, command.path);
+    const existingPeriodId = existing?.periodId || "";
+    const targetPeriodId = existingPeriodId || activePeriodId;
+    const assignments = getAccountRoleAssignments(root, account, targetPeriodId, FIVE_S_PERIOD_TYPE);
+    const hasFiveSAssessorAccess = hasAccountAccessType(account, FIVE_S_PERIOD_TYPE, root, targetPeriodId)
+      && assignments.roles.includes(ROLE_ASSESSOR_5S);
+    const hasAt5sAccess = assignments.hasAt5s;
+    const hasZoneOwnerAccess = (hasAccountAccessType(account, FIVE_S_PERIOD_TYPE, root, targetPeriodId) || getAccountRoleForType(account, FIVE_S_PERIOD_TYPE) === ROLE_ZONE_OWNER)
+      && assignments.roles.includes(ROLE_ZONE_OWNER);
+    const countermeasureOnly = !hasAt5sAccess && !hasFiveSAssessorAccess
+      && (assignments.hasDepartmentHead || hasZoneOwnerAccess);
+    if (!assignments.hasDepartmentHead && !hasZoneOwnerAccess && !hasFiveSAssessorAccess && !hasAt5sAccess) {
+      throw createHttpError("Chỉ assessor 5S, Ban AT - 5S, quản lý Zone, Trưởng bộ phận và admin được thay đổi phiếu 5S.", 403);
+    }
     const assertScope = (record) => {
       const periods = collectionValues(root?.periods).filter((period) => normalizePeriodType(period.type) !== SAFETY_PERIOD_TYPE);
-      const date = /^(\d{4})-(\d{2})-\d{2}$/.exec(record?.inspectionDate || "");
-      const period = record?.periodId ? periods.find((item) => item.id === record.periodId) : date && periods.find((item) => Number(item.year) === Number(date[1]) && Number(item.month) === Number(date[2]));
+      const text = String(record?.inspectionDate || "").trim();
+      const isoMatch = /^(\d{4})-(\d{1,2})-(\d{1,2})/.exec(text);
+      const displayMatch = /^(\d{1,2})\/(\d{1,2})\/(\d{4})/.exec(text);
+      const year = isoMatch ? Number(isoMatch[1]) : displayMatch ? Number(displayMatch[3]) : null;
+      const month = isoMatch ? Number(isoMatch[2]) : displayMatch ? Number(displayMatch[2]) : null;
+      const period = record?.periodId ? periods.find((item) => item.id === record.periodId) : (year && month ? periods.find((item) => Number(item.year) === year && Number(item.month) === month) : null);
       const activeId = root?.activeFiveSPeriodId || periods.find((item) => item.id === root?.activePeriodId)?.id || "";
-      if (!period || period.archived || period.id !== activeId) {
+      if (!period || period.archived) {
+        throw createHttpError("Kỳ đánh giá này đã được lưu trữ hoặc không tồn tại.", 403);
+      }
+      if (!countermeasureOnly && period.id !== activeId) {
         throw createHttpError("Chỉ được thay đổi vấn đề 5S trong kỳ đánh giá admin đang mở.", 403);
       }
       const areas = period ? this.getAreasForPeriod(root, period.id, FIVE_S_PERIOD_TYPE) : [];
@@ -1488,14 +1597,68 @@ class AuthService {
       if (!period || !area || !this.getAllowedAreaIds(root, account, period.id, FIVE_S_PERIOD_TYPE).has(area.id)) {
         throw createHttpError("Bạn chỉ được đánh giá Zone được phân công trong kỳ này.", 403);
       }
+      return { period, area };
     };
-    if (existing) assertScope(existing);
-    if (command.operation === "remove" || command.value === null) return;
+    const existingScope = existing ? assertScope(existing) : null;
+    if (command.operation === "remove" || command.value === null) {
+      if (countermeasureOnly) throw createHttpError("Quản lý Zone chỉ được cập nhật đối sách của vấn đề 5S đã có.", 403);
+      return;
+    }
     if (!isPlainObject(command.value) || Object.keys(command.value).some((key) => key.includes("/") || ["__proto__", "constructor", "prototype"].includes(key))) {
       throw createHttpError("Dữ liệu phiếu 5S không hợp lệ.", 403);
     }
     const next = command.operation === "update" ? { ...existing, ...command.value } : command.value;
-    assertScope(next);
+    const nextScope = assertScope(next);
+    if (countermeasureOnly && existingScope && (existingScope.period.id !== nextScope.period.id || existingScope.area.id !== nextScope.area.id)) {
+      throw createHttpError("Quản lý Zone chỉ được sửa biện pháp, ảnh sau xử lý, hạn và tiến độ.", 403);
+    }
+    if (!existing && !isAdminAccount(account)) {
+      const rows = Array.isArray(next.rows) ? next.rows : Object.values(next.rows || {});
+      const hasResponseContent = rows.some((row) => (
+        Boolean(row?.countermeasure && String(row.countermeasure).trim())
+        || Boolean(row?.afterPhotoDataUrl && String(row.afterPhotoDataUrl).trim())
+        || Boolean(row?.dueDate && String(row.dueDate).trim())
+        || (Number(row?.progress) || 0) > 0
+      ));
+      if (hasResponseContent) {
+        throw createHttpError("Chỉ admin mới được thêm biện pháp khắc phục, ảnh sau xử lý, hạn và tiến độ khi tạo mới vấn đề 5S.", 403);
+      }
+    }
+    if (existing && !isAdminAccount(account)) {
+      const isZoneManager = Boolean(hasZoneOwnerAccess || assignments.hasDepartmentHead);
+      if (!isZoneManager) {
+        const rowsAsEntries = (rows) => Array.isArray(rows)
+          ? rows.map((row, index) => [String(index), row])
+          : Object.entries(isPlainObject(rows) ? rows : {}).sort(([left], [right]) => left.localeCompare(right, "vi", { numeric: true }));
+        const previousRows = rowsAsEntries(existing.rows);
+        const nextRows = rowsAsEntries(next.rows);
+        const responseKeys = ["countermeasure", "dueDate", "progress", "afterPhotoDataUrl", "afterPhotoName", "afterPhotoAnnotations"];
+        for (let i = 0; i < nextRows.length; i += 1) {
+          const prevRow = previousRows[i]?.[1] || {};
+          const nextRow = nextRows[i]?.[1] || {};
+          for (const key of responseKeys) {
+            const prevVal = String(prevRow[key] ?? "");
+            const nextVal = String(nextRow[key] ?? "");
+            if (key === "progress") {
+              if ((Number(prevRow.progress) || 0) !== (Number(nextRow.progress) || 0)) {
+                throw createHttpError("Chỉ người quản lý ở Zone đó và admin mới được sửa biện pháp khắc phục, ảnh sau xử lý, hạn và tiến độ.", 403);
+              }
+            } else if (key === "afterPhotoAnnotations") {
+              if (JSON.stringify(prevRow.afterPhotoAnnotations || []) !== JSON.stringify(nextRow.afterPhotoAnnotations || [])) {
+                throw createHttpError("Chỉ người quản lý ở Zone đó và admin mới được sửa biện pháp khắc phục, ảnh sau xử lý, hạn và tiến độ.", 403);
+              }
+            } else if (prevVal.trim() !== nextVal.trim()) {
+              throw createHttpError("Chỉ người quản lý ở Zone đó và admin mới được sửa biện pháp khắc phục, ảnh sau xử lý, hạn và tiến độ.", 403);
+            }
+          }
+        }
+      }
+    }
+    if (countermeasureOnly) {
+      if (existing) this.assertFiveSFindingCountermeasureOnly(existing, next);
+      else if (command.operation !== "set") throw createHttpError("Quản lý Zone chỉ được tạo vấn đề 5S mới trong Zone được phân công.", 403);
+      else if (nextScope.period.id !== activePeriodId) throw createHttpError("Chỉ được thay đổi vấn đề 5S trong kỳ đánh giá admin đang mở.", 403);
+    }
     this.assertFiveSFindingCountermeasureAuthors(existing, next, account);
   }
 
@@ -1551,10 +1714,13 @@ class AuthService {
     throw createHttpError("Bạn không có quyền thay đổi dữ liệu quản trị.", 403);
   }
 
-  assertPhotoAllowed(authContext) {
+  assertPhotoAllowed(authContext, categoryFolder = "") {
     const account = authContext?.rawAccount || authContext?.account;
     if (!account || isViewerAccount(account)) {
       throw createHttpError("Bạn không có quyền tải ảnh.", 403);
+    }
+    if (categoryFolder === "huong-dan" && !isAdminAccount(account)) {
+      throw createHttpError("Chỉ admin được phép thay đổi ảnh hướng dẫn sử dụng.", 403);
     }
   }
 

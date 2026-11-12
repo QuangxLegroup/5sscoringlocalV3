@@ -446,6 +446,8 @@
       : (availableSources.includes(userScoreSource) ? userScoreSource : sourceOptions[0]?.value || SCORE_SOURCE_ASSESSOR);
     const scoreSource = sourceOptions.some((option) => option.value === selectedSource) ? selectedSource : defaultSource;
     const isAverageMode = scoreSource === SCORE_SOURCE_AVERAGE;
+    const aggregatedScoreSource = scoreSource === SCORE_SOURCE_AT5S || scoreSource === SCORE_SOURCE_DEPARTMENT_HEAD;
+    const canEditSummaryCells = !isViewer && !aggregatedScoreSource;
     const allowedAreaIds = getAllowedAreaIds(currentUser, periodId);
     const assignedAreas = getAreasForPeriod(periodId).filter((area) => allowedAreaIds.has(area.id));
 
@@ -488,7 +490,9 @@
       buildMatrixTable(elements.summaryTable, {
         periodId,
         scoreSource,
-        editable: true,
+        // Điểm AT-5S và Trưởng phòng là tổng hợp nhiều phiếu/ngày,
+        // vì vậy chỉ được chỉnh sửa trên từng phiếu chấm riêng.
+        editable: canEditSummaryCells,
         visibleAreaIds: undefined,
         editableAreaIds: isAdmin
           ? allowedAreaIds

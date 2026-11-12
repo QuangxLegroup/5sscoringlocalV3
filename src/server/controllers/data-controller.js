@@ -1,6 +1,6 @@
 "use strict";
 
-const { readJsonBody } = require("../http/request");
+const { readJsonBody, PHOTO_BODY_LIMIT_BYTES, SMALL_BODY_LIMIT_BYTES } = require("../http/request");
 const { sendJson } = require("../http/response");
 
 function pathParts(path) {
@@ -65,11 +65,11 @@ class DataController {
     const etag = revision === null || revision === undefined ? "" : `"root-${revision}"`;
     const requestedTags = String(request.headers["if-none-match"] || "").split(",").map((tag) => tag.trim());
     if (etag && requestedTags.includes(etag)) {
-      response.writeHead(304, { "Cache-Control": "no-store", ETag: etag });
+      response.writeHead(304, { "Cache-Control": "no-store", ETag: etag, Vary: "Cookie" });
       response.end();
       return;
     }
-    sendJson(response, 200, await this.dataService.readData(authContext), etag ? { ETag: etag } : {});
+    sendJson(response, 200, await this.dataService.readData(authContext), etag ? { ETag: etag, Vary: "Cookie" } : { Vary: "Cookie" });
   }
 
   async handleReadPage(request, response, authContext, requestUrl) {
@@ -128,6 +128,7 @@ class DataController {
       clearInterval(authCheck);
       this.streamClients.delete(client);
     };
+    client.close = closeClient;
     client.revoke = () => {
       if (closed) return;
       try {
@@ -141,17 +142,25 @@ class DataController {
       }
     };
     const keepAlive = setInterval(() => {
-      response.write(`event: ping\ndata: ${Date.now()}\n\n`);
+      if (closed || response.writableEnded) {
+        closeClient();
+        return;
+      }
+      try {
+        response.write(`event: ping\ndata: ${Date.now()}\n\n`);
+      } catch (_) {
+        closeClient();
+      }
     }, 25000);
     const authCheck = setInterval(() => {
       if (!this.authService || authCheckBusy || closed || response.writableEnded) {
         return;
       }
       authCheckBusy = true;
-      this.authService.authenticateRequest(request)
+      this.authService.authenticateRequest(request, { cloneRoot: false })
         .catch((error) => {
           const status = Number(error?.statusCode || error?.status || 0);
-          if (status !== 401) {
+          if (status !== 401 && status !== 403) {
             return;
           }
           try {
@@ -172,6 +181,8 @@ class DataController {
     request.on("close", () => {
       closeClient();
     });
+    response.on?.("close", closeClient);
+    response.on?.("error", closeClient);
   }
 
   revokeSession(sessionId) {
@@ -190,18 +201,19 @@ class DataController {
       try {
         client.response.write(`event: data-changed\ndata: ${data}\n\n`);
       } catch (error) {
-        this.streamClients.delete(client);
+        if (typeof client.close === "function") client.close();
+        else this.streamClients.delete(client);
       }
     }
   }
 
   async handleSavePhoto(request, response, authContext) {
-    const photo = await readJsonBody(request);
+    const photo = await readJsonBody(request, PHOTO_BODY_LIMIT_BYTES);
     sendJson(response, 200, await this.dataService.savePhoto(photo, authContext));
   }
 
   async handleDeletePhoto(request, response, authContext) {
-    const photo = await readJsonBody(request);
+    const photo = await readJsonBody(request, SMALL_BODY_LIMIT_BYTES);
     sendJson(response, 200, await this.dataService.deletePhoto(photo, authContext));
   }
 

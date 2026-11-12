@@ -64,6 +64,8 @@ function readAsset(relativePath) {
 const assetFiles = [
   "index.html",
   "404.html",
+  "manifest.json",
+  "service-worker.js",
   "styles.css",
   "standards.js",
   "app.js",

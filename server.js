@@ -96,8 +96,21 @@ async function listen(port) {
   process.once("SIGTERM", shutdown);
 }
 
+async function seedAccounts(repository, seedData = {}) {
+  if (!repository || typeof repository.updateRoot !== "function") return;
+  return repository.updateRoot((currentRoot) => {
+    const root = currentRoot && typeof currentRoot === "object" ? currentRoot : {};
+    const existingAccounts = root.accounts && typeof root.accounts === "object" ? Object.keys(root.accounts) : [];
+    if (existingAccounts.length > 0) return root;
+    return {
+      ...root,
+      accounts: { ...seedData },
+    };
+  }, { touchedRootKeys: ["accounts"] });
+}
+
 if (require.main === module) {
   listen(START_PORT).catch((error) => { console.error(error); process.exitCode = 1; });
 }
 
-module.exports = { createServer };
+module.exports = { createServer, seedAccounts };

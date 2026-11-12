@@ -20,7 +20,7 @@ function fixture(extra = {}) {
   return { service: new DataService({ repository, authService }), repository };
 }
 
-const sheet = { id: "sheet-1", periodId: "p", areaId: "z26", area: "Zone 26", inspector: "Người kiểm tra", inspectionDate: "2026-09-28", rows: [{ problem: "Vật thừa", stop6: "A", fiveS: "S1", location: "Bàn", shift: "1", countermeasure: "", owner: "Người xử lý", dueDate: "2026-09-30", progress: "25" }] };
+const sheet = { id: "sheet-1", periodId: "p", areaId: "z26", area: "Zone 26", inspector: "Người kiểm tra", inspectionDate: "2026-09-28", rows: [{ problem: "Vật thừa", stop6: "A", fiveS: "S1", location: "Bàn", shift: "1", countermeasure: "", owner: "Người xử lý", dueDate: "", progress: "0" }] };
 
 test("linked zone-owner accounts follow catalog assignments even with stale account Zone lists", () => {
   const auth = new AuthService({ repository: {} });
@@ -36,7 +36,7 @@ test("linked zone-owner accounts follow catalog assignments even with stale acco
 
 test("editing one issue's inspection details preserves sibling issues in an atomic scoped batch", async () => {
   const { service } = fixture();
-  const auth = { account: { role: "zoneOwner", scorerId: "owner" } };
+  const auth = { account: { id: "assessor", role: "assessor5s", accessTypes: ["5s"], fiveSAreaIds: ["z26"] } };
   const original = { ...sheet, rows: [...sheet.rows, { ...sheet.rows[0], problem: "Other issue" }] };
   await service.writeData({ operation: "set", path: "fiveSFindings/sheet-1", value: original }, auth);
   const remaining = { ...original, rows: [original.rows[1]] };
@@ -48,16 +48,35 @@ test("editing one issue's inspection details preserves sibling issues in an atom
   assert.deepEqual((await service.readData()).fiveSFindings, { "sheet-1": remaining, edited });
 });
 
-for (const role of ["admin", "departmentHead", "deptHead", "zoneOwner", "manager"]) {
-  test(`${role} can create, update, read, and delete findings`, async () => {
+test("admin can create, update, read, and delete findings", async () => {
+  const { service } = fixture();
+  const auth = { account: { id: "admin", role: "admin", name: "Admin" } };
+  await service.writeData({ operation: "set", path: "fiveSFindings/sheet-1", value: sheet }, auth);
+  assert.deepEqual((await service.readData()).fiveSFindings["sheet-1"], sheet);
+  await service.writeData({ operation: "update", path: "fiveSFindings/sheet-1", value: { inspector: "Updated" } }, auth);
+  assert.equal((await service.readData()).fiveSFindings["sheet-1"].inspector, "Updated");
+  await service.writeData({ operation: "remove", path: "fiveSFindings/sheet-1" }, auth);
+  assert.deepEqual((await service.readData()).fiveSFindings, {});
+});
+
+for (const role of ["departmentHead", "deptHead", "zoneOwner", "manager"]) {
+  test(`${role} can create, read, and update countermeasures on findings, but cannot edit problem details or delete`, async () => {
     const { service } = fixture();
     const auth = { account: { id: role, role, name: "Head", scorerId: "owner" } };
     await service.writeData({ operation: "set", path: "fiveSFindings/sheet-1", value: sheet }, auth);
     assert.deepEqual((await service.readData()).fiveSFindings["sheet-1"], sheet);
-    await service.writeData({ operation: "update", path: "fiveSFindings/sheet-1", value: { inspector: "Updated" } }, auth);
-    assert.equal((await service.readData()).fiveSFindings["sheet-1"].inspector, "Updated");
-    await service.writeData({ operation: "remove", path: "fiveSFindings/sheet-1" }, auth);
-    assert.deepEqual((await service.readData()).fiveSFindings, {});
+    const updatedRows = [{
+      ...sheet.rows[0],
+      countermeasure: "Đã bổ sung khay chứa",
+      dueDate: "2026-09-30",
+      progress: "100",
+      countermeasureUpdatedBy: role,
+      countermeasureUpdatedAt: "2026-09-29T08:00:00.000Z",
+    }];
+    await service.writeData({ operation: "update", path: "fiveSFindings/sheet-1", value: { rows: updatedRows } }, auth);
+    assert.equal((await service.readData()).fiveSFindings["sheet-1"].rows[0].countermeasure, "Đã bổ sung khay chứa");
+    await assert.rejects(service.writeData({ operation: "update", path: "fiveSFindings/sheet-1", value: { inspector: "Updated" } }, auth), { statusCode: 403 });
+    await assert.rejects(service.writeData({ operation: "remove", path: "fiveSFindings/sheet-1" }, auth), { statusCode: 403 });
   });
 }
 
@@ -177,11 +196,11 @@ test("findings survive a repository restart and appear in the organized data cop
 });
 
 for (const role of ["departmentHead", "zoneOwner"]) {
-  test(role + " can write only the admin-opened period, including batches and period moves", async () => {
+  test(role + " can create only in the admin-opened period and update countermeasures on assigned Zones", async () => {
     const periods = { p: { id: "p", type: "5s", month: 9, year: 2026 }, q: { id: "q", type: "5s", month: 10, year: 2026 } };
     const { service } = fixture({ periods });
     const admin = { account: { role: "admin" } };
-    const user = { account: { role, name: "Head", scorerId: "owner" } };
+    const user = { account: { id: role, role, name: "Head", scorerId: "owner" } };
     const next = { ...sheet, id: "next", periodId: "q" };
     await service.writeData({ operation: "set", path: "fiveSFindings/sheet-1", value: sheet }, user);
     await service.writeData({ operation: "set", path: "fiveSFindings/next", value: next }, admin);
@@ -196,7 +215,13 @@ for (const role of ["departmentHead", "zoneOwner"]) {
     assert.equal((await service.readData()).fiveSFindings["sheet-1"].inspector, sheet.inspector);
     await service.writeData({ operation: "set", path: "activeFiveSPeriodId", value: "q" }, admin);
     await assert.rejects(service.writeData({ operation: "update", path: "fiveSFindings/sheet-1", value: { inspector: "Stale form" } }, user), { statusCode: 403 });
-    await service.writeData({ operation: "update", path: "fiveSFindings/next", value: { inspector: "Allowed" } }, user);
+    const countermeasureRows = [{
+      ...next.rows[0],
+      countermeasure: "Allowed countermeasure",
+      countermeasureUpdatedBy: role,
+      countermeasureUpdatedAt: "2026-10-02T08:00:00.000Z",
+    }];
+    await service.writeData({ operation: "update", path: "fiveSFindings/next", value: { rows: countermeasureRows } }, user);
     await service.writeData({ operation: "update", path: "periods/q", value: { archived: true } }, admin);
     await assert.rejects(service.writeData({ operation: "remove", path: "fiveSFindings/next" }, user), { statusCode: 403 });
     await service.writeData({ operation: "remove", path: "fiveSFindings/next" }, admin);

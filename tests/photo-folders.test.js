@@ -18,8 +18,8 @@ function createMockRepository(initialRoot = {}) {
     },
     async updateRoot(mutator) {
       const next = JSON.parse(JSON.stringify(root));
-      await mutator(next);
-      root = next;
+      const updated = await mutator(next);
+      root = updated !== undefined ? updated : next;
       return { root };
     },
     getRoot() {
@@ -47,11 +47,11 @@ test("DataService: savePhoto separates 5S, Safety, and User Guides into van-de-5
 
     assert.equal(fiveSResult.categoryFolder, "van-de-5s");
     assert.equal(fiveSResult.periodFolder, "10-2026");
-    assert.match(fiveSResult.url, /^\/api\/photos\/van-de-5s\/10-2026\/.+\.png$/);
+    assert.match(fiveSResult.url, /^\/api\/photos\/van-de-5s\/anh-truoc-xu-ly\/10-2026\/.+\.png$/);
 
-    const fiveSFilePath = path.join(photoDir, "van-de-5s", "10-2026", fiveSResult.fileName);
+    const fiveSFilePath = path.join(photoDir, "van-de-5s", "anh-truoc-xu-ly", "10-2026", fiveSResult.fileName);
     const fiveSExists = await fs.access(fiveSFilePath).then(() => true).catch(() => false);
-    assert.ok(fiveSExists, "5S photo file should exist in van-de-5s/10-2026");
+    assert.ok(fiveSExists, "5S photo file should exist in van-de-5s/anh-truoc-xu-ly/10-2026");
 
     // 2. Save Safety photo
     const safetyResult = await dataService.savePhoto({
@@ -64,11 +64,11 @@ test("DataService: savePhoto separates 5S, Safety, and User Guides into van-de-5
 
     assert.equal(safetyResult.categoryFolder, "an-toan");
     assert.equal(safetyResult.periodFolder, "10-2026");
-    assert.match(safetyResult.url, /^\/api\/photos\/an-toan\/10-2026\/.+\.png$/);
+    assert.match(safetyResult.url, /^\/api\/photos\/an-toan\/anh-truoc-xu-ly\/10-2026\/.+\.png$/);
 
-    const safetyFilePath = path.join(photoDir, "an-toan", "10-2026", safetyResult.fileName);
+    const safetyFilePath = path.join(photoDir, "an-toan", "anh-truoc-xu-ly", "10-2026", safetyResult.fileName);
     const safetyExists = await fs.access(safetyFilePath).then(() => true).catch(() => false);
-    assert.ok(safetyExists, "Safety photo file should exist in an-toan/10-2026");
+    assert.ok(safetyExists, "Safety photo file should exist in an-toan/anh-truoc-xu-ly/10-2026");
 
     // 3. Save User Guide photo
     const guideResult = await dataService.savePhoto({
@@ -187,16 +187,16 @@ test("DataService: migrateLegacyPhotos migrates on-disk files and updates DB roo
     assert.equal(result.updatedRefs, 3);
 
     // Verify files on disk moved to new directories
-    const new5SPath = path.join(photoDir, "van-de-5s", "10-2026", "five-s-item.png");
-    const newSafetyPath = path.join(photoDir, "an-toan", "10-2026", "safety-item.png");
+    const new5SPath = path.join(photoDir, "van-de-5s", "anh-truoc-xu-ly", "10-2026", "five-s-item.png");
+    const newSafetyPath = path.join(photoDir, "an-toan", "anh-truoc-xu-ly", "10-2026", "safety-item.png");
     const newGuidePath = path.join(photoDir, "huong-dan", "10-2026", "guide-item.png");
-    assert.ok(await fs.access(new5SPath).then(() => true).catch(() => false), "5S photo should be moved to van-de-5s");
-    assert.ok(await fs.access(newSafetyPath).then(() => true).catch(() => false), "Safety photo should be moved to an-toan");
+    assert.ok(await fs.access(new5SPath).then(() => true).catch(() => false), "5S photo should be moved to van-de-5s/anh-truoc-xu-ly");
+    assert.ok(await fs.access(newSafetyPath).then(() => true).catch(() => false), "Safety photo should be moved to an-toan/anh-truoc-xu-ly");
     assert.ok(await fs.access(newGuidePath).then(() => true).catch(() => false), "Guide photo should be moved to huong-dan");
 
     // Verify thumbs moved
-    const new5SThumb = path.join(photoDir, ".thumbs", "van-de-5s", "10-2026", "five-s-item.png.webp");
-    const newSafetyThumb = path.join(photoDir, ".thumbs", "an-toan", "10-2026", "safety-item.png.webp");
+    const new5SThumb = path.join(photoDir, ".thumbs", "van-de-5s", "anh-truoc-xu-ly", "10-2026", "five-s-item.png.webp");
+    const newSafetyThumb = path.join(photoDir, ".thumbs", "an-toan", "anh-truoc-xu-ly", "10-2026", "safety-item.png.webp");
     const newGuideThumb = path.join(photoDir, ".thumbs", "huong-dan", "10-2026", "guide-item.png.webp");
     assert.ok(await fs.access(new5SThumb).then(() => true).catch(() => false), "5S thumb moved");
     assert.ok(await fs.access(newSafetyThumb).then(() => true).catch(() => false), "Safety thumb moved");
@@ -204,8 +204,8 @@ test("DataService: migrateLegacyPhotos migrates on-disk files and updates DB roo
 
     // Verify DB root updated
     const updatedRoot = repository.getRoot();
-    assert.equal(updatedRoot.scores[0].photoDataUrl, "/api/photos/van-de-5s/10-2026/five-s-item.png");
-    assert.equal(updatedRoot.safetyRecords[0].photoDataUrl, "/api/photos/an-toan/10-2026/safety-item.png");
+    assert.equal(updatedRoot.scores[0].photoDataUrl, "/api/photos/van-de-5s/anh-truoc-xu-ly/10-2026/five-s-item.png");
+    assert.equal(updatedRoot.safetyRecords[0].photoDataUrl, "/api/photos/an-toan/anh-truoc-xu-ly/10-2026/safety-item.png");
     assert.equal(updatedRoot.userGuides.safety.steps[0].imageUrl, "/api/photos/huong-dan/10-2026/guide-item.png");
     assert.equal(updatedRoot.userGuides.safety.steps[0].images[0].imageUrl, "/api/photos/huong-dan/10-2026/guide-item.png");
 

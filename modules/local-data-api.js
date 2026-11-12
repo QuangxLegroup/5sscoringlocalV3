@@ -244,10 +244,7 @@
   function applyQueuedWritesToRoot(root, entries) {
     let nextRoot = isPlainObject(root) ? root : {};
     for (const entry of entries) {
-      if ((entry.accountId && authSession?.accountId && entry.accountId !== authSession.accountId)
-        || (entry.username && authSession?.username && entry.username !== authSession.username)) {
-        continue;
-      }
+      if (!isQueuedCommandForCurrentAccount(entry)) continue;
       if (entry.type === "data-write") {
         if (entry.operation === "set") {
           nextRoot = setAtPath(nextRoot, entry.path, entry.value);
@@ -259,6 +256,17 @@
       }
     }
     return nextRoot;
+  }
+
+  function isQueuedCommandForCurrentAccount(entry) {
+    if (!authSession) return true;
+    if (entry?.accountId && authSession.accountId) return entry.accountId === authSession.accountId;
+    if (entry?.username && authSession.username) return entry.username === authSession.username;
+    return true;
+  }
+
+  function queuedCommandsForCurrentAccount(entries) {
+    return (Array.isArray(entries) ? entries : []).filter(isQueuedCommandForCurrentAccount);
   }
 
   function applyAcknowledgedWritesToRoot(root, acknowledgement) {
@@ -674,11 +682,19 @@
       ? signatureForText(value.photoDataUrl)
       : "";
     const mappedPhoto = photoSignature ? photoMap.get(photoSignature) : null;
+    const afterPhotoSignature = typeof value.afterPhotoDataUrl === "string" && value.afterPhotoDataUrl.startsWith("data:image/")
+      ? signatureForText(value.afterPhotoDataUrl)
+      : "";
+    const mappedAfterPhoto = afterPhotoSignature ? photoMap.get(afterPhotoSignature) : null;
     Object.entries(value).forEach(([key, itemValue]) => {
       if (key === "photoDataUrl" && mappedPhoto?.url) {
         next[key] = mappedPhoto.url;
       } else if (key === "photoName" && mappedPhoto?.fileName) {
         next[key] = mappedPhoto.fileName;
+      } else if (key === "afterPhotoDataUrl" && mappedAfterPhoto?.url) {
+        next[key] = mappedAfterPhoto.url;
+      } else if (key === "afterPhotoName" && mappedAfterPhoto?.fileName) {
+        next[key] = mappedAfterPhoto.fileName;
       } else {
         next[key] = transformOfflinePhotoRefs(itemValue, photoMap);
       }
@@ -810,42 +826,54 @@
   }
 
   async function flushOfflineQueue() {
-    await dispatchOfflineStatus({ pending: await getOfflineQueueCount(), syncing: false, online: navigator.onLine, lastError: "" });
-    if (demoMode || offlineSyncing || onlineWriteInProgress || !authSession) {
+    const initialEntries = await getQueuedCommands();
+    if (offlineSyncing || onlineWriteInProgress) {
+      return true;
+    }
+    if (!initialEntries.length) {
+      await dispatchOfflineStatus({ pending: 0, syncing: false, online: navigator.onLine, lastError: "" });
+      return true;
+    }
+    if (demoMode) {
       return false;
     }
     if (!navigator.onLine) {
       await dispatchOfflineStatus({ online: false, syncing: false, lastError: CONNECTION_LOST_MESSAGE });
       return false;
     }
+    if (!authSession) {
+      await dispatchOfflineStatus({
+        pending: initialEntries.length,
+        online: true,
+        syncing: false,
+        lastError: "Phiên đăng nhập chưa được xác nhận. Vui lòng đăng nhập lại để đồng bộ các thay đổi đang chờ.",
+      });
+      return false;
+    }
 
-    let entries = await getQueuedCommands();
+    const allEntries = initialEntries;
+    const entries = queuedCommandsForCurrentAccount(allEntries);
     if (!entries.length) {
-      await dispatchOfflineStatus({ pending: 0, online: navigator.onLine, syncing: false });
+      await dispatchOfflineStatus({
+        pending: allEntries.length,
+        online: navigator.onLine,
+        syncing: false,
+        lastError: allEntries.length
+          ? "Một số dữ liệu chờ đồng bộ thuộc tài khoản khác. Đăng nhập tài khoản đã tạo dữ liệu đó để tiếp tục đồng bộ."
+          : "",
+      });
       return true;
     }
 
     offlineSyncing = true;
-    await dispatchOfflineStatus({ pending: entries.length, syncing: true, online: navigator.onLine, lastError: "" });
-
     let activeEntry = null;
     try {
+      await dispatchOfflineStatus({ pending: entries.length, syncing: true, online: navigator.onLine, lastError: "" });
       await request("/api/health");
       let photoMap = await getPhotoMappings();
 
       for (const entry of entries) {
         activeEntry = entry;
-        if ((entry.accountId && authSession.accountId && entry.accountId !== authSession.accountId)
-          || (entry.username && authSession.username && entry.username !== authSession.username)) {
-          await dispatchOfflineStatus({
-            pending: await getOfflineQueueCount(),
-            syncing: true,
-            online: true,
-            lastError: "Có dữ liệu chờ đồng bộ bằng tài khoản đã tạo dữ liệu đó. Hãy đăng nhập lại tài khoản này để tiếp tục.",
-          });
-          return false;
-        }
-
         if (entry.type === "photo-save") {
           const signature = entry.localSignature || signatureForText(entry.photo?.dataUrl || "");
           if (!photoMap.has(signature)) {
@@ -904,15 +932,27 @@
       return false;
     } finally {
       offlineSyncing = false;
-      const pending = await getOfflineQueueCount();
-      await dispatchOfflineStatus({ pending, syncing: false, online: navigator.onLine });
-      if (pending && authSession && !demoMode && navigator.onLine) {
+      const finalEntries = await getQueuedCommands();
+      const pending = finalEntries.length;
+      const currentAccountPending = queuedCommandsForCurrentAccount(finalEntries).length;
+      await dispatchOfflineStatus({
+        pending,
+        syncing: false,
+        online: navigator.onLine,
+        lastError: currentAccountPending
+          ? lastOfflineStatus?.lastError || ""
+          : pending
+            ? "Một số dữ liệu chờ đồng bộ thuộc tài khoản khác. Đăng nhập tài khoản đã tạo dữ liệu đó để tiếp tục đồng bộ."
+            : "",
+      });
+      if (currentAccountPending && authSession && !demoMode && navigator.onLine) {
         scheduleOfflineSync(OFFLINE_SYNC_INTERVAL_MS);
       }
     }
   }
 
   async function waitForQueuedWritesToDrain() {
+    let transientSyncRetries = 0;
     while (true) {
       if (!navigator.onLine) {
         throw new Error(CONNECTION_LOST_MESSAGE);
@@ -921,12 +961,23 @@
         await new Promise((resolve) => window.setTimeout(resolve, 30));
         continue;
       }
-      const pending = await getQueuedCommands();
+      const pending = queuedCommandsForCurrentAccount(await getQueuedCommands());
       if (!pending.length) return;
       const synced = await flushOfflineQueue();
-      if (!synced && (await getQueuedCommands()).length) {
-        throw new Error("Một số thay đổi trước đó chưa đồng bộ được. Bản nháp điểm sẽ được giữ để thử lại.");
+      const remaining = queuedCommandsForCurrentAccount(await getQueuedCommands());
+      if (!synced && remaining.length) {
+        if (offlineSyncing || onlineWriteInProgress) continue;
+        if (lastOfflineStatus?.lastError) {
+          throw new Error(lastOfflineStatus.lastError);
+        }
+        if (navigator.onLine && authSession && transientSyncRetries < 10) {
+          transientSyncRetries += 1;
+          await new Promise((resolve) => window.setTimeout(resolve, 50));
+          continue;
+        }
+        throw new Error("Một số thay đổi trước đó chưa đồng bộ được. Vui lòng thử lại sau khi đồng bộ hoàn tất.");
       }
+      if (synced) transientSyncRetries = 0;
     }
   }
 
@@ -935,6 +986,12 @@
     const accountId = payload.accountId || account.id || "";
     const username = payload.username || account.username || "";
     const sessionId = payload.sessionId || account.activeSessionId || "";
+    const previousAccountId = authSession?.accountId || "";
+    const previousUsername = authSession?.username || "";
+    if ((accountId && accountId !== previousAccountId) || (username && username !== previousUsername)) {
+      lastDataEtag = "";
+      lastDataRevision = null;
+    }
     authSession = accountId || username || sessionId
       ? { accountId, username, sessionId, sessionStartedAt: payload.sessionStartedAt || "" }
       : null;
@@ -943,6 +1000,8 @@
 
   function clearAuthSession() {
     authSession = null;
+    lastDataEtag = "";
+    lastDataRevision = null;
     stopDataStream();
   }
 
@@ -981,10 +1040,10 @@
   function applyAuthPayload(payload) {
     setAuthSession(payload);
     if (payload?.root) {
-      rememberRoot(payload.root, lastResponseSignature);
+      rememberRoot(payload.root);
       notifyAll();
       getQueuedCommands().then((queuedCommands) => {
-        if (!queuedCommands.length || !rootCache) {
+        if (!queuedCommandsForCurrentAccount(queuedCommands).length || !rootCache) {
           return;
         }
         rememberRoot(applyQueuedWritesToRoot(rootCache, queuedCommands));
@@ -1128,9 +1187,10 @@
     try {
       const root = await request("/api/data");
       const queuedCommands = await getQueuedCommands();
-      if (queuedCommands.length) {
+      const currentAccountCommands = queuedCommandsForCurrentAccount(queuedCommands);
+      if (currentAccountCommands.length) {
         scheduleOfflineRootPersist();
-        rememberRoot(applyQueuedWritesToRoot(root, queuedCommands), { signature: false, persist: false });
+        rememberRoot(applyQueuedWritesToRoot(root, currentAccountCommands), { signature: false, persist: false });
         scheduleOfflineSync(500);
       } else {
         rememberRoot(root);
@@ -1144,7 +1204,7 @@
         await notifyConnectionLost(error);
         const cachedRoot = rootCache || await readOfflineRoot().catch(() => null);
         if (cachedRoot) {
-          const queuedCommands = await getQueuedCommands().catch(() => []);
+          const queuedCommands = queuedCommandsForCurrentAccount(await getQueuedCommands().catch(() => []));
           rememberRoot(applyQueuedWritesToRoot(cachedRoot, queuedCommands));
           return rootCache;
         }
@@ -1179,12 +1239,12 @@
     activePollController = pollController;
     const pollTimeout = window.setTimeout(() => pollController.abort(), 15000);
     try {
-      const queuedCommands = await getQueuedCommands();
+      const queuedCommands = queuedCommandsForCurrentAccount(await getQueuedCommands());
       if (queuedCommands.length) {
         if (navigator.onLine && authSession) {
           await flushOfflineQueue();
         }
-        if ((await getQueuedCommands()).length) {
+        if (queuedCommandsForCurrentAccount(await getQueuedCommands()).length) {
           return;
         }
       }
@@ -1194,7 +1254,7 @@
         allowNotModified: true,
       });
       if (root?.notModified) return;
-      const latestQueuedCommands = await getQueuedCommands();
+      const latestQueuedCommands = queuedCommandsForCurrentAccount(await getQueuedCommands());
       const mergedRoot = applyQueuedWritesToRoot(root, latestQueuedCommands);
       const signature = signatureForRoot(mergedRoot);
       if (signature !== rootSignature) {
@@ -1286,20 +1346,28 @@
 
   async function write(operation, path, value, writeOptions = {}) {
     if (demoMode) {
+      if (writeOptions.requireServerAcknowledgement === true) {
+        throw new Error("Không thể xác nhận thao tác với máy chủ khi đang ở chế độ ngoại tuyến.");
+      }
       return applyDemoWrite(operation, path, value);
     }
 
-    let queuedCommands = await getQueuedCommands().catch(() => []);
-    while (writeOptions.scoreConflict && (!navigator.onLine || offlineSyncing || onlineWriteInProgress || queuedCommands.length)) {
+    const requiresServerAcknowledgement = writeOptions.requireServerAcknowledgement === true;
+    let queuedCommands = queuedCommandsForCurrentAccount(await getQueuedCommands().catch(() => []));
+    while ((writeOptions.scoreConflict || requiresServerAcknowledgement)
+      && (!navigator.onLine || offlineSyncing || onlineWriteInProgress || queuedCommands.length)) {
       try {
         await waitForQueuedWritesToDrain();
       } catch (waitError) {
         waitError.offlineDraftSaved = true;
         throw waitError;
       }
-      queuedCommands = await getQueuedCommands().catch(() => []);
+      queuedCommands = queuedCommandsForCurrentAccount(await getQueuedCommands().catch(() => []));
     }
     if (!navigator.onLine || offlineSyncing || onlineWriteInProgress || queuedCommands.length) {
+      if (requiresServerAcknowledgement) {
+        throw new Error("Máy chủ chưa xác nhận thao tác. Hãy chờ đồng bộ hoàn tất hoặc kiểm tra kết nối rồi thử lại.");
+      }
       return applyOfflineWrite(operation, path, value, writeOptions);
     }
 
@@ -1354,6 +1422,17 @@
         });
         throw error;
       }
+      if (requiresServerAcknowledgement && isNetworkLikeError(error)) {
+        if (entry && !ephemeralEntry) await deleteQueuedCommand(entry.id);
+        if (entry) await restoreAfterRejectedWrite(fallbackRoot);
+        await dispatchOfflineStatus({
+          pending: await getOfflineQueueCount(),
+          syncing: false,
+          online: navigator.onLine,
+          lastError: "Máy chủ chưa xác nhận thao tác.",
+        });
+        throw new Error("Máy chủ chưa xác nhận thao tác. Hãy tải lại danh sách và thử lại.", { cause: error });
+      }
       if (!entry) {
         await dispatchOfflineStatus({
           pending: await getOfflineQueueCount(),
@@ -1394,11 +1473,22 @@
         });
         throw error;
       }
+      if (requiresServerAcknowledgement) {
+        if (entry && !ephemeralEntry) await deleteQueuedCommand(entry.id);
+        if (entry) await restoreAfterRejectedWrite(fallbackRoot);
+        await dispatchOfflineStatus({
+          pending: await getOfflineQueueCount(),
+          syncing: false,
+          online: navigator.onLine,
+          lastError: "Máy chủ chưa xác nhận thao tác.",
+        });
+        throw new Error("Máy chủ chưa xác nhận thao tác. Hãy tải lại danh sách và thử lại.", { cause: error });
+      }
       await notifyConnectionLost(error);
       return rootCache;
     } finally {
       onlineWriteInProgress = false;
-      const pending = await getOfflineQueueCount().catch(() => 0);
+      const pending = queuedCommandsForCurrentAccount(await getQueuedCommands().catch(() => [])).length;
       if (pending && authSession && !demoMode && navigator.onLine) scheduleOfflineSync(0);
     }
 
