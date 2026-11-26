@@ -106,7 +106,7 @@
       return;
     }
 
-    const activeTheme = (typeof window.getAppTheme === "function" ? window.getAppTheme() : (document.documentElement.getAttribute("data-theme") || localStorage.getItem("app_theme") || "dark"));
+    const activeTheme = (typeof window.getAppTheme === "function" ? window.getAppTheme() : (document.documentElement.getAttribute("data-theme") || localStorage.getItem("app_theme") || "light"));
     const navButton = ({ icon, label, title, tab, classes = "", report }) => {
       const routeAttr = report
         ? `data-go-safety-report="${escapeHtml(report)}"`
@@ -162,7 +162,10 @@
           <div class="cyber-top-right header-right-tools">
             <div class="issue-notification-control" data-issue-notification-control>
               <button class="issue-notification-button" type="button" data-issue-notification-toggle aria-label="Mở thông báo" aria-expanded="false" title="Thông báo">
-                <i class="fa-regular fa-bell" aria-hidden="true"></i>
+                <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"></path>
+                  <path d="M13.73 21a2 2 0 0 1-3.46 0"></path>
+                </svg>
                 <span class="issue-notification-count" data-issue-notification-count hidden></span>
               </button>
               <section class="issue-notification-popover" data-issue-notification-popover hidden aria-label="Thông báo vấn đề"></section>
@@ -241,7 +244,10 @@
           <div class="cyber-home-actions">
             <div class="cyber-home-guide-card" id="cyberHomeGuideBtn" role="button" tabindex="0" title="Xem hướng dẫn sử dụng">
               <div class="cyber-home-guide-icon">
-                <i class="fa-solid fa-book-open" aria-hidden="true"></i>
+                <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"></path>
+                  <path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"></path>
+                </svg>
               </div>
               <span class="cyber-home-guide-title">Hướng dẫn sử dụng</span>
             </div>
@@ -323,6 +329,9 @@
         }
         userMenu.hidden = !isOpening;
         userBtn?.setAttribute("aria-expanded", String(isOpening));
+        if (isOpening) {
+          window.CustomDropdown?.positionViewportDropdown?.(userBtn, userMenu, 260);
+        }
       }
     }
 

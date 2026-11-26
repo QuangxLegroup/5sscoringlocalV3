@@ -1623,7 +1623,7 @@
       getDraftSnapshot: captureFindingSnapshot,
       isDraftDirty: isFindingModalDirty,
       extraRightActions: mobile && editing && fullWritable ? '<button type="button" class="danger-button" data-delete-issue-modal>Xóa vấn đề</button>' : "",
-      modalClass: `findings-issue-modal${mobile ? " is-mobile-detail" : ""}${isLightModal ? " is-light-theme" : (mobile ? " is-mobile-dark" : "")}`,
+      modalClass: `findings-issue-modal${mobile ? " is-mobile-detail" : ""}${mobile ? (isMobileDark ? " is-mobile-dark" : " is-light-theme") : " is-light-theme"}`,
       html: `<div class="modal-context"><span><strong>Kỳ:</strong> ${esc(ctx.periodLabel(ctx.getPeriod(periodId)))}</span><span><strong>Nguồn:</strong> Vấn đề 5S</span></div>
         ${countermeasureOnly ? '<p class="findings-countermeasure-permission-note">Bạn được cập nhật biện pháp khắc phục, ảnh sau xử lý, hạn hoàn thành và tiến độ của Zone này.</p>' : ""}
         ${!editing && !isAdmin ? '<p class="findings-countermeasure-permission-note">Đối sách khắc phục, ảnh sau xử lý, hạn và tiến độ sẽ do quản lý Zone hoặc Admin cập nhật sau khi tiếp nhận.</p>' : ""}

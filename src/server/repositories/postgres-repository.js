@@ -230,9 +230,36 @@ function rootCounts(root) {
   return counts;
 }
 
+function isTransientPgConnectionError(error) {
+  if (!error) return false;
+  const code = String(error.code || "").toUpperCase();
+  if ([
+    "ECONNRESET",
+    "EPIPE",
+    "ETIMEDOUT",
+    "ECONNREFUSED",
+    "ENOTFOUND",
+    "57P01",
+    "57P02",
+    "57P03",
+    "08000",
+    "08003",
+    "08006",
+  ].includes(code)) {
+    return true;
+  }
+  const message = String(error.message || "");
+  return /Connection terminated|Client has encountered a connection error|server closed the connection unexpectedly|socket hang up/i.test(message);
+}
+
 class PostgresRepository {
   constructor({ pool, poolConfig }) {
     this.pool = pool || new Pool(poolConfig);
+    if (typeof this.pool.on === "function") {
+      this.pool.on("error", (err) => {
+        console.warn("[pg-pool] Idle PostgreSQL client error (recovered):", err?.code || err?.message || err);
+      });
+    }
     this.rootCache = null;
     this.rootRevision = null;
     this.writeQueue = Promise.resolve();
@@ -296,25 +323,34 @@ class PostgresRepository {
 
   async readRootSnapshot({ cloneRoot = true } = {}) {
     if (!this.initialized) throw new Error("PostgreSQL repository chưa được khởi tạo.");
-    const client = await this.pool.connect();
-    try {
-      await client.query("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY");
-      const revisionResult = await client.query("SELECT revision FROM app_revision WHERE singleton = true");
-      const revision = Number(revisionResult.rows[0]?.revision || 0);
-      if (this.rootCache && this.rootRevision === revision) {
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const client = await this.pool.connect();
+      let brokenClient = false;
+      try {
+        await client.query("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY");
+        const revisionResult = await client.query("SELECT revision FROM app_revision WHERE singleton = true");
+        const revision = Number(revisionResult.rows[0]?.revision || 0);
+        if (this.rootCache && this.rootRevision === revision) {
+          await client.query("COMMIT");
+          return { root: cloneRoot ? clone(this.rootCache) : this.rootCache, revision };
+        }
+        const root = await this.readRootWithClient(client);
         await client.query("COMMIT");
-        return { root: cloneRoot ? clone(this.rootCache) : this.rootCache, revision };
+        this.rootCache = clone(root);
+        this.rootRevision = revision;
+        return { root: cloneRoot ? root : this.rootCache, revision };
+      } catch (error) {
+        brokenClient = isTransientPgConnectionError(error);
+        if (!brokenClient) {
+          await client.query("ROLLBACK").catch(() => {});
+        }
+        if (brokenClient && attempt === 0) {
+          continue;
+        }
+        throw error;
+      } finally {
+        client.release(brokenClient);
       }
-      const root = await this.readRootWithClient(client);
-      await client.query("COMMIT");
-      this.rootCache = clone(root);
-      this.rootRevision = revision;
-      return { root: cloneRoot ? root : this.rootCache, revision };
-    } catch (error) {
-      await client.query("ROLLBACK").catch(() => {});
-      throw error;
-    } finally {
-      client.release();
     }
   }
 
@@ -324,8 +360,16 @@ class PostgresRepository {
 
   async getRevision() {
     if (!this.initialized) throw new Error("PostgreSQL repository chưa được khởi tạo.");
-    const result = await this.pool.query("SELECT revision FROM app_revision WHERE singleton = true");
-    return Number(result.rows[0]?.revision || 0);
+    try {
+      const result = await this.pool.query("SELECT revision FROM app_revision WHERE singleton = true");
+      return Number(result.rows[0]?.revision || 0);
+    } catch (error) {
+      if (isTransientPgConnectionError(error)) {
+        const result = await this.pool.query("SELECT revision FROM app_revision WHERE singleton = true");
+        return Number(result.rows[0]?.revision || 0);
+      }
+      throw error;
+    }
   }
 
   async readRootWithClient(client) {
@@ -412,45 +456,57 @@ class PostgresRepository {
   async updateRootTransaction(mutator, options = {}) {
     const { touchedRootKeys = null, touchedRecords = null, touchedRecordFields = null, immutableMutator = false } = options;
     if (!this.initialized) throw new Error("PostgreSQL repository chưa được khởi tạo.");
-    const client = await this.pool.connect();
-    try {
-      await client.query("BEGIN");
-      await client.query("SELECT pg_advisory_xact_lock(593842, 1)");
-      const revisionResult = await client.query("SELECT revision FROM app_revision WHERE singleton = true");
-      const currentRevision = Number(revisionResult.rows[0]?.revision || 0);
-      const cacheIsCurrent = this.rootCache && this.rootRevision === currentRevision;
-      const currentRoot = cacheIsCurrent
-        ? (immutableMutator ? this.rootCache : clone(this.rootCache))
-        : await this.readRootWithClient(client);
-      if (!cacheIsCurrent) {
-        this.rootCache = clone(currentRoot);
-        this.rootRevision = currentRevision;
-      }
-      const nextRoot = await mutator(currentRoot);
-      if (!isPlainObject(nextRoot)) throw new Error("Dữ liệu gốc phải là một đối tượng.");
-      if (rootMatchesTouchedKeys(currentRoot, nextRoot, touchedRootKeys, touchedRecords, touchedRecordFields)) {
-        await client.query("COMMIT");
-        this.rootCache = immutableMutator ? currentRoot : clone(currentRoot);
-        this.rootRevision = currentRevision;
-        if (options.compactResult) return { revision: currentRevision };
-        const root = clone(currentRoot);
-        return options.includeRevision ? { root, revision: currentRevision } : root;
-      }
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const client = await this.pool.connect();
+      let brokenClient = false;
+      let commitAttempted = false;
+      try {
+        await client.query("BEGIN");
+        await client.query("SELECT pg_advisory_xact_lock(593842, 1)");
+        const revisionResult = await client.query("SELECT revision FROM app_revision WHERE singleton = true");
+        const currentRevision = Number(revisionResult.rows[0]?.revision || 0);
+        const cacheIsCurrent = this.rootCache && this.rootRevision === currentRevision;
+        const currentRoot = cacheIsCurrent
+          ? (immutableMutator ? this.rootCache : clone(this.rootCache))
+          : await this.readRootWithClient(client);
+        if (!cacheIsCurrent) {
+          this.rootCache = clone(currentRoot);
+          this.rootRevision = currentRevision;
+        }
+        const nextRoot = await mutator(currentRoot);
+        if (!isPlainObject(nextRoot)) throw new Error("Dữ liệu gốc phải là một đối tượng.");
+        if (rootMatchesTouchedKeys(currentRoot, nextRoot, touchedRootKeys, touchedRecords, touchedRecordFields)) {
+          commitAttempted = true;
+          await client.query("COMMIT");
+          this.rootCache = immutableMutator ? currentRoot : clone(currentRoot);
+          this.rootRevision = currentRevision;
+          if (options.compactResult) return { revision: currentRevision };
+          const root = clone(currentRoot);
+          return options.includeRevision ? { root, revision: currentRevision } : root;
+        }
 
-      await this.persistRootWithClient(client, currentRoot, nextRoot, touchedRootKeys, touchedRecords, touchedRecordFields);
-      const updatedRevisionResult = await client.query("UPDATE app_revision SET revision = revision + 1 WHERE singleton = true RETURNING revision");
-      const revision = Number(updatedRevisionResult.rows[0]?.revision || 0);
-      await client.query("COMMIT");
-      this.rootCache = nextRoot;
-      this.rootRevision = revision;
-      if (options.compactResult) return { revision };
-      const root = clone(nextRoot);
-      return options.includeRevision ? { root, revision } : root;
-    } catch (error) {
-      await client.query("ROLLBACK").catch(() => {});
-      throw error;
-    } finally {
-      client.release();
+        await this.persistRootWithClient(client, currentRoot, nextRoot, touchedRootKeys, touchedRecords, touchedRecordFields);
+        const updatedRevisionResult = await client.query("UPDATE app_revision SET revision = revision + 1 WHERE singleton = true RETURNING revision");
+        const revision = Number(updatedRevisionResult.rows[0]?.revision || 0);
+        commitAttempted = true;
+        await client.query("COMMIT");
+        this.rootCache = nextRoot;
+        this.rootRevision = revision;
+        if (options.compactResult) return { revision };
+        const root = clone(nextRoot);
+        return options.includeRevision ? { root, revision } : root;
+      } catch (error) {
+        brokenClient = isTransientPgConnectionError(error);
+        if (!brokenClient) {
+          await client.query("ROLLBACK").catch(() => {});
+        }
+        if (brokenClient && !commitAttempted && attempt === 0) {
+          continue;
+        }
+        throw error;
+      } finally {
+        client.release(brokenClient);
+      }
     }
   }
 

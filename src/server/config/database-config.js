@@ -67,6 +67,8 @@ function createPoolConfig(env = process.env) {
     max: Math.max(1, Math.min(30, Number(env.PGPOOL_MAX) || 10)),
     idleTimeoutMillis: Math.max(1000, Number(env.PGPOOL_IDLE_TIMEOUT_MS) || 30000),
     connectionTimeoutMillis: Math.max(1000, Number(env.PG_CONNECT_TIMEOUT_MS) || 5000),
+    keepAlive: true,
+    keepAliveInitialDelayMillis: 10000,
     application_name: String(env.PGAPPNAME || "legroup-5s"),
   };
   if (String(env.PGSSLMODE || "").toLowerCase() === "require") {

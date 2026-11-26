@@ -13,3 +13,15 @@ data/*
 !data/samples/
 !data/samples/**
 !data/seed-accounts.json
+
+# Android build artifacts & private signing keystore
+android/local.properties
+android/.gradle/
+android/build/
+android/app/build/
+android/keystore/
+android/build-apk.log
+
+# PostgreSQL backup & offline Docker image archives
+*.dump
+*.tar

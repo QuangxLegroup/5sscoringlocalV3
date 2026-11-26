@@ -107,7 +107,10 @@
     modal.innerHTML = `
       <div class="mobile-image-fullscreen-backdrop"></div>
       <button type="button" class="mobile-image-fullscreen-close" aria-label="Đóng">
-        <i class="fa-solid fa-xmark"></i>
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <line x1="18" y1="6" x2="6" y2="18"></line>
+          <line x1="6" y1="6" x2="18" y2="18"></line>
+        </svg>
       </button>
       <div class="mobile-image-fullscreen-container">
         <div class="mobile-image-fullscreen-stage">
@@ -1617,7 +1620,10 @@
               <div>
                 <h1 class="nav-header-title">LeGroup Factory</h1>
                 <p class="nav-header-assessor">
-                  <i class="fa-solid ${isZoneOwner ? 'fa-user-gear text-emerald-400' : isAdmin ? 'fa-user-shield text-amber-400' : 'fa-user-check text-sky-400'}"></i>
+                  <svg class="mobile-assessor-icon" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path>
+                    <circle cx="12" cy="7" r="4"></circle>
+                  </svg>
                   <span>${escapeHtml(roleTitle)}: <strong id="mobileNavAssessorName">${escapeHtml(assessorName)}</strong></span>
                 </p>
               </div>
@@ -1646,14 +1652,28 @@
           <!-- Segmented Tab Switcher -->
           <div class="mobile-tab-switcher mobile-tabs-with-findings">
             <button type="button" id="mobileTabBtnSafety" class="mobile-tab-btn ${activeTab === 'safety' ? 'is-active-safety' : ''} ">
-              <i class="fa-solid fa-triangle-exclamation text-amber-400"></i>
+              <svg class="mobile-tab-svg" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path>
+                <line x1="12" y1="9" x2="12" y2="13"></line>
+                <line x1="12" y1="17" x2="12.01" y2="17"></line>
+              </svg>
               <span>Báo Cáo An Toàn</span>
             </button>
             <button type="button" id="mobileTabBtn5S" class="mobile-tab-btn ${activeTab === '5s' ? 'is-active-fives' : ''} ">
-              <i class="fa-solid fa-clipboard-check text-emerald-400"></i>
+              <svg class="mobile-tab-svg" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M9 5H7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2"></path>
+                <rect x="9" y="3" width="6" height="4" rx="1"></rect>
+                <path d="M9 14l2 2 4-4"></path>
+              </svg>
               <span>Chấm Điểm 5S</span>
             </button>
-            <button type="button" id="mobileTabBtnFindings" class="mobile-tab-btn">📝 <span>Vấn đề 5S</span></button>
+            <button type="button" id="mobileTabBtnFindings" class="mobile-tab-btn">
+              <svg class="mobile-tab-svg" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
+                <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
+              </svg>
+              <span>Vấn đề 5S</span>
+            </button>
           </div>
         </div>
 

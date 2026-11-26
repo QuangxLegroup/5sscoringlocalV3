@@ -7016,6 +7016,9 @@
     if (open) closeAccountMenu();
     popover.hidden = !open;
     button.setAttribute("aria-expanded", String(open));
+    if (open) {
+      window.CustomDropdown?.positionViewportDropdown?.(button, popover, 360);
+    }
   }
 
   function markIssueNotificationsRead(notificationIds) {
@@ -7156,6 +7159,9 @@
     if (nextOpen) closeIssueNotificationPopovers();
     elements.accountMenu.hidden = !nextOpen;
     elements.accountMenuButton?.setAttribute("aria-expanded", String(nextOpen));
+    if (nextOpen) {
+      window.CustomDropdown?.positionViewportDropdown?.(elements.accountMenuButton, elements.accountMenu, 260);
+    }
   }
 
   function goToTab(tab) {
@@ -20863,17 +20869,14 @@
     try { return JSON.parse(sessionStorage.getItem(AUDIT_FILTER_STORAGE_KEY) || "{}"); } catch (_) { return {}; }
   })();
   const { page: savedAuditPage, ...savedAuditFilters } = savedAuditLogState;
+  delete savedAuditFilters.actor;
   const auditLogPagination = { page: Math.max(1, Math.trunc(Number(savedAuditPage) || 1)) };
-  const auditLogFilters = { scope: "", search: "", from: "", to: "", action: "", actor: "", zone: "", ...savedAuditFilters };
+  const auditLogFilters = { scope: "", search: "", from: "", to: "", action: "", zone: "", ...savedAuditFilters };
   if (auditLogFilters.scope) expandedHistoryScope = normalizeAuditLogScope(auditLogFilters.scope);
   let expandedAuditEntryId = "";
 
   function persistAuditLogFilters() {
     try { sessionStorage.setItem(AUDIT_FILTER_STORAGE_KEY, JSON.stringify({ ...auditLogFilters, page: auditLogPagination.page })); } catch (_) {}
-  }
-
-  function auditEntryActorKey(entry) {
-    return String(entry?.username || entry?.accountId || entry?.employeeCode || entry?.userName || "unknown");
   }
 
   function auditEntryChanges(entry, scope = activeHistoryScope) {
@@ -20908,18 +20911,13 @@
 
   function filterAuditEntries(entries, scope = activeHistoryScope) {
     return entries.filter((entry) => {
-      if (auditLogFilters.actor && auditEntryActorKey(entry) !== auditLogFilters.actor) return false;
       return filteredAuditChanges(entry, scope).length > 0;
     });
   }
 
   function renderAuditFilterToolbar(entries, canExport = false) {
-    const actors = new Map();
     const zones = new Set();
     entries.forEach((entry) => {
-      const key = auditEntryActorKey(entry);
-      const label = `${entry.userName || entry.username || "Không rõ"}${entry.employeeCode ? ` · ${entry.employeeCode}` : ""}`;
-      actors.set(key, label);
       auditEntryZone(entry).split(", ").filter(Boolean).forEach((zone) => zones.add(zone));
     });
     const options = (items, selected, placeholder) => '<option value="">' + escapeHtml(placeholder) + '</option>' + items.map(([value, label]) => '<option value="' + escapeHtml(value) + '"' + (selected === value ? ' selected' : '') + '>' + escapeHtml(label) + '</option>').join("");
@@ -20931,7 +20929,6 @@
       '<label><span>Từ ngày</span><input type="date" data-audit-filter="from" value="' + escapeHtml(auditLogFilters.from) + '"></label>' +
       '<label><span>Đến ngày</span><input type="date" data-audit-filter="to" value="' + escapeHtml(auditLogFilters.to) + '"></label>' +
       '<label><span>Thao tác</span><select data-audit-filter="action">' + options([["Thêm", "Thêm"], ["Sửa", "Sửa"], ["Xóa", "Xóa"]], auditLogFilters.action, "Tất cả thao tác") + '</select></label>' +
-      '<label><span>Người thực hiện</span><select data-audit-filter="actor">' + options([...actors.entries()].sort((a, b) => a[1].localeCompare(b[1], "vi")), auditLogFilters.actor, "Tất cả người dùng") + '</select></label>' +
       '<label><span>Zone</span><select data-audit-filter="zone">' + options([...zones].sort((a, b) => a.localeCompare(b, "vi", { numeric: true })).map((zone) => [zone, zone]), auditLogFilters.zone, "Tất cả Zone") + '</select></label>' +
       '<button type="button" class="primary-button" data-action="export-audit-log"' + (canExport ? '' : ' disabled') + '>Xuất Excel</button>' +
     '</div>';
@@ -22910,7 +22907,7 @@
         renderActiveTab();
       },
       "clear-audit-filters": () => {
-        Object.assign(auditLogFilters, { scope: activeHistoryScope || "", search: "", from: "", to: "", action: "", actor: "", zone: "" });
+        Object.assign(auditLogFilters, { scope: activeHistoryScope || "", search: "", from: "", to: "", action: "", zone: "" });
         auditLogPagination.page = 1;
         expandedAuditEntryId = "";
         persistAuditLogFilters();
@@ -23684,28 +23681,29 @@
     bindEvents();
 
     try {
-      if (elements_loading) elements_loading.hidden = true;
       const restored = await restoreSessionUser();
       if (restored) {
         startDataWatch();
         window.setTimeout(() => processPendingScoreDrafts(), 0);
       }
+      if (elements_loading) elements_loading.hidden = true;
       syncRouteFromLocation();
     } catch (error) {
       if (elements_loading) {
+        elements_loading.hidden = false;
         elements_loading.querySelector("p").textContent =
-          "Không kết nối được dữ liệu nội bộ. Hãy chạy npm start rồi mở địa chỉ localhost được hiển thị.";
+          "Không kết nối được dữ liệu nội bộ. Vui lòng kiểm tra Wi-Fi nội bộ rồi tải lại.";
         elements_loading.querySelector(".loading-spinner").style.display = "none";
       }
     }
   }
 
   function getAppTheme() {
-    return localStorage.getItem("app_theme") || "dark";
+    return localStorage.getItem("app_theme") || "light";
   }
 
   function setAppTheme(theme) {
-    const activeTheme = theme === "light" ? "light" : "dark";
+    const activeTheme = theme === "dark" ? "dark" : "light";
     localStorage.setItem("app_theme", activeTheme);
     document.documentElement.setAttribute("data-theme", activeTheme);
     document.documentElement.classList.toggle("theme-light", activeTheme === "light");
@@ -23720,11 +23718,7 @@
     });
 
     document.querySelectorAll(".custom-dropdown-menu").forEach((menu) => {
-      if (activeTheme === "light") {
-        menu.classList.remove("is-dark");
-      } else {
-        menu.classList.add("is-dark");
-      }
+      menu.classList.remove("is-dark");
     });
 
     window.dispatchEvent(new CustomEvent("app-theme-changed", { detail: { theme: activeTheme } }));

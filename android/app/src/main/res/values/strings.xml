@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">5S LeGroup</string>
+    <string name="loading_title">LeGroup 5S &amp; An toàn</string>
+    <string name="loading_subtitle">Đang kết nối hệ thống...</string>
+    <string name="error_title">Không kết nối được hệ thống</string>
+    <string name="error_hint">Vui lòng kiểm tra thiết bị đã kết nối đúng Wi-Fi mạng nội bộ và thử lại.</string>
+    <string name="btn_retry">Thử kết nối lại</string>
+    <string name="chooser_title">Chọn ảnh hoặc chụp ảnh</string>
+    <string name="press_back_again">Nhấn Quay lại lần nữa để thoát</string>
+</resources>

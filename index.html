@@ -9,20 +9,18 @@
     <link rel="apple-touch-icon" href="images/Logo.jpg">
     <link rel="manifest" href="/manifest.json">
     <meta name="theme-color" content="#0b7f87">
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" media="print" onload="this.media='all'">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" media="print" onload="this.media='all'">
     <script>
       (function() {
         try {
-          var theme = localStorage.getItem("app_theme") || "dark";
+          var theme = localStorage.getItem("app_theme") || "light";
           document.documentElement.setAttribute("data-theme", theme);
           document.documentElement.classList.add(theme === "light" ? "theme-light" : "theme-dark");
         } catch (e) {}
       })();
     </script>
-    <link rel="stylesheet" href="styles.css?v=2026110911">
+    <link rel="stylesheet" href="styles.css?v=2026112607">
   </head>
   <body>
     <section class="loading-screen" id="loading-screen">
@@ -56,6 +54,12 @@
         </label>
 
         <button class="primary-button" type="submit">Vào hệ thống</button>
+        <div id="apk-download-section" data-apk-download style="margin-top:12px;padding-top:12px;border-top:1px solid rgba(148,163,184,0.22);text-align:center;">
+          <a href="/downloads/LeGroup-5S.apk" download="LeGroup-5S.apk" style="display:inline-flex;align-items:center;justify-content:center;gap:8px;width:100%;padding:10px 14px;border-radius:10px;border:1px solid rgba(11,127,135,0.45);background:rgba(11,127,135,0.12);color:inherit;text-decoration:none;font-size:13px;font-weight:600;">
+            <span>📱</span>
+            <span>Tải ứng dụng Android (.apk)</span>
+          </a>
+        </div>
       </form>
     </section>
 
@@ -796,13 +800,13 @@
     </div>
 
     <div class="toast" id="toast" popover="manual" role="status" aria-live="polite"></div>
-    <script src="modules/local-data-api.js?v=2026110901"></script>
+    <script src="modules/local-data-api.js?v=2026112601"></script>
     <script src="modules/core/page-registry.js"></script>
     <script src="modules/core/safety-timeline.js?v=2026103101"></script>
       <script src="modules/core/image-circle-annotator.js?v=2026110201"></script>
       <script src="modules/core/form-draft-manager.js?v=2026102903"></script>
-    <script src="modules/core/custom-dropdown.js?v=2026103101"></script>
-    <script src="modules/pages/admin-home-page.js?v=2026110402"></script>
+    <script src="modules/core/custom-dropdown.js?v=2026112602"></script>
+    <script src="modules/pages/admin-home-page.js?v=2026112604"></script>
     <script src="modules/pages/assessor-page.js"></script>
     <script src="modules/pages/summary-page.js?v=2026110402"></script>
     <script src="modules/pages/safety-page.js?v=2026110402"></script>
@@ -813,11 +817,11 @@
     <script src="modules/pages/data-page.js"></script>
     <script src="modules/pages/five-s-findings-page.js?v=2026110908"></script>
     <script src="modules/pages/user-guide-content.js?v=2026103001"></script>
-    <script src="modules/pages/mobile-prototype.js?v=2026110909"></script>
+    <script src="modules/pages/mobile-prototype.js?v=2026112605"></script>
     <script src="modules/pages/guide-setup-page.js?v=2026102903"></script>
     <script src="modules/pages/audit-log-page.js?v=2026102801"></script>
     <script src="standards.js"></script>
-    <script src="app.js?v=2026110901"></script>
+    <script src="app.js?v=2026112602"></script>
   
     <script>
       (() => {

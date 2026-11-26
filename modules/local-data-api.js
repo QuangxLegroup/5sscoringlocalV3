@@ -30,6 +30,7 @@
   let streamRetryTimer = 0;
   let polling = false;
   let pollAgainRequested = false;
+  let consecutivePollFailures = 0;
   let activePollController = null;
   let offlineSyncing = false;
   let onlineWriteInProgress = false;
@@ -738,15 +739,30 @@
       throw new Error("Ứng dụng đang mở bằng file nên sẽ chạy chế độ demo trong trình duyệt.");
     }
 
-    const { allowNotModified = false, ...fetchOptions } = options;
-    const response = await fetch(buildUrl(path), {
-      ...fetchOptions,
-      credentials: fetchOptions.credentials || "include",
-      headers: {
-        "Content-Type": "application/json",
-        ...(options.headers || {}),
-      },
-    });
+    const { allowNotModified = false, timeoutMs = 0, ...fetchOptions } = options;
+    const effectiveTimeoutMs = Number(timeoutMs) > 0
+      ? Number(timeoutMs)
+      : (fetchOptions.method && fetchOptions.method.toUpperCase() !== "GET" ? 30000 : 12000);
+    const useInternalTimeout = !fetchOptions.signal && typeof AbortController !== "undefined" && effectiveTimeoutMs > 0;
+    const timeoutController = useInternalTimeout ? new AbortController() : null;
+    const timeoutId = timeoutController
+      ? window.setTimeout(() => timeoutController.abort(), effectiveTimeoutMs)
+      : 0;
+
+    let response;
+    try {
+      response = await fetch(buildUrl(path), {
+        ...fetchOptions,
+        signal: fetchOptions.signal || timeoutController?.signal,
+        credentials: fetchOptions.credentials || "include",
+        headers: {
+          "Content-Type": "application/json",
+          ...(options.headers || {}),
+        },
+      });
+    } finally {
+      if (timeoutId) window.clearTimeout(timeoutId);
+    }
 
     if (allowNotModified && response.status === 304) {
       rememberDataEtag(response.headers.get("etag"));
@@ -1120,7 +1136,7 @@
     }
 
     try {
-      return applyAuthPayload(await requestWithNetworkRetry("/api/auth/session"));
+      return applyAuthPayload(await requestWithNetworkRetry("/api/auth/session", { timeoutMs: 8000 }, 3));
     } catch (error) {
       if (!isAuthError(error) && isNetworkLikeError(error)) {
         await notifyConnectionLost(error);
@@ -1253,7 +1269,14 @@
         headers: lastDataEtag ? { "If-None-Match": lastDataEtag } : {},
         allowNotModified: true,
       });
-      if (root?.notModified) return;
+      if (root?.notModified) {
+        consecutivePollFailures = 0;
+        if (lastOfflineStatus?.online === false) {
+          await notifyConnectionRestored({ retryPending: true });
+        }
+        return;
+      }
+      consecutivePollFailures = 0;
       const latestQueuedCommands = queuedCommandsForCurrentAccount(await getQueuedCommands());
       const mergedRoot = applyQueuedWritesToRoot(root, latestQueuedCommands);
       const signature = signatureForRoot(mergedRoot);
@@ -1265,10 +1288,16 @@
       scheduleOfflineSync(500);
     } catch (error) {
       if (isAuthError(error)) {
+        consecutivePollFailures = 0;
         clearAuthSession();
         notifyAuthRevoked();
       } else if (isNetworkLikeError(error)) {
-        await notifyConnectionLost(error);
+        consecutivePollFailures += 1;
+        if (consecutivePollFailures >= 2 || !navigator.onLine) {
+          await notifyConnectionLost(error);
+        } else {
+          window.setTimeout(() => pollRoot({ retryIfBusy: true }), 800);
+        }
       }
     } finally {
       window.clearTimeout(pollTimeout);
@@ -1337,6 +1366,11 @@
         pollRoot({ retryIfBusy: true });
       };
       stream.onerror = () => {
+        if (stream && typeof EventSource !== "undefined" && stream.readyState === EventSource.CLOSED) {
+          stream.close();
+          stream = null;
+          scheduleDataStreamReconnect();
+        }
         pollRoot({ retryIfBusy: true });
       };
     } catch (error) {
@@ -1659,9 +1693,13 @@
     });
     document.addEventListener("visibilitychange", () => {
       if (document.hidden) persistBeforePageLeave();
-      if (!document.hidden && navigator.onLine) {
-        scheduleOfflineSync(0);
-        pollRoot({ retryIfBusy: true });
+      if (!document.hidden) {
+        window.setTimeout(() => {
+          if (document.hidden) return;
+          startDataStream();
+          scheduleOfflineSync(0);
+          pollRoot({ retryIfBusy: true });
+        }, 300);
       }
     });
     getOfflineQueueCount()

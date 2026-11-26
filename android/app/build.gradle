@@ -1,0 +1,88 @@
+plugins {
+    id "com.android.application"
+}
+
+def rawServerUrl = (project.findProperty("SERVER_URL") ?: "http://192.168.1.103:5500").toString().trim()
+if (rawServerUrl && !rawServerUrl.startsWith("http://") && !rawServerUrl.startsWith("https://")) {
+    rawServerUrl = "http://" + rawServerUrl
+}
+def defaultServerUrl = rawServerUrl.replaceAll('/+$', '') ?: "http://192.168.1.103:5500"
+def releaseStoreFilePath = project.findProperty("RELEASE_STORE_FILE") ?: "../keystore/legroup-5s-release.jks"
+def releaseStorePassword = project.findProperty("RELEASE_STORE_PASSWORD") ?: "LeGroup5S#2026"
+def releaseKeyAlias = project.findProperty("RELEASE_KEY_ALIAS") ?: "legroup5s"
+def releaseKeyPassword = project.findProperty("RELEASE_KEY_PASSWORD") ?: "LeGroup5S#2026"
+
+android {
+    namespace "com.legroup.fives"
+    compileSdk 35
+
+    defaultConfig {
+        applicationId "com.legroup.fives"
+        minSdk 24
+        targetSdk 35
+        versionCode 301
+        versionName "3.0.1"
+
+        buildConfigField "String", "DEFAULT_SERVER_URL", "\"${defaultServerUrl.replace('"', '\\"')}\""
+    }
+
+    signingConfigs {
+        release {
+            def ksFile = file(releaseStoreFilePath)
+            if (ksFile.exists()) {
+                storeFile ksFile
+                storePassword releaseStorePassword
+                keyAlias releaseKeyAlias
+                keyPassword releaseKeyPassword
+                enableV1Signing true
+                enableV2Signing true
+                enableV3Signing true
+            }
+        }
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            shrinkResources false
+            proguardFiles getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro"
+            def ksFile = file(releaseStoreFilePath)
+            if (ksFile.exists()) {
+                signingConfig signingConfigs.release
+            } else {
+                signingConfig signingConfigs.debug
+            }
+        }
+        debug {
+            applicationIdSuffix ".debug"
+            versionNameSuffix "-debug"
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+
+    buildFeatures {
+        buildConfig true
+    }
+
+    lint {
+        checkReleaseBuilds false
+        abortOnError false
+    }
+
+    packaging {
+        resources {
+            excludes += ["/META-INF/{AL2.0,LGPL2.1}"]
+        }
+    }
+}
+
+dependencies {
+    implementation platform("org.jetbrains.kotlin:kotlin-bom:1.8.22")
+    implementation "androidx.appcompat:appcompat:1.7.0"
+    implementation "androidx.core:core:1.15.0"
+    implementation "androidx.activity:activity:1.9.3"
+}

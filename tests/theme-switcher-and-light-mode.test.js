@@ -5,7 +5,7 @@ const fs = require('fs');
 test('Theme Switcher & Light/Dark Mode Implementation', async (t) => {
   await t.test('index.html contains theme script and dropdown theme switcher', () => {
     const html = fs.readFileSync('index.html', 'utf8');
-    assert.match(html, /localStorage\.getItem\(["']app_theme["']\)/, 'index.html has early theme detection script');
+    assert.match(html, /localStorage\.getItem\(["']app_theme["']\)\s*\|\|\s*["']light["']/, 'index.html defaults to light theme');
     assert.match(html, /class="account-menu-theme-row"/, 'index.html account menu contains theme switcher row');
     assert.match(html, /data-theme-set="light"/, 'has light theme button');
     assert.match(html, /data-theme-set="dark"/, 'has dark theme button');
@@ -22,6 +22,7 @@ test('Theme Switcher & Light/Dark Mode Implementation', async (t) => {
   await t.test('app.js exposes getAppTheme and setAppTheme and binds theme toggle buttons', () => {
     const js = fs.readFileSync('app.js', 'utf8');
     assert.match(js, /function getAppTheme\(\)/, 'app.js defines getAppTheme');
+    assert.match(js, /localStorage\.getItem\(["']app_theme["']\)\s*\|\|\s*["']light["']/, 'app.js defaults to light theme');
     assert.match(js, /function setAppTheme\(theme\)/, 'app.js defines setAppTheme');
     assert.match(js, /window\.getAppTheme\s*=\s*getAppTheme/, 'window.getAppTheme exposed');
     assert.match(js, /window\.setAppTheme\s*=\s*setAppTheme/, 'window.setAppTheme exposed');
@@ -68,11 +69,17 @@ test('Theme Switcher & Light/Dark Mode Implementation', async (t) => {
       /\[data-theme="light"\]\s*\.cyber-top-nav\s*\.header-quick-nav\s*\.tab-button\.active[^}]*background:\s*#ffffff[^}]*color:\s*#1d4ed8/s,
       'Light mode active quick nav button must have white capsule background and #1d4ed8 blue text'
     );
-    // Ensure subpage light header is scoped to theme-light or [data-theme="light"]
+    // Ensure subpage header always stays in light glass palette and is never made dark
     assert.doesNotMatch(
       css,
-      /(?:^|\n)body:not\(:has\(#tab-home\.is-active\)\)\s*\.app-header\s*\{/,
-      'Subpage light header must not match all themes without theme-light scoping'
+      /\[data-theme="dark"\]\s*\.app-header\s*,\s*body\.theme-dark\s*\.app-header\s*\{[^}]*background:\s*rgba\(4,\s*10,\s*26/s,
+      'Subpage app header must never be given dark background in dark mode'
+    );
+    // Ensure disabled controls default to clean light mode styling (#e8eef5)
+    assert.match(
+      css,
+      /input:not\(\[type="checkbox"\]\)[^\{]*:disabled[^\{]*\{[^}]*background-color:\s*#e8eef5/s,
+      'Disabled inputs and controls must default to light #e8eef5 styling'
     );
   });
 

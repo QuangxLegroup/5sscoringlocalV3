@@ -194,7 +194,7 @@
       updateLabel();
 
       const rect = trigger.getBoundingClientRect();
-      const appTheme = (typeof window.getAppTheme === "function" ? window.getAppTheme() : document.documentElement.getAttribute("data-theme")) || "dark";
+      const appTheme = (typeof window.getAppTheme === "function" ? window.getAppTheme() : document.documentElement.getAttribute("data-theme")) || "light";
       const isMobileLight = Boolean(
         selectEl.closest?.(".is-light-theme") ||
         document.querySelector(".mobile-responsive-overlay")?.classList?.contains("is-light-theme")
@@ -203,7 +203,7 @@
         selectEl.closest?.(".is-mobile-dark") ||
         (selectEl.closest?.(".findings-mobile") && !selectEl.closest?.(".is-light-theme"))
       );
-      const isDark = isMobileLight ? false : (isMobileDark ? true : appTheme === "dark");
+      const isDark = isMobileLight ? false : Boolean(isMobileDark);
 
       const menu = document.createElement("div");
       menu.className = "custom-dropdown-menu" + (isDark ? " is-dark" : "");
@@ -248,10 +248,13 @@
 
       menu.appendChild(list);
 
-      const menuWidth = Math.max(rect.width, 220);
-      let menuLeft = rect.left;
-      if (typeof window !== "undefined" && menuLeft + menuWidth > window.innerWidth - 10) {
-        menuLeft = Math.max(10, window.innerWidth - menuWidth - 10);
+      const viewportWidth = typeof window !== "undefined" ? window.innerWidth : 800;
+      const viewportHeight = typeof window !== "undefined" ? window.innerHeight : 800;
+      const maxAllowedWidth = Math.max(150, viewportWidth - 16);
+      const menuWidth = Math.min(Math.max(rect.width, 220), maxAllowedWidth);
+      let menuLeft = Math.max(8, rect.left);
+      if (menuLeft + menuWidth > viewportWidth - 8) {
+        menuLeft = Math.max(8, viewportWidth - menuWidth - 8);
       }
 
       menu.style.position = "fixed";
@@ -260,9 +263,9 @@
       menu.style.width = `${menuWidth}px`;
       menu.style.zIndex = "999999";
 
-      const spaceBelow = Math.max(160, (typeof window !== "undefined" ? window.innerHeight : 800) - rect.bottom - 16);
+      const spaceBelow = Math.max(110, viewportHeight - rect.bottom - 12);
       menu.style.maxHeight = `${Math.min(320, spaceBelow)}px`;
-      list.style.maxHeight = `${Math.min(260, spaceBelow - (showSearch ? 46 : 8))}px`;
+      list.style.maxHeight = `${Math.min(260, Math.max(80, spaceBelow - (showSearch ? 46 : 8)))}px`;
 
       document.body.appendChild(menu);
       trigger.classList.add("is-open");
@@ -294,14 +297,18 @@
           closeActiveMenu();
           return;
         }
-        const w = Math.max(curRect.width, 220);
-        let l = curRect.left;
-        if (l + w > window.innerWidth - 10) {
-          l = Math.max(10, window.innerWidth - w - 10);
+        const curMaxW = Math.max(150, window.innerWidth - 16);
+        const w = Math.min(Math.max(curRect.width, 220), curMaxW);
+        let l = Math.max(8, curRect.left);
+        if (l + w > window.innerWidth - 8) {
+          l = Math.max(8, window.innerWidth - w - 8);
         }
+        const curSpaceBelow = Math.max(110, window.innerHeight - curRect.bottom - 12);
         menu.style.top = `${curRect.bottom}px`;
         menu.style.left = `${l}px`;
         menu.style.width = `${w}px`;
+        menu.style.maxHeight = `${Math.min(320, curSpaceBelow)}px`;
+        list.style.maxHeight = `${Math.min(260, Math.max(80, curSpaceBelow - (showSearch ? 46 : 8)))}px`;
       }
 
       function onDocClick(ev) {
@@ -336,12 +343,36 @@
     root.querySelectorAll(selector).forEach(enhanceCustomDropdown);
   }
 
+  function positionViewportDropdown(trigger, panel, preferredWidth = 260) {
+    if (!trigger || !panel || typeof window === "undefined") return;
+    const vw = window.innerWidth || document.documentElement?.clientWidth || 360;
+    const vh = window.innerHeight || document.documentElement?.clientHeight || 640;
+    if (vw > 768) {
+      panel.style.removeProperty("--dropdown-top");
+      panel.style.removeProperty("--dropdown-left");
+      panel.style.removeProperty("--dropdown-width");
+      panel.style.removeProperty("--dropdown-max-height");
+      return;
+    }
+    const margin = 8;
+    const rect = trigger.getBoundingClientRect();
+    const width = Math.max(180, Math.min(preferredWidth, vw - margin * 2));
+    const left = Math.max(margin, Math.min(rect.right - width, vw - width - margin));
+    const top = Math.max(margin, Math.min(rect.bottom + 8, vh - 140));
+    const maxHeight = Math.max(160, vh - top - 12);
+    panel.style.setProperty("--dropdown-top", `${Math.round(top)}px`);
+    panel.style.setProperty("--dropdown-left", `${Math.round(left)}px`);
+    panel.style.setProperty("--dropdown-width", `${Math.round(width)}px`);
+    panel.style.setProperty("--dropdown-max-height", `${Math.round(maxHeight)}px`);
+  }
+
   window.CustomDropdown = {
     enhance: enhanceCustomDropdown,
     enhanceAll: enhanceAllCustomDropdowns,
     compareZoneCodesByOrder,
     parseZoneNumberParts,
     sortSelectOptions,
+    positionViewportDropdown,
     closeAll: closeActiveMenu,
   };
 })();

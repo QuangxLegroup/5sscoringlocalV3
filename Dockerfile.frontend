@@ -7,12 +7,13 @@ WORKDIR /app
 COPY index.html 404.html styles.css standards.js app.js manifest.json service-worker.js ./
 COPY modules ./modules
 COPY images ./images
+COPY downloads ./downloads
 
 RUN node --check app.js \
   && find modules -name "*.js" -print0 | xargs -0 -r -n 1 node --check \
   && mkdir -p /app/public \
   && cp index.html 404.html styles.css standards.js app.js manifest.json service-worker.js /app/public/ \
-  && cp -R modules images /app/public/
+  && cp -R modules images downloads /app/public/
 
 FROM nginx:stable-bookworm
 

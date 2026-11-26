@@ -4,6 +4,7 @@ const fs = require("node:fs/promises");
 const path = require("node:path");
 
 const MIME_TYPES = {
+  ".apk": "application/vnd.android.package-archive",
   ".css": "text/css; charset=utf-8",
   ".gif": "image/gif",
   ".html": "text/html; charset=utf-8",
@@ -52,6 +53,9 @@ function isInsideRoot(rootDir, filePath) {
 function isPublicAsset(rootDir, filePath) {
   const relativePath = path.relative(rootDir, filePath).split(path.sep).join("/");
   const [firstSegment] = relativePath.split("/");
+  if (firstSegment === "downloads") {
+    return relativePath.toLowerCase().endsWith(".apk");
+  }
   return PUBLIC_ROOT_FILES.has(relativePath) || PUBLIC_DIRECTORIES.has(firstSegment);
 }
 
@@ -96,6 +100,7 @@ class StaticFileService {
       return {
         statusCode: 200,
         contentType: MIME_TYPES[extname] || "application/octet-stream",
+        downloadFilename: extname === ".apk" ? path.basename(targetPath) : "",
         body,
       };
     } catch (error) {

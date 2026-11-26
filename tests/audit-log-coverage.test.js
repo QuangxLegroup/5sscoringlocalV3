@@ -130,13 +130,13 @@ test("5S finding sheet create and delete audit details retain row fields", () =>
   assert.equal(context.findingRowHasAuditContent({ progress: "0" }), false);
 });
 
-test("audit filters narrow by date, operation, actor, Zone, and searchable change text", () => {
+test("audit filters narrow by date, operation, Zone, and searchable change text without filtering by actor", () => {
   const context = helperContext({
     activeHistoryScope: "5s",
     auditLogFilters: { search: "xe hàng", from: "2026-10-01", to: "2026-10-31", action: "Sửa", actor: "alice", zone: "Zone 2" },
     getHistoryChangesForScope: entry => entry.changes,
   });
-  for (const name of ["auditEntryActorKey", "auditEntryChanges", "auditEntryZone", "filteredAuditChanges", "filterAuditEntries"]) {
+  for (const name of ["auditEntryChanges", "auditEntryZone", "filteredAuditChanges", "filterAuditEntries"]) {
     vm.runInContext(readFunction(name), context);
   }
   const entries = [
@@ -153,7 +153,7 @@ test("audit filters narrow by date, operation, actor, Zone, and searchable chang
       changes: [{ scope: "5s", action: "Sửa", target: "Zone 2 · Xe hàng", label: "Vấn đề" }],
     },
   ];
-  assert.deepEqual(Array.from(context.filterAuditEntries(entries), entry => entry.username), ["alice"]);
+  assert.deepEqual(Array.from(context.filterAuditEntries(entries), entry => entry.username), ["alice", "bob"]);
 });
 
 test("audit entries are separated into the five requested categories", () => {

@@ -4,7 +4,7 @@
  * Khi mất mạng sẽ hiển thị trang offline thay vì lỗi trắng.
  */
 
-const CACHE_NAME = "legroup-5s-v172";
+const CACHE_NAME = "legroup-5s-v179";
 
 const STATIC_ASSETS = [
   "/",
@@ -71,8 +71,8 @@ self.addEventListener("fetch", (event) => {
   }
   const url = new URL(event.request.url);
 
-  // Không cache API calls
-  if (url.pathname.startsWith("/api/")) {
+  // Không cache API calls và file tải về (APK)
+  if (url.pathname.startsWith("/api/") || url.pathname.startsWith("/downloads/")) {
     return;
   }
 

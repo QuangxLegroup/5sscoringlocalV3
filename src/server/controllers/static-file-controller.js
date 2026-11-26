@@ -19,10 +19,14 @@ class StaticFileController {
       return;
     }
 
-    response.writeHead(200, {
+    const headers = {
       "Content-Type": fileResult.contentType,
       "Cache-Control": "no-store",
-    });
+    };
+    if (fileResult.downloadFilename) {
+      headers["Content-Disposition"] = `attachment; filename="${fileResult.downloadFilename}"`;
+    }
+    response.writeHead(200, headers);
 
     response.end(request.method === "HEAD" ? undefined : fileResult.body);
   }
