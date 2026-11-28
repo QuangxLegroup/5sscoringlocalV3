@@ -176,7 +176,7 @@ class DataController {
         .finally(() => {
           authCheckBusy = false;
         });
-    }, 2000);
+    }, 15000);
 
     request.on("close", () => {
       closeClient();

@@ -171,7 +171,8 @@ class JsonFileRepository {
       const currentRoot = await this.readRoot();
       const nextRoot = await mutator(currentRoot);
       await this.persistRoot(nextRoot);
-      return options.compactResult ? { revision: null } : nextRoot;
+      if (options.compactResult) return { revision: null };
+      return options.includeRevision ? { root: nextRoot, revision: null } : nextRoot;
     });
   }
 

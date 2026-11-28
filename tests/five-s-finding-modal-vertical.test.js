@@ -98,4 +98,22 @@ test("5S Finding modal: vertical layout and field order requirements", () => {
     appCode.includes("const canEditCountermeasure ="),
     "app.js openSafetyRecordForm must check canEditCountermeasure and disable countermeasure fields accordingly"
   );
+
+  // 6. Đảm bảo biến isMobileDark được khai báo trước khi dùng trong modalClass của openIssueModal
+  assert.match(
+    modalCode,
+    /\bconst\s+isMobileDark\s*=/,
+    "openIssueModal must define isMobileDark so clicking mobile 5S finding cards does not throw ReferenceError"
+  );
+
+  // 7. Đảm bảo khung tải ảnh và nút đóng modal trong dark mobile không bị nền sáng từ body.theme-light đè lên
+  assert.ok(
+    !css.includes("body.theme-light .findings-issue-modal .photo-edit-widget,"),
+    "Light theme CSS must exclude .is-mobile-dark so dark mobile photo boxes never turn bright white"
+  );
+  assert.ok(
+    css.includes('body.theme-light .findings-issue-modal.is-mobile-dark .photo-edit-widget')
+    && css.includes('body.theme-light .findings-issue-modal.is-mobile-dark .modal-header .icon-button'),
+    "styles.css must explicitly isolate dark mobile photo upload boxes and modal close button under body.theme-light"
+  );
 });

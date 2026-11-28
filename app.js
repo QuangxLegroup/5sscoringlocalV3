@@ -480,7 +480,7 @@
   let imageAnnotatorClosing = false;
   let fullscreenImageResizeCleanup = null;
   const SESSION_STORAGE_KEY = "legroup-5s-session";
-  const SESSION_HEARTBEAT_MS = 30 * 1000;
+  const SESSION_HEARTBEAT_MS = 5 * 60 * 1000;
   const LOGIN_ROUTE = "/login";
   const TAB_ROUTES = Object.freeze({
     home: "/home",
@@ -1811,7 +1811,7 @@
   }
 
   async function processPendingScoreDrafts() {
-    if (pendingScoreDraftProcessing || !currentUser || !navigator.onLine || dataStore?.isDemoMode?.()) return;
+    if (pendingScoreDraftProcessing || !currentUser || dataStore?.isDemoMode?.()) return;
     pendingScoreDraftProcessing = true;
     document.getElementById("local-data-status-button")?.classList.add("is-syncing");
     let savedCount = 0;
@@ -1838,13 +1838,14 @@
 
   async function commitPendingScoreDraft(initialDraft) {
     let draft = initialDraft;
-    if (!currentUser || !navigator.onLine) {
+    if (!currentUser) {
       const error = new Error("Điểm chưa đồng bộ được. Bản nháp vẫn nằm trên thiết bị.");
       error.offlineDraftSaved = true;
       throw error;
     }
 
-    for (let attempt = 0; attempt < 4; attempt += 1) {
+    let networkRetries = 0;
+    for (let attempt = 0; attempt < 6; attempt += 1) {
       try {
         const scoreId = draft.score?.id || draft.expectedValue?.id;
         const writeOptions = {
@@ -1888,7 +1889,13 @@
           continue;
         }
 
-        if (!error?.status || [502, 503, 504].includes(Number(error.status)) || !navigator.onLine) {
+        if (!error?.status || [502, 503, 504].includes(Number(error.status))) {
+          if (networkRetries < 3 && attempt < 5) {
+            const backoffMs = networkRetries === 0 ? 500 : networkRetries === 1 ? 1200 : 2500;
+            networkRetries += 1;
+            await new Promise((resolve) => window.setTimeout(resolve, backoffMs));
+            continue;
+          }
           await dataStore.savePendingScoreDraft(draft);
           error.offlineDraftSaved = true;
           throw error;
@@ -4143,15 +4150,27 @@
   }
 
   function canUseSafety(account) {
-    return !isViewerAccount(account) && (isAdminAccount(account) || hasAt5sRole(account) || hasDepartmentHeadRole(account) || hasAccountAccessType(account, SAFETY_PERIOD_TYPE));
+    return !isViewerAccount(account) && (
+      isAdminAccount(account)
+      || hasAt5sRole(account)
+      || hasDepartmentHeadRole(account)
+      || hasAccountAccessType(account, SAFETY_PERIOD_TYPE)
+      || (hasAccountAccessType(account, FIVE_S_PERIOD_TYPE) && isZoneOwnerAccount(account, FIVE_S_PERIOD_TYPE))
+    );
   }
 
   function canAddSafetyEvaluation(account, periodId = getActivePeriodId(SAFETY_PERIOD_TYPE)) {
     if (!account || isViewerAccount(account)) return false;
     if (isAdminAccount(account) || hasAt5sRole(account)) return true;
     if (hasDepartmentHeadRole(account, periodId)) return true;
-    return hasAccountAccessType(account, SAFETY_PERIOD_TYPE)
-      && getAccountRolesForType(account, SAFETY_PERIOD_TYPE, periodId).includes(ROLE_ASSESSOR_SAFETY);
+    if (hasAccountAccessType(account, SAFETY_PERIOD_TYPE)) {
+      const safetyRoles = getAccountRolesForType(account, SAFETY_PERIOD_TYPE, periodId);
+      if (safetyRoles.includes(ROLE_ASSESSOR_SAFETY) || safetyRoles.includes(ROLE_ZONE_OWNER)) {
+        return true;
+      }
+    }
+    return hasAccountAccessType(account, FIVE_S_PERIOD_TYPE)
+      && getAccountRolesForType(account, FIVE_S_PERIOD_TYPE).includes(ROLE_ZONE_OWNER);
   }
 
   function sameNormalizedText(left, right) {
@@ -4302,7 +4321,9 @@
       if (primaryManagerId) managerIds.add(primaryManagerId);
     }
     if (fiveSArea.scorerId && managerIds.has(fiveSArea.scorerId)) return true;
-    return getAccountAreaIds(account, FIVE_S_PERIOD_TYPE).includes(fiveSArea.id);
+    return managerIds.size === 0
+      && getAccountRoleForType(account, FIVE_S_PERIOD_TYPE) === ROLE_ZONE_OWNER
+      && getAccountAreaIds(account, FIVE_S_PERIOD_TYPE).includes(fiveSArea.id);
   }
 
   function canManageSafetyCountermeasure(record, account = currentUser) {
@@ -4355,25 +4376,26 @@
     if (isAreaManagedByDepartmentHead(targetArea, account) || getDepartmentHeadManagedAreaIds(account, periodId).has(targetArea.id)) {
       return true;
     }
-    if (getAllowedAreaIds(account, periodId).has(targetArea.id)) {
-      return true;
-    }
 
     const managerIds = new Set(getAccountPersonIdsForRole(account, FIVE_S_PERIOD_TYPE, ROLE_ZONE_OWNER, periodId));
-    const primaryManagerId = getAccountPersonId(account, FIVE_S_PERIOD_TYPE);
-    if (primaryManagerId) managerIds.add(primaryManagerId);
-    if (targetArea.scorerId && managerIds.has(targetArea.scorerId)) return true;
-
-    const assignedAreaIds = new Set(getAccountAreaIds(account, FIVE_S_PERIOD_TYPE));
-    if (assignedAreaIds.has(targetArea.id)
-      || assignedAreaIds.has(String(targetArea.code))
-      || assignedAreaIds.has(`Zone ${targetArea.code}`)) {
-      return true;
+    if (getAccountRoleForType(account, FIVE_S_PERIOD_TYPE) === ROLE_ZONE_OWNER) {
+      const primaryManagerId = getAccountPersonId(account, FIVE_S_PERIOD_TYPE);
+      if (primaryManagerId) managerIds.add(primaryManagerId);
     }
+    if (targetArea.scorerId && managerIds.has(targetArea.scorerId)) return true;
 
     if (targetArea.scorerId) {
       const areaManager = getPeriodCatalogManagers(FIVE_S_PERIOD_TYPE, periodId).find((m) => m.id === targetArea.scorerId);
       if (areaManager && accountMatchesCatalogPerson(account, areaManager)) {
+        return true;
+      }
+    }
+
+    if (managerIds.size === 0 && getAccountRoleForType(account, FIVE_S_PERIOD_TYPE) === ROLE_ZONE_OWNER) {
+      const assignedAreaIds = new Set(getAccountAreaIds(account, FIVE_S_PERIOD_TYPE));
+      if (assignedAreaIds.has(targetArea.id)
+        || assignedAreaIds.has(String(targetArea.code))
+        || assignedAreaIds.has(`Zone ${targetArea.code}`)) {
         return true;
       }
     }
@@ -6691,17 +6713,12 @@
     }
 
     showAppScreen();
-    if (["mobile-5s", "mobile-safety", "mobile-findings"].includes(activeTab)) {
-      const initialTab = activeTab === "mobile-findings" ? "findings" : activeTab === "mobile-5s" ? "5s" : "safety";
-      if (typeof window.openMobilePrototype === "function") {
-        window.openMobilePrototype(initialTab, createPageContext(), { force: true });
-      }
-    } else {
+    if (!["mobile-5s", "mobile-safety", "mobile-findings"].includes(activeTab)) {
       if (typeof window.closeMobilePrototype === "function") {
         window.closeMobilePrototype();
       }
     }
-    renderAll({ replaceRoute: true });
+    renderAll({ replaceRoute: true, forceMobileOpen: true });
   }
 
   function getAppTitle() {
@@ -6849,18 +6866,83 @@
   function getIssueNotifications() {
     if (!canSeeIssueNotifications()) return [];
     const notifications = [];
+    const isAdmin = isAdminAccount(currentUser);
     const fiveSPeriods = getPeriodsByType(FIVE_S_PERIOD_TYPE);
     const fiveSPeriodById = new Map(fiveSPeriods.map((period) => [period.id, period]));
+    const allPeriodById = new Map((state.periods || []).map((period) => [period.id, period]));
+    const areasByPeriodCache = new Map();
+    const areaMapByPeriodCache = new Map();
+    const allowedAreaIdsCache = new Map();
+    const canWarnPeriodCache = new Map();
+    const canRespondPeriodCache = new Map();
+    const accountById = new Map((state.accounts || []).map((account) => [String(account?.id || ""), account]));
+    const zoneManagerResponseCache = new Map();
+
+    const getCachedAreas = (periodId) => {
+      if (!areasByPeriodCache.has(periodId)) {
+        const areas = getAreasForPeriod(periodId);
+        areasByPeriodCache.set(periodId, areas);
+        areaMapByPeriodCache.set(periodId, new Map(areas.map((item) => [item.id, item])));
+      }
+      return areasByPeriodCache.get(periodId);
+    };
+    const getCachedArea = (periodId, areaId) => {
+      if (!areaId) return null;
+      getCachedAreas(periodId);
+      return areaMapByPeriodCache.get(periodId)?.get(areaId) || null;
+    };
+    const getCachedAllowedAreas = (periodId) => {
+      if (!allowedAreaIdsCache.has(periodId)) {
+        allowedAreaIdsCache.set(periodId, getAllowedAreaIds(currentUser, periodId));
+      }
+      return allowedAreaIdsCache.get(periodId);
+    };
+    const canWarnForPeriod = (type, periodId) => {
+      const key = `${type}:${periodId}`;
+      if (!canWarnPeriodCache.has(key)) {
+        canWarnPeriodCache.set(key, canReceiveAreaIssueNotifications(type, periodId));
+      }
+      return canWarnPeriodCache.get(key);
+    };
+    const canRespondForPeriod = (type, periodId) => {
+      const key = `${type}:${periodId}`;
+      if (!canRespondPeriodCache.has(key)) {
+        canRespondPeriodCache.set(key, canReceiveIssueResponseNotifications(type, periodId));
+      }
+      return canRespondPeriodCache.get(key);
+    };
+    const canWarnForArea = (type, periodId, areaId) => Boolean(
+      areaId && canWarnForPeriod(type, periodId) && (isAdmin || getCachedAllowedAreas(periodId).has(areaId)),
+    );
+    const canRespondForArea = (type, periodId, areaId) => Boolean(
+      areaId && canRespondForPeriod(type, periodId) && getCachedAllowedAreas(periodId).has(areaId),
+    );
+    const isCachedZoneManagerResponse = (type, periodId, areaId, responderId) => {
+      const cleanResponderId = String(responderId || "");
+      if (!cleanResponderId) return false;
+      const key = `${type}:${periodId}:${areaId}:${cleanResponderId}`;
+      if (!zoneManagerResponseCache.has(key)) {
+        const responder = accountById.get(cleanResponderId);
+        const result = Boolean(
+          responder && !isAdminAccount(responder) && !isViewerAccount(responder)
+          && getAccountRolesForType(responder, type, periodId).includes(ROLE_ZONE_OWNER)
+          && getAllowedAreaIds(responder, periodId).has(areaId),
+        );
+        zoneManagerResponseCache.set(key, result);
+      }
+      return zoneManagerResponseCache.get(key);
+    };
+
     for (const sheet of state.fiveSFindings || []) {
       const periodId = window.FiveSFindingsPage?.resolvePeriodId?.(sheet, fiveSPeriods) || sheet.periodId || "";
       const period = fiveSPeriodById.get(periodId);
       if (!period) continue;
-      const areas = getAreasForPeriod(periodId);
+      const areas = getCachedAreas(periodId);
       const areaId = window.FiveSFindingsPage?.resolveAreaId?.(sheet, areas) || sheet.areaId || "";
-      const canReceiveWarning = canReceiveAreaIssueNotifications(FIVE_S_PERIOD_TYPE, periodId)
-        && canReceiveIssueNotificationForArea(periodId, areaId);
-      const canReceiveResponse = canReceiveIssueResponseNotificationForArea(FIVE_S_PERIOD_TYPE, periodId, areaId);
-      const area = areas.find((item) => item.id === areaId);
+      const canReceiveWarning = canWarnForArea(FIVE_S_PERIOD_TYPE, periodId, areaId);
+      const canReceiveResponse = canRespondForArea(FIVE_S_PERIOD_TYPE, periodId, areaId);
+      if (!canReceiveWarning && !canReceiveResponse) continue;
+      const area = getCachedArea(periodId, areaId);
       for (const [rowIndex, row] of (sheet.rows || []).entries()) {
         const problem = String(row?.problem || "").trim();
         const progress = Math.max(0, Math.min(100, Number(row?.progress) || 0));
@@ -6886,7 +6968,7 @@
         }
         const response = String(row?.countermeasure || "").trim();
         const responderId = String(row?.countermeasureUpdatedBy || "");
-        if (canReceiveResponse && response && isZoneManagerResponse(FIVE_S_PERIOD_TYPE, periodId, areaId, responderId)) {
+        if (canReceiveResponse && response && isCachedZoneManagerResponse(FIVE_S_PERIOD_TYPE, periodId, areaId, responderId)) {
           const responseAt = String(row.countermeasureUpdatedAt || sheet.updatedAt || sheet.inspectionDate || "");
           notifications.push({
             id: "five-s-response:" + sheet.id + ":" + rowIndex + ":" + responderId + ":" + notificationFingerprint(response + "|" + responseAt),
@@ -6905,14 +6987,14 @@
     }
 
     for (const record of state.safetyRecords || []) {
-      const period = getPeriod(record.periodId);
+      const period = allPeriodById.get(record.periodId);
       if (!period) continue;
-      const canReceiveWarning = canReceiveAreaIssueNotifications(SAFETY_PERIOD_TYPE, record.periodId)
-        && canReceiveIssueNotificationForArea(record.periodId, record.areaId);
-      const canReceiveResponse = canReceiveIssueResponseNotificationForArea(SAFETY_PERIOD_TYPE, record.periodId, record.areaId);
+      const canReceiveWarning = canWarnForArea(SAFETY_PERIOD_TYPE, record.periodId, record.areaId);
+      const canReceiveResponse = canRespondForArea(SAFETY_PERIOD_TYPE, record.periodId, record.areaId);
+      if (!canReceiveWarning && !canReceiveResponse) continue;
       const issueCount = Number(record.issueCount) >= 1 ? Number(record.issueCount) : 1;
       const repeated = issueCount >= 3;
-      const area = getAreaForPeriod(record.periodId, record.areaId);
+      const area = getCachedArea(record.periodId, record.areaId);
       const issueDate = getSafetyRecordIssueDate(record, period);
       const unresolved = normalizeIssueStatus(record.issueStatus) !== "closed";
       if (canReceiveWarning && unresolved) {
@@ -6932,7 +7014,7 @@
       }
       const response = String(record.improvementContent || "").trim();
       const responderId = String(record.improvementResponseBy || "");
-      if (canReceiveResponse && response && isZoneManagerResponse(SAFETY_PERIOD_TYPE, record.periodId, record.areaId, responderId)) {
+      if (canReceiveResponse && response && isCachedZoneManagerResponse(SAFETY_PERIOD_TYPE, record.periodId, record.areaId, responderId)) {
         const responseAt = String(record.improvementResponseAt || record.updatedAt || record.createdAt || "");
         notifications.push({
           id: "safety-response:" + record.id + ":" + responderId + ":" + notificationFingerprint(response + "|" + responseAt),
@@ -7393,7 +7475,7 @@
     if (["mobile-5s", "mobile-safety", "mobile-findings"].includes(activeTab)) {
       const initialTab = activeTab === "mobile-findings" ? "findings" : activeTab === "mobile-5s" ? "5s" : "safety";
       if (typeof window.openMobilePrototype === "function") {
-        window.openMobilePrototype(initialTab, createPageContext());
+        window.openMobilePrototype(initialTab, createPageContext(), options.forceMobileOpen ? { force: true } : undefined);
       }
     } else if (["mobile-5s", "mobile-safety", "mobile-findings"].includes(previousTab)) {
       if (typeof window.closeMobilePrototype === "function") {
@@ -7458,6 +7540,7 @@
       updateRoute: options.updateRoute,
       preserveScroll: Boolean(options.preserveScroll),
       preserveSafetyReport: true,
+      forceMobileOpen: Boolean(options.forceMobileOpen),
     });
     scheduleInlineScoreFocusRestore();
   }
@@ -7708,6 +7791,7 @@
       elements,
       openFormModal,
       closeModal,
+      openUserGuideViewerModal,
       escapeHtml,
       loadCollectionPage: (filters) => dataStore?.loadCollectionPage?.(filters) || Promise.resolve({ items: [], total: 0, page: 1, pageSize: 0, totalPages: 0 }),
       hydrateAuthenticatedPhotos,
@@ -7764,6 +7848,7 @@
       isDepartmentHeadAccount,
       hasDepartmentHeadRole,
       hasAccountAccessType,
+      getAccountRolesForType,
       renderRoleVisibility,
       isFiveSAssessor,
       isIssueOpen,
@@ -10229,25 +10314,74 @@
     });
   }
 
+  function findExistingAccountForCatalogProfile(profile, allProfiles = null) {
+    if (!profile) return null;
+    const profiles = allProfiles || getCatalogPersonProfiles();
+    const sameNameCount = profiles.filter((item) => sameNormalizedText(item.name, profile.name)).length;
+    return (state.accounts || []).find((account) => {
+      if (!account || isAdminAccount(account) || isViewerAccount(account)) return false;
+      if (profile.employeeCode && account.employeeCode) {
+        return sameEmployeeCode(profile.employeeCode, account.employeeCode);
+      }
+      if (profile.employeeCode && !account.employeeCode) {
+        return sameNameCount === 1 && accountMatchesCatalogPerson(account, profile);
+      }
+      if (account.employeeCode) return false;
+      return sameNameCount === 1
+        && (accountMatchesCatalogPerson(account, profile)
+          || getAccountIdentityNames(account).some((accountName) => sameNormalizedText(accountName, profile.name)));
+    }) || null;
+  }
+
+  function getCatalogProfileUnifiedRoleNames(profile) {
+    if (!profile) return [];
+    const roles5S = profile.rolesByType?.[FIVE_S_PERIOD_TYPE] || [];
+    const rolesSafety = profile.rolesByType?.[SAFETY_PERIOD_TYPE] || [];
+    const labels = [];
+    if (roles5S.includes(ROLE_ZONE_OWNER) || rolesSafety.includes(ROLE_ZONE_OWNER)) {
+      labels.push("Người phụ trách zone");
+    }
+    if (roles5S.includes(ROLE_ASSESSOR_5S)) {
+      labels.push("Assessor 5S");
+    }
+    if (rolesSafety.includes(ROLE_ASSESSOR_SAFETY)) {
+      labels.push("Assessor AT");
+    }
+    if (roles5S.includes(ROLE_DEPARTMENT_HEAD) || rolesSafety.includes(ROLE_DEPARTMENT_HEAD)) {
+      labels.push("Trưởng phòng");
+    }
+    if (roles5S.includes(ROLE_AT5S) || rolesSafety.includes(ROLE_AT5S)) {
+      labels.push("Ban AT - 5S");
+    }
+    return labels;
+  }
+
   function populateAccountPersonOptions(selectedKey = elements.accountDisplayName?.value || "") {
     const select = elements.accountDisplayName;
     if (!select) return;
-    const scope = normalizeCatalogType(activeAccountScope);
-    const profiles = getCatalogPersonProfiles().filter((profile) => (profile.rolesByType[scope] || []).length);
+    const allProfiles = getCatalogPersonProfiles();
+    const profiles = allProfiles.filter((profile) => {
+      const hasAnyRole = getCatalogProfileUnifiedRoleNames(profile).length > 0;
+      return hasAnyRole && !findExistingAccountForCatalogProfile(profile, allProfiles);
+    });
     if (elements.accountPersonSearchOptions) {
       elements.accountPersonSearchOptions.innerHTML = profiles.map((profile) => {
-        const roleNames = (profile.rolesByType[scope] || []).map((role) => getScopedRoleLabel(role, scope)).join(" + ");
+        const roleNames = getCatalogProfileUnifiedRoleNames(profile).join(" + ");
         const label = `${profile.employeeCode || "Chưa có mã NV"} · ${profile.name} · ${roleNames}`;
         return `<option value="${escapeHtml(label)}" data-profile-key="${escapeHtml(profile.key)}"></option>`;
       }).join("");
     }
-    select.innerHTML = '<option value="">Chọn nhân viên trong danh mục</option>' + profiles
+    const placeholder = profiles.length
+      ? "Chọn nhân viên trong danh mục"
+      : "Tất cả nhân viên trong danh mục đã có tài khoản";
+    select.innerHTML = `<option value="">${placeholder}</option>` + profiles
       .map((profile) => {
-        const roleNames = (profile.rolesByType[scope] || []).map((role) => getScopedRoleLabel(role, scope)).join(" + ");
+        const roleNames = getCatalogProfileUnifiedRoleNames(profile).join(" + ");
         const label = `${profile.employeeCode || "Chưa có mã NV"} · ${profile.name} · ${roleNames}`;
         return `<option value="${escapeHtml(profile.key)}">${escapeHtml(label)}</option>`;
       }).join("");
     if (profiles.some((profile) => profile.key === selectedKey)) select.value = selectedKey;
+    else select.value = "";
     syncAccountPersonSearchFromSelection();
   }
 
@@ -10398,12 +10532,10 @@
 
   function populateAt5sAccountSelect() {
     if (!elements.at5sAccountMember) return;
-    const members = state.at5sMembers || [];
+    const members = (state.at5sMembers || []).filter((m) => !(state.accounts || []).some((acc) => !isAdminAccount(acc) && !isViewerAccount(acc) && accountMatchesCatalogPerson(acc, m)));
     elements.at5sAccountMember.innerHTML = members.map((m) => {
-      const existingAcc = (state.accounts || []).find((acc) => accountMatchesCatalogPerson(acc, m));
-      const status = existingAcc ? ` (đã có TK: ${existingAcc.username})` : "";
-      return `<option value="${escapeHtml(m.id)}">${escapeHtml(m.employeeCode ? `${m.employeeCode} · ${m.name}` : m.name)}${status}</option>`;
-    }).join("") || '<option value="">Chưa có thành viên Ban AT - 5S trong danh mục</option>';
+      return `<option value="${escapeHtml(m.id)}">${escapeHtml(m.employeeCode ? `${m.employeeCode} · ${m.name}` : m.name)}</option>`;
+    }).join("") || '<option value="">Tất cả thành viên Ban AT - 5S đã có tài khoản</option>';
   }
 
   function at5sAccountCardHtml(account) {
@@ -10545,92 +10677,114 @@
     </article>`;
   }
 
-  function accountCardForScope(account, type = activeAccountScope) {
-    const isAdmin = isAdminAccount(account);
-    const scope = normalizeCatalogType(type);
-    const scopedRole = account.rolesByType?.[scope] || getAccountRoleForType(account, scope) || account.role;
-    const roleLabel = isAdmin ? "Admin hệ thống" : getScopedRoleLabel(scopedRole, scope);
-    let zones = "chưa có zone";
-    try {
-      zones = isAdmin ? "Toàn quyền" : accountZoneCodesForScope(account, scope).join(", ") || zones;
-    } catch {}
+  function describeUnifiedAccountRolesAndZones(account) {
+    if (isAdminAccount(account)) {
+      return "Admin hệ thống · Toàn quyền tất cả Zone (5S & An toàn)";
+    }
+    if (isViewerAccount(account)) {
+      return "Người xem · Xem toàn bộ bảng biểu";
+    }
+    const roleParts = [];
+    const fiveSPeriodId = getActivePeriodId(FIVE_S_PERIOD_TYPE);
+    const safetyPeriodId = getActivePeriodId(SAFETY_PERIOD_TYPE);
+    const fiveSAreas = getAreasForPeriod(fiveSPeriodId);
+    const safetyAreas = getAreasForPeriod(safetyPeriodId).filter(isReportableSafetyArea);
+    const roles5S = getAccountRolesForType(account, FIVE_S_PERIOD_TYPE, fiveSPeriodId);
+    const rolesSafety = getAccountRolesForType(account, SAFETY_PERIOD_TYPE, safetyPeriodId);
 
+    if (hasAt5sRole(account)) {
+      roleParts.push("Ban AT - 5S (Toàn bộ Zone)");
+    }
+    if (roles5S.includes(ROLE_ZONE_OWNER) || rolesSafety.includes(ROLE_ZONE_OWNER)) {
+      const manager5SIds = new Set(getAccountPersonIdsForRole(account, FIVE_S_PERIOD_TYPE, ROLE_ZONE_OWNER, fiveSPeriodId));
+      const managerSafetyIds = new Set(getAccountPersonIdsForRole(account, SAFETY_PERIOD_TYPE, ROLE_ZONE_OWNER, safetyPeriodId));
+      const zoneCodes = [...new Set([
+        ...fiveSAreas.filter((a) => manager5SIds.has(a.scorerId)).map((a) => a.code),
+        ...safetyAreas.filter((a) => managerSafetyIds.has(a.scorerId)).map((a) => a.code),
+      ].filter(Boolean))];
+      roleParts.push(`Người phụ trách zone${zoneCodes.length ? ` (Zone ${zoneCodes.join(", ")})` : ""}`);
+    }
+    if (roles5S.includes(ROLE_ASSESSOR_5S)) {
+      const assessor5SIds = new Set(getAccountPersonIdsForRole(account, FIVE_S_PERIOD_TYPE, ROLE_ASSESSOR_5S, fiveSPeriodId));
+      const zoneCodes = fiveSAreas
+        .filter((a) => assessor5SIds.has(a.assessorId) || (Array.isArray(a.assessorIds) && a.assessorIds.some((id) => assessor5SIds.has(id))))
+        .map((a) => a.code)
+        .filter(Boolean);
+      roleParts.push(`Assessor 5S${zoneCodes.length ? ` (Zone ${zoneCodes.join(", ")})` : ""}`);
+    }
+    if (rolesSafety.includes(ROLE_ASSESSOR_SAFETY)) {
+      const assessorSafetyIds = new Set(getAccountPersonIdsForRole(account, SAFETY_PERIOD_TYPE, ROLE_ASSESSOR_SAFETY, safetyPeriodId));
+      const zoneCodes = safetyAreas
+        .filter((a) => assessorSafetyIds.has(a.assessorId) || (Array.isArray(a.assessorIds) && a.assessorIds.some((id) => assessorSafetyIds.has(id))))
+        .map((a) => a.code)
+        .filter(Boolean);
+      roleParts.push(`Assessor AT${zoneCodes.length ? ` (Zone ${zoneCodes.join(", ")})` : ""}`);
+    }
+    if (hasDepartmentHeadRole(account) || roles5S.includes(ROLE_DEPARTMENT_HEAD) || rolesSafety.includes(ROLE_DEPARTMENT_HEAD)) {
+      const headZones = [...new Set([
+        ...fiveSAreas.filter((a) => isAreaManagedByDepartmentHead(a, account)).map((a) => a.code),
+        ...safetyAreas.filter((a) => isAreaManagedByDepartmentHead(a, account)).map((a) => a.code),
+      ].filter(Boolean))];
+      roleParts.push(`Trưởng phòng${headZones.length ? ` (Zone ${headZones.join(", ")})` : ""}`);
+    }
+    if (!roleParts.length) {
+      const fallbackRole = getAccountAccessLabel(account);
+      const fallbackZones = [...new Set([
+        ...accountZoneCodesForScope(account, FIVE_S_PERIOD_TYPE),
+        ...accountZoneCodesForScope(account, SAFETY_PERIOD_TYPE),
+      ].filter(Boolean))];
+      return `${fallbackRole}${fallbackZones.length ? ` · Zone ${fallbackZones.join(", ")}` : ""}`;
+    }
+    return roleParts.join(" + ");
+  }
+
+  function accountCardForScope(account) {
+    const isAdmin = isAdminAccount(account);
+    const isViewer = isViewerAccount(account);
+    const permissionSummary = describeUnifiedAccountRolesAndZones(account);
+    const displayName = account.displayName || account.name || getDepartmentHeadAccountName(account) || account.username || "";
     const actions = `<button class="tiny-button" type="button" data-action="edit-account" data-id="${escapeHtml(account.id)}">Sửa</button>${isAdmin ? "" : `<button class="tiny-button danger-text-button" type="button" data-action="delete-account" data-id="${escapeHtml(account.id)}">Xóa tài khoản</button>`}`;
 
     return `<article class="account-card">
       <div>
         <strong>${escapeHtml(account.username || "Tài khoản chưa có tên")}</strong>
-        <span>Mã NV: ${escapeHtml(account.employeeCode || "chưa có")}</span>
-        <span>Hiển thị: ${escapeHtml(account.displayName || account.name || account.username || "")}</span>
-        <span>${escapeHtml(roleLabel)} · Zone ${escapeHtml(zones)}</span>
+        ${isAdmin ? `<span>Tên hiển thị: ${escapeHtml(displayName)}</span>` : isViewer ? `<span>Người xem: ${escapeHtml(displayName)}${account.position ? ` · Chức vụ: ${escapeHtml(account.position)}` : ""}</span>` : `<span>Mã NV: ${escapeHtml(account.employeeCode || "chưa có")} · Nhân viên: ${escapeHtml(displayName)}</span>`}
+        <span>Quyền: ${escapeHtml(permissionSummary)}</span>
       </div>
       <div class="account-actions">${actions}</div>
     </article>`;
   }
 
   function renderAccountsTab() {
-    const accounts = Array.isArray(state?.accounts) ? state.accounts : [];
-    const scopedAccounts = accounts.filter((account) => {
-      if (!account || isViewerAccount(account)) return false;
-      if (isAdminAccount(account)) return true;
-      try {
-        return normalizeAccountAccessTypes(account.accessTypes, account.role).includes(normalizeCatalogType(activeAccountScope))
-          || hasAccountAccessType(account, activeAccountScope);
-      } catch {
-        return true;
-      }
-    }).sort(compareEmployeeCodeAscending);
+    const accounts = (Array.isArray(state?.accounts) ? state.accounts : [])
+      .filter(Boolean)
+      .slice()
+      .sort((left, right) => {
+        if (isAdminAccount(left) !== isAdminAccount(right)) {
+          return isAdminAccount(left) ? -1 : 1;
+        }
+        return compareEmployeeCodeAscending(left, right);
+      });
     if (elements.accountList) {
-      elements.accountList.innerHTML = scopedAccounts.map((account) => {
+      elements.accountList.innerHTML = accounts.map((account) => {
         try {
-          return accountCardForScope(account, activeAccountScope);
+          return accountCardForScope(account);
         } catch {
-          return `<article class="account-card"><div><strong>${escapeHtml(account?.username || "Tài khoản")}</strong><span>Mã NV: ${escapeHtml(account?.employeeCode || "chưa có")}</span><span>Hiển thị: ${escapeHtml(account?.displayName || account?.name || account?.username || "")}</span><span>Quyền: ${escapeHtml(account?.role || "chưa xác định")}</span></div><div class="account-actions"><button class="tiny-button" type="button" data-action="edit-account" data-id="${escapeHtml(account?.id || "")}">Sửa</button><button class="tiny-button danger-text-button" type="button" data-action="delete-account" data-id="${escapeHtml(account?.id || "")}">Xóa tài khoản</button></div></article>`;
+          return `<article class="account-card"><div><strong>${escapeHtml(account?.username || "Tài khoản")}</strong><span>Mã NV: ${escapeHtml(account?.employeeCode || "chưa có")}</span><span>Hiển thị: ${escapeHtml(account?.displayName || account?.name || account?.username || "")}</span><span>Quyền: ${escapeHtml(account?.role || "chưa xác định")}</span></div><div class="account-actions"><button class="tiny-button" type="button" data-action="edit-account" data-id="${escapeHtml(account?.id || "")}">Sửa</button>${isAdminAccount(account) ? "" : `<button class="tiny-button danger-text-button" type="button" data-action="delete-account" data-id="${escapeHtml(account?.id || "")}">Xóa tài khoản</button>`}</div></article>`;
         }
-      }).join("") || `<article class="account-card account-empty-card"><div><strong>Chưa có tài khoản ${escapeHtml(getAccountScopeLabel(activeAccountScope))}</strong><span>Chọn nhân viên đã được phân vai trò trong Danh mục để tạo tài khoản đăng nhập.</span></div></article>`;
+      }).join("") || `<article class="account-card account-empty-card"><div><strong>Chưa có tài khoản nào</strong><span>Chọn nhân viên trong danh mục ở khung phía trên để cấp tài khoản đăng nhập.</span></div></article>`;
     }
 
-    const accountScopeOptions = [
-      ...ACCOUNT_SCOPE_OPTIONS,
-      { value: ACCOUNT_VIEWER_SCOPE, label: "Người xem", icon: "Xem" },
-      { value: ACCOUNT_DEPARTMENT_HEAD_SCOPE, label: "Trưởng phòng", icon: "TP" },
-      { value: ACCOUNT_AT5S_SCOPE, label: "Ban AT - 5S", icon: "AT5S" },
-    ];
-    renderScopeSwitch(elements.accountScopeSwitch, expandedAccountScope, "set-account-scope", "Cấp tài khoản", null, accountScopeOptions);
-    const allSpecialDetails = [
-      { scope: ACCOUNT_VIEWER_SCOPE, el: elements.viewerAccountDetail },
-      { scope: ACCOUNT_DEPARTMENT_HEAD_SCOPE, el: elements.departmentHeadAccountDetail },
-      { scope: ACCOUNT_AT5S_SCOPE, el: elements.at5sAccountDetail },
-    ];
-
-    if ([ACCOUNT_VIEWER_SCOPE, ACCOUNT_DEPARTMENT_HEAD_SCOPE, ACCOUNT_AT5S_SCOPE].includes(expandedAccountScope)) {
-      if (elements.accountScopeDetail) {
-        if (elements.accountScopeSwitch?.contains(elements.accountScopeDetail)) {
-          elements.accountScopeSwitch.after(elements.accountScopeDetail);
-        }
-        elements.accountScopeDetail.hidden = true;
-      }
-      allSpecialDetails.forEach(({ scope, el }) => {
-        if (!el) return;
-        if (scope === expandedAccountScope) {
-          mountScopeDetail(elements.accountScopeSwitch, el, expandedAccountScope);
-        } else {
-          if (elements.accountScopeSwitch?.contains(el)) {
-            elements.accountScopeSwitch.after(el);
-          }
-          el.hidden = true;
-        }
-      });
-    } else {
-      allSpecialDetails.forEach(({ el }) => {
-        if (!el) return;
-        if (elements.accountScopeSwitch?.contains(el)) {
-          elements.accountScopeSwitch.after(el);
-        }
-        el.hidden = true;
-      });
-      mountScopeDetail(elements.accountScopeSwitch, elements.accountScopeDetail, expandedAccountScope);
+    if (elements.accountScopeSwitch) {
+      elements.accountScopeSwitch.hidden = true;
+      elements.accountScopeSwitch.innerHTML = "";
     }
+    if (elements.accountScopeDetail) {
+      elements.accountScopeDetail.hidden = false;
+    }
+    [elements.viewerAccountDetail, elements.departmentHeadAccountDetail, elements.at5sAccountDetail].forEach((el) => {
+      if (el) el.hidden = true;
+    });
     populateDepartmentHeadAccountSelect();
     populateAt5sAccountSelect();
     populateAccountRoleOptions();
@@ -10638,24 +10792,6 @@
     populateManagerSelects();
     renderAccountZoneList();
     syncAccountAssignedZones();
-    if (elements.viewerAccountList) {
-      const viewerAccounts = state.accounts.filter(isViewerAccount);
-      elements.viewerAccountList.innerHTML = viewerAccounts
-        .map(viewerAccountCardHtml)
-        .join("") || `<article class="account-card account-empty-card"><div><strong>Chưa có tài khoản người xem</strong><span>Tạo tài khoản người xem để theo dõi toàn bộ bảng biểu.</span></div></article>`;
-    }
-    if (elements.departmentHeadAccountList) {
-      const departmentHeadAccounts = state.accounts.filter(isDepartmentHeadDisplayAccount);
-      elements.departmentHeadAccountList.innerHTML = departmentHeadAccounts
-        .map(departmentHeadAccountCardHtml)
-        .join("") || `<article class="account-card account-empty-card"><div><strong>Chưa có tài khoản trưởng phòng</strong><span>Tạo tài khoản trưởng phòng để thêm, sửa, xóa đánh giá an toàn theo Zone quản lý.</span></div></article>`;
-    }
-    if (elements.at5sAccountList) {
-      const at5sAccounts = state.accounts.filter((acc) => hasAt5sRole(acc) && !isAdminAccount(acc));
-      elements.at5sAccountList.innerHTML = at5sAccounts
-        .map(at5sAccountCardHtml)
-        .join("") || `<article class="account-card account-empty-card"><div><strong>Chưa có tài khoản Ban AT - 5S</strong><span>Tạo tài khoản cho thành viên Ban AT - 5S để chấm điểm 5S và đánh giá an toàn toàn bộ các zone.</span></div></article>`;
-    }
   }
 
   let isLoggingIn = false;
@@ -10713,7 +10849,7 @@
     } catch (error) {
       if (error?.status === 401) {
         showToast("Sai tài khoản hoặc mật khẩu.", true);
-      } else if (!navigator.onLine || !error?.status) {
+      } else if (!error?.status) {
         showToast("Không kết nối được máy chủ. Kiểm tra Wi-Fi và địa chỉ đang mở rồi thử lại.", true);
       } else if (error.status >= 500) {
         showToast("Máy chủ đang gặp sự cố. Vui lòng thử lại sau.", true);
@@ -14249,18 +14385,11 @@
       showToast("Mật khẩu phải có ít nhất 4 ký tự.", true);
       return;
     }
-    if (!profile.rolesByType[normalizeCatalogType(scope)]?.length) {
-      showToast("Người này chưa được cấp vai trò trong danh mục của luồng đang chọn.", true);
+    if (!getCatalogProfileUnifiedRoleNames(profile).length) {
+      showToast("Người này chưa được cấp vai trò trong danh mục.", true);
       return;
     }
-    const sameNameProfiles = getCatalogPersonProfiles().filter((person) => sameNormalizedText(person.name, profile.name));
-    const duplicateEmployeeAccount = state.accounts.find((account) => {
-      if (!account || isAdminAccount(account) || isViewerAccount(account)) return false;
-      if (profile.employeeCode && account.employeeCode && sameEmployeeCode(profile.employeeCode, account.employeeCode)) return true;
-      if (account.employeeCode) return false;
-      return sameNameProfiles.length === 1
-        && getAccountIdentityNames(account).some((accountName) => sameNormalizedText(accountName, profile.name));
-    });
+    const duplicateEmployeeAccount = findExistingAccountForCatalogProfile(profile);
     if (duplicateEmployeeAccount) {
       const codeLabel = profile.employeeCode ? `Mã NV ${profile.employeeCode}` : `Nhân viên ${profile.name}`;
       showToast(`${codeLabel} đã được cấp tài khoản ${duplicateEmployeeAccount.username || ""}. Mỗi người chỉ được cấp một tài khoản.`, true);
@@ -14275,19 +14404,24 @@
     const name = profile.name;
     const account = { id: makeId("account"), createdAt: new Date().toISOString() };
     const rolesByType = {};
-    const accessTypes = new Set(Object.keys(profile.rolesByType));
+    const accessTypes = new Set(Object.keys(profile.rolesByType).filter((type) => (profile.rolesByType[type] || []).length));
     accessTypes.forEach((type) => {
       const roles = profile.rolesByType[type] || [];
       const selectedRole = roles.includes(ROLE_ZONE_OWNER)
         ? ROLE_ZONE_OWNER
         : roles.includes(getAssessorRoleForScope(type))
           ? getAssessorRoleForScope(type)
-          : roles.includes(ROLE_DEPARTMENT_HEAD) || !roles.length
-            ? ROLE_DEPARTMENT_HEAD
-            : "";
+          : roles.includes(ROLE_AT5S)
+            ? ROLE_AT5S
+            : roles.includes(ROLE_DEPARTMENT_HEAD) || !roles.length
+              ? ROLE_DEPARTMENT_HEAD
+              : "";
       if (selectedRole) rolesByType[type] = selectedRole;
     });
-    const primaryRole = rolesByType[normalizeCatalogType(scope)] || Object.values(rolesByType)[0] || ROLE_ASSESSOR_5S;
+    const hasAt5s = [...accessTypes].some((type) => (profile.rolesByType[type] || []).includes(ROLE_AT5S));
+    const primaryRole = hasAt5s && !Object.values(rolesByType).some((r) => r !== ROLE_AT5S)
+      ? ROLE_AT5S
+      : (rolesByType[FIVE_S_PERIOD_TYPE] || rolesByType[SAFETY_PERIOD_TYPE] || Object.values(rolesByType)[0] || ROLE_ASSESSOR_5S);
     Object.assign(account, {
       role: primaryRole,
       name,
@@ -14299,6 +14433,10 @@
       rolesByType,
       areaIds: [],
     });
+    if (hasAt5s) {
+      const at5sMember = (state.at5sMembers || []).find((m) => accountMatchesCatalogPerson(profile, m));
+      if (at5sMember?.id) account.at5sMemberId = at5sMember.id;
+    }
     ["scorerId", "assessorId", "fiveSScorerId", "fiveSAssessorId", "safetyScorerId", "safetyAssessorId"]
       .forEach((key) => delete account[key]);
     delete account.position;
@@ -16501,7 +16639,7 @@
     const selectedArea = record
       ? getAreaForPeriod(periodId, record.areaId)
       : getAreasForPeriod(periodId).find(isReportableSafetyArea);
-    if (!selectedArea || (!isNew && !countermeasureOnly && !allowedIds.has(selectedArea.id))) {
+    if (!selectedArea || (!isNew && !countermeasureOnly && !allowedIds.has(selectedArea.id) && !canManageSafetyCountermeasure(record))) {
       showToast("Tài khoản này chưa được phân quyền zone an toàn.", true);
       return;
     }
@@ -16512,8 +16650,9 @@
       escapeHtml(JSON.stringify(record?.[field] || [])) + "\" data-safety-annotation-editable=\"" + (editable ? "true" : "false") + "\" data-safety-source-pending=\"false\"";
     const canEditIssue = isNew ? canAddSafetyEvaluation(currentUser) : canManageSafetyRecord(record);
     const canEditCountermeasure = isNew
-      ? (isAdminAccount(currentUser) || Boolean(hasDepartmentHeadRole?.(currentUser, periodId)))
-      : canManageSafetyCountermeasure(record);
+      ? isAdminAccount(currentUser)
+      : (isAdminAccount(currentUser) || canManageSafetyCountermeasure(record));
+    const issueDisabledAttr = canEditIssue ? "" : " disabled";
     const safetyPhotoEditorHtml = (inputName, removeName, photoUrl, alt, annotationField, editable) => {
       const hasPhoto = Boolean(photoUrl);
       return "<div class=\"photo-upload-box photo-edit-widget safety-photo-editor " + (hasPhoto ? "has-photo " : "") + (editable ? "is-editable" : "is-disabled") + "\" data-safety-photo-editor>" +
@@ -16740,106 +16879,6 @@
       );
     };
 
-    if (countermeasureOnly) {
-      openFormModal({
-        title: "Cập nhật cải tiến / xử lý",
-        submitText: "Lưu xử lý",
-        modalClass: "safety-record-modal",
-        draftKey: safetyDraftKey,
-        getDraftSnapshot: captureSafetySnapshot,
-        isDraftDirty: isSafetyDraftDirty,
-        onError(error) {
-          showToast(error?.message || "Không lưu được phần cải tiến/xử lý. Vui lòng thử lại.", true);
-        },
-        html: "<div class=\"modal-context\">" +
-            "<span><strong>Zone:</strong> " + escapeHtml(selectedArea.code || "") + "</span>" +
-            "<span><strong>Mối nguy:</strong> " + escapeHtml(record?.note || "") + "</span>" +
-          "</div>" +
-          "<label><span>Nội dung cải tiến, xử lý</span><textarea name=\"improvementContent\">" + escapeHtml(record?.improvementContent || "") + "</textarea></label>" +
-          "<div class=\"safety-photo-field\"><span>Ảnh sau cải tiến, xử lý</span>" + afterPhotoEditor + "</div>" +
-          "<label><span>Đảm nhiệm</span><input name=\"actionOwner\" type=\"text\" value=\"" + escapeHtml(record?.actionOwner || "") + "\"></label>" +
-          "<label><span>Kế hoạch</span><input name=\"actionPlan\" type=\"text\" value=\"" + escapeHtml(record?.actionPlan || "") + "\"></label>" +
-          "<label><span>Ngày dự kiến hoàn thành</span><input name=\"completionDate\" type=\"date\" value=\"" + escapeHtml(defaultCompletionDate) + "\"></label>" + actualDateFields,
-        async onSubmit(formData, form) {
-          if (blockIfArchivedPeriod(periodId, SAFETY_PERIOD_TYPE)) {
-            return false;
-          }
-          if (!canManageSafetyCountermeasure(record)) {
-            showToast("Bạn chỉ có quyền thêm các đối sách liên quan đến Zone của mình.", true);
-            return false;
-          }
-          const afterPhotoInput = form.elements.afterPhoto;
-          const nextAfterPhoto = await prepareScorePhoto(
-            afterPhotoInput?.files?.[0],
-            { photoDataUrl: record?.afterPhotoDataUrl, photoName: record?.afterPhotoName },
-            formData.get("removeAfterPhoto") === "on",
-            periodId,
-            "an-toan",
-            "anh-sau-xu-ly",
-          );
-          const payload = normalizeSafetyRecord({
-            ...record,
-            improvementContent: String(formData.get("improvementContent") || "").trim(),
-            afterPhotoDataUrl: nextAfterPhoto.photoDataUrl,
-            afterPhotoName: nextAfterPhoto.photoName,
-            afterPhotoAnnotations: nextAfterPhoto.photoDataUrl !== (record?.afterPhotoDataUrl || "") ? [] : (record?.afterPhotoAnnotations || []),
-            actionOwner: String(formData.get("actionOwner") || "").trim(),
-            actionPlan: String(formData.get("actionPlan") || "").trim(),
-            completionDate: String(formData.get("completionDate") || "").trim() || defaultCompletionDate,
-            countermeasureDate: String(formData.get("countermeasureDate") || record?.countermeasureDate || ""),
-            completedDate: String(formData.get("completedDate") || record?.completedDate || ""),
-            updatedAt: new Date().toISOString(),
-          });
-          applySafetyCountermeasureResponseStatus(payload, record);
-          if (!hasSafetyRecordChanged(record, payload)) {
-            showToast("Không có thay đổi mới.");
-            return true;
-          }
-          const existingIndex = state.safetyRecords.findIndex((item) => item.id === payload.id);
-          const existingRecordCopy = existingIndex >= 0 ? cloneValue(state.safetyRecords[existingIndex]) : cloneValue(record);
-          await saveSafetyRecord(payload);
-          state.safetyRecords = state.safetyRecords.map((item) => item.id === payload.id ? payload : item);
-          await deleteUnusedPhotoFiles([
-            existingRecordCopy?.afterPhotoDataUrl && existingRecordCopy.afterPhotoDataUrl !== payload.afterPhotoDataUrl ? existingRecordCopy.afterPhotoDataUrl : "",
-          ]);
-          window.FormDraftManager?.clearDraft(safetyDraftKey);
-          showToast("Đã cập nhật phần cải tiến/xử lý.");
-          renderAll();
-          return true;
-        },
-      });
-      bindSafetyPhotoEditors(elements.modalBody);
-    if (safetyDraft?.photoDataUrl) {
-      const pImg = elements.modalBody.querySelector('[data-safety-photo-field="photoAnnotations"], img.safety-thumb');
-      if (pImg) {
-        pImg.src = safetyDraft.photoDataUrl;
-        pImg.dataset.previewImg = safetyDraft.photoDataUrl;
-        pImg.dataset.safetyAnnotations = JSON.stringify(safetyDraft.photoAnnotations || []);
-        pImg.hidden = false;
-        pImg.closest(".photo-upload-box")?.classList.add("has-photo");
-        pImg.closest(".photo-upload-box")?.querySelector(".photo-preview-wrap")?.classList.remove("is-hidden");
-        pImg.closest(".photo-upload-box")?.querySelector(".photo-editor-empty")?.classList.add("is-hidden");
-        pImg.closest(".photo-upload-box")?.querySelectorAll("[data-photo-open], [data-photo-change], [data-photo-delete]").forEach((btn) => { btn.hidden = false; });
-        window.refreshSafetyPhotoAnnotationThumbnail?.(pImg, safetyDraft.photoAnnotations || []);
-      }
-    }
-    if (safetyDraft?.afterPhotoDataUrl) {
-      const apImg = elements.modalBody.querySelector('[data-safety-photo-field="afterPhotoAnnotations"]');
-      if (apImg) {
-        apImg.src = safetyDraft.afterPhotoDataUrl;
-        apImg.dataset.previewImg = safetyDraft.afterPhotoDataUrl;
-        apImg.dataset.safetyAnnotations = JSON.stringify(safetyDraft.afterPhotoAnnotations || []);
-        apImg.hidden = false;
-        apImg.closest(".photo-upload-box")?.classList.add("has-photo");
-        apImg.closest(".photo-upload-box")?.querySelector(".photo-preview-wrap")?.classList.remove("is-hidden");
-        apImg.closest(".photo-upload-box")?.querySelector(".photo-editor-empty")?.classList.add("is-hidden");
-        apImg.closest(".photo-upload-box")?.querySelectorAll("[data-photo-open], [data-photo-change], [data-photo-delete]").forEach((btn) => { btn.hidden = false; });
-        window.refreshSafetyPhotoAnnotationThumbnail?.(apImg, safetyDraft.afterPhotoAnnotations || []);
-      }
-    }
-      return;
-    }
-
     const issueDate = getSafetyRecordIssueDate(record, period);
     const displayIssueDate = formatDateDisplay(issueDate);
     const photoEditor = safetyPhotoEditorHtml(
@@ -16849,9 +16888,9 @@
 
     const requestedAreaId = safetyDraft?.areaId || (isNew ? "" : selectedArea.id);
     const availableAreaIds = new Set(getAreasForPeriod(periodId)
-      .filter((area) => isReportableSafetyArea(area) && (isNew || allowedIds.has(area.id)))
+      .filter((area) => isReportableSafetyArea(area) && (isNew || countermeasureOnly || allowedIds.has(area.id)))
       .map((area) => area.id));
-    const effectiveAreaId = availableAreaIds.has(requestedAreaId) ? requestedAreaId : "";
+    const effectiveAreaId = availableAreaIds.has(requestedAreaId) ? requestedAreaId : (record?.areaId || "");
     const effectiveIssueDate = safetyDraft?.issueDate || issueDate;
     const effectiveDisplayIssueDate = safetyDraft?.issueDate ? formatDateDisplay(safetyDraft.issueDate) : displayIssueDate;
     const effectiveNote = safetyDraft?.note ?? (record?.note || "");
@@ -16869,11 +16908,16 @@
     const effectiveIssueItemLabel = safetyDraft?.issueItemLabel ?? (record ? getIssueItemLabel(row) : "Nhận diện nguy cơ mất an toàn");
 
     openFormModal({
-      title: isNew ? "Thêm báo cáo đánh giá an toàn" : "Sửa báo cáo đánh giá an toàn",
-      submitText: "Lưu báo cáo",
+      title: isNew ? "Thêm báo cáo đánh giá an toàn" : countermeasureOnly ? "Cập nhật cải tiến / xử lý" : "Sửa báo cáo đánh giá an toàn",
+      submitText: countermeasureOnly ? "Lưu xử lý" : "Lưu báo cáo",
       draftKey: safetyDraftKey,
       getDraftSnapshot: captureSafetySnapshot,
       isDraftDirty: isSafetyDraftDirty,
+      onError(error) {
+        if (countermeasureOnly) {
+          showToast(error?.message || "Không lưu được phần cải tiến/xử lý. Vui lòng thử lại.", true);
+        }
+      },
       extraActions: !isNew && canManageSafetyRecord(record)
         ? "<button class=\"danger-button\" type=\"button\" data-action=\"delete-safety-record\" data-id=\"" + escapeHtml(record.id) + "\">Xóa</button>"
         : "",
@@ -16881,18 +16925,20 @@
       html: "<div class=\"modal-context\">" +
           "<span><strong>Nguồn:</strong> Đánh giá an toàn nhà máy</span>" +
         "</div>" +
+        (countermeasureOnly ? "<p class=\"findings-countermeasure-permission-note\">Bạn được cập nhật đối sách cải tiến/xử lý, ảnh sau cải tiến, đảm nhiệm (PIC), kế hoạch và ngày dự kiến hoàn thành của Zone này.</p>" : "") +
+        (isNew && !isAdminAccount(currentUser) ? "<p class=\"findings-countermeasure-permission-note\">Đối sách cải tiến, ảnh sau cải tiến, đảm nhiệm (PIC), kế hoạch và ngày dự kiến hoàn thành sẽ do quản lý Zone hoặc Admin cập nhật sau khi tiếp nhận.</p>" : "") +
         "<div class=\"safety-vertical-form\">" +
           "<div class=\"finding-form-group\">" +
             "<label class=\"finding-form-label\">Zone <span class=\"required-star\">*</span></label>" +
             "<div class=\"finding-form-control\">" +
-              "<select name=\"areaId\" required aria-label=\"Zone\">" + getSafetyAreaOptions(periodId, effectiveAreaId, isNew ? null : allowedIds, isNew ? "Chọn Zone AT" : "") + "</select>" +
+              "<select name=\"areaId\" required aria-label=\"Zone\"" + issueDisabledAttr + ">" + getSafetyAreaOptions(periodId, effectiveAreaId, (isNew || countermeasureOnly) ? null : allowedIds, isNew ? "Chọn Zone AT" : "") + "</select>" +
             "</div>" +
           "</div>" +
 
           "<div class=\"finding-form-group\">" +
             "<label class=\"finding-form-label\">Mối nguy hiểm phát hiện được <span class=\"required-star\">*</span></label>" +
             "<div class=\"finding-form-control\">" +
-              "<textarea name=\"note\" required placeholder=\"Mô tả chi tiết vị trí và nội dung mối nguy hiểm phát hiện...\">" + escapeHtml(effectiveNote) + "</textarea>" +
+              "<textarea name=\"note\" required placeholder=\"Mô tả chi tiết vị trí và nội dung mối nguy hiểm phát hiện...\"" + issueDisabledAttr + ">" + escapeHtml(effectiveNote) + "</textarea>" +
             "</div>" +
           "</div>" +
 
@@ -16907,13 +16953,13 @@
             "<div class=\"finding-form-group\">" +
               "<label class=\"finding-form-label safety-detected-date-label\">Ngày phát hiện <span class=\"required-star\">*</span></label>" +
               "<div class=\"finding-form-control\">" +
-                "<span class=\"safety-date-editor\"><input name=\"issueDate\" type=\"text\" data-safety-date placeholder=\"dd/mm/yyyy\" inputmode=\"numeric\" maxlength=\"10\" value=\"" + escapeHtml(effectiveDisplayIssueDate) + "\" required autocomplete=\"off\"><input type=\"date\" class=\"safety-date-calendar\" aria-label=\"Mở lịch chọn ngày\" value=\"" + escapeHtml(effectiveIssueDate) + "\"></span>" +
+                "<span class=\"safety-date-editor\"><input name=\"issueDate\" type=\"text\" data-safety-date placeholder=\"dd/mm/yyyy\" inputmode=\"numeric\" maxlength=\"10\" value=\"" + escapeHtml(effectiveDisplayIssueDate) + "\" required autocomplete=\"off\"" + issueDisabledAttr + "><input type=\"date\" class=\"safety-date-calendar\" aria-label=\"Mở lịch chọn ngày\" value=\"" + escapeHtml(effectiveIssueDate) + "\"" + issueDisabledAttr + "></span>" +
               "</div>" +
             "</div>" +
             "<div class=\"finding-form-group\">" +
               "<label class=\"finding-form-label\">Số lần phát hiện</label>" +
               "<div class=\"finding-form-control\">" +
-                "<input name=\"issueCount\" type=\"number\" min=\"1\" step=\"1\" value=\"" + escapeHtml(effectiveIssueCount) + "\">" +
+                "<input name=\"issueCount\" type=\"number\" min=\"1\" step=\"1\" value=\"" + escapeHtml(effectiveIssueCount) + "\"" + issueDisabledAttr + ">" +
               "</div>" +
             "</div>" +
           "</div>" +
@@ -16922,13 +16968,13 @@
             "<div class=\"finding-form-group\">" +
               "<label class=\"finding-form-label\">STOP 6</label>" +
               "<div class=\"finding-form-control\">" +
-                "<select name=\"issueType\">" + optionHtml(STOP6_OPTIONS, effectiveIssueType) + "</select>" +
+                "<select name=\"issueType\"" + issueDisabledAttr + ">" + optionHtml(STOP6_OPTIONS, effectiveIssueType) + "</select>" +
               "</div>" +
             "</div>" +
             "<div class=\"finding-form-group\">" +
               "<label class=\"finding-form-label\">Cấp bậc (Rank)</label>" +
               "<div class=\"finding-form-control\">" +
-                "<select name=\"issueLevel\">" + optionHtml(ISSUE_LEVEL_OPTIONS, effectiveIssueLevel) + "</select>" +
+                "<select name=\"issueLevel\"" + issueDisabledAttr + ">" + optionHtml(ISSUE_LEVEL_OPTIONS, effectiveIssueLevel) + "</select>" +
               "</div>" +
             "</div>" +
           "</div>" +
@@ -16937,13 +16983,13 @@
             "<div class=\"finding-form-group\">" +
               "<label class=\"finding-form-label\">Kênh phát hiện</label>" +
               "<div class=\"finding-form-control\">" +
-                "<select name=\"foundChannel\">" + optionHtml(SAFETY_FOUND_OPTIONS, effectiveFoundChannel) + "</select>" +
+                "<select name=\"foundChannel\"" + issueDisabledAttr + ">" + optionHtml(SAFETY_FOUND_OPTIONS, effectiveFoundChannel) + "</select>" +
               "</div>" +
             "</div>" +
             "<div class=\"finding-form-group\">" +
               "<label class=\"finding-form-label\">Tình trạng</label>" +
               "<div class=\"finding-form-control\">" +
-                "<select name=\"issueStatus\">" + optionHtml(ISSUE_STATUS_OPTIONS, effectiveIssueStatus) + "</select>" +
+                "<select name=\"issueStatus\"" + issueDisabledAttr + ">" + optionHtml(ISSUE_STATUS_OPTIONS, effectiveIssueStatus) + "</select>" +
               "</div>" +
             "</div>" +
           "</div>" +
@@ -16952,13 +16998,13 @@
             "<div class=\"finding-form-group\">" +
               "<label class=\"finding-form-label\">Phát hiện bởi</label>" +
               "<div class=\"finding-form-control\">" +
-                "<input name=\"issueFoundBy\" type=\"text\" placeholder=\"Người phát hiện\" value=\"" + escapeHtml(effectiveIssueFoundBy) + "\">" +
+                "<input name=\"issueFoundBy\" type=\"text\" placeholder=\"Người phát hiện\" value=\"" + escapeHtml(effectiveIssueFoundBy) + "\"" + issueDisabledAttr + ">" +
               "</div>" +
             "</div>" +
             "<div class=\"finding-form-group\">" +
               "<label class=\"finding-form-label\">Mã nhân viên</label>" +
               "<div class=\"finding-form-control\">" +
-                "<input name=\"employeeCode\" type=\"text\" placeholder=\"Mã NV\" value=\"" + escapeHtml(effectiveEmployeeCode) + "\">" +
+                "<input name=\"employeeCode\" type=\"text\" placeholder=\"Mã NV\" value=\"" + escapeHtml(effectiveEmployeeCode) + "\"" + issueDisabledAttr + ">" +
               "</div>" +
             "</div>" +
           "</div>" +
@@ -16966,7 +17012,7 @@
           "<div class=\"finding-form-group\">" +
             "<label class=\"finding-form-label\">Hạng mục</label>" +
             "<div class=\"finding-form-control\">" +
-              "<input name=\"issueItemLabel\" type=\"text\" value=\"" + escapeHtml(effectiveIssueItemLabel) + "\">" +
+              "<input name=\"issueItemLabel\" type=\"text\" value=\"" + escapeHtml(effectiveIssueItemLabel) + "\"" + issueDisabledAttr + ">" +
             "</div>" +
           "</div>" +
 
@@ -16986,7 +17032,7 @@
 
           "<div class=\"finding-form-row finding-form-row-2\">" +
             "<div class=\"finding-form-group\">" +
-              "<label class=\"finding-form-label\">Đảm nhiệm</label>" +
+              "<label class=\"finding-form-label\">Đảm nhiệm (PIC)</label>" +
               "<div class=\"finding-form-control\">" +
                 "<input name=\"actionOwner\" type=\"text\" placeholder=\"Người đảm nhiệm\" value=\"" + escapeHtml(effectiveActionOwner) + "\"" + (canEditCountermeasure ? "" : " disabled") + ">" +
               "</div>" +
@@ -17010,8 +17056,52 @@
         if (blockIfArchivedPeriod(periodId, SAFETY_PERIOD_TYPE)) {
           return false;
         }
+        if (countermeasureOnly) {
+          if (!canManageSafetyCountermeasure(record)) {
+            showToast("Bạn chỉ có quyền thêm các đối sách liên quan đến Zone của mình.", true);
+            return false;
+          }
+          const afterPhotoInput = form.elements.afterPhoto;
+          const nextAfterPhoto = await prepareScorePhoto(
+            afterPhotoInput?.files?.[0],
+            { photoDataUrl: record?.afterPhotoDataUrl, photoName: record?.afterPhotoName },
+            formData.get("removeAfterPhoto") === "on",
+            periodId,
+            "an-toan",
+            "anh-sau-xu-ly",
+          );
+          const payload = normalizeSafetyRecord({
+            ...record,
+            improvementContent: String(formData.get("improvementContent") || "").trim(),
+            afterPhotoDataUrl: nextAfterPhoto.photoDataUrl,
+            afterPhotoName: nextAfterPhoto.photoName,
+            afterPhotoAnnotations: nextAfterPhoto.photoDataUrl !== (record?.afterPhotoDataUrl || "") ? [] : (record?.afterPhotoAnnotations || []),
+            actionOwner: String(formData.get("actionOwner") || "").trim(),
+            actionPlan: String(formData.get("actionPlan") || "").trim(),
+            completionDate: String(formData.get("completionDate") || "").trim(),
+            countermeasureDate: String(formData.get("countermeasureDate") || record?.countermeasureDate || ""),
+            completedDate: String(formData.get("completedDate") || record?.completedDate || ""),
+            updatedAt: new Date().toISOString(),
+          });
+          applySafetyCountermeasureResponseStatus(payload, record);
+          if (!hasSafetyRecordChanged(record, payload)) {
+            showToast("Không có thay đổi mới.");
+            return true;
+          }
+          const existingIndex = state.safetyRecords.findIndex((item) => item.id === payload.id);
+          const existingRecordCopy = existingIndex >= 0 ? cloneValue(state.safetyRecords[existingIndex]) : cloneValue(record);
+          await saveSafetyRecord(payload);
+          state.safetyRecords = state.safetyRecords.map((item) => item.id === payload.id ? payload : item);
+          await deleteUnusedPhotoFiles([
+            existingRecordCopy?.afterPhotoDataUrl && existingRecordCopy.afterPhotoDataUrl !== payload.afterPhotoDataUrl ? existingRecordCopy.afterPhotoDataUrl : "",
+          ]);
+          window.FormDraftManager?.clearDraft(safetyDraftKey);
+          showToast("Đã cập nhật phần cải tiến/xử lý.");
+          renderAll();
+          return true;
+        }
         const selected = getAreaForPeriod(periodId, String(formData.get("areaId") || ""));
-        if (!selected || !isReportableSafetyArea(selected) || (!isNew && !allowedIds.has(selected.id))) {
+        if (!selected || !isReportableSafetyArea(selected) || (!isNew && !allowedIds.has(selected.id) && !canManageSafetyCountermeasure({ ...(record || {}), periodId, areaId: selected.id }))) {
           showToast(isNew ? "Vui lòng chọn Zone hợp lệ." : "Bạn không có quyền cập nhật Zone này.", true);
           return false;
         }
@@ -22077,7 +22167,14 @@
     document.body.appendChild(backdrop);
     hydrateAuthenticatedPhotos(backdrop);
 
-    const close = () => backdrop.remove();
+    const handleKeydown = (e) => {
+      if (e.key === "Escape") close();
+    };
+    const close = () => {
+      document.removeEventListener("keydown", handleKeydown);
+      backdrop.remove();
+    };
+    document.addEventListener("keydown", handleKeydown);
     backdrop.addEventListener("click", (e) => {
       if (e.target === backdrop || e.target.closest("[data-guide-viewer-close]")) {
         close();
@@ -22146,6 +22243,7 @@
       }
     });
   }
+  window.openUserGuideViewerModal = openUserGuideViewerModal;
 
 
   function renderGuideSetupTab() {
@@ -23058,7 +23156,7 @@
     window.addEventListener("local-data-network-restored", () => processPendingScoreDrafts());
     document.getElementById("local-data-status-button")?.addEventListener("click", () => processPendingScoreDrafts());
     Promise.all([dataStore?.getOfflineQueueCount?.(), dataStore?.getPendingScoreDrafts?.()])
-      .then(([pending, drafts]) => handleLocalDataSyncStatus({ detail: { pending, scoreDrafts: drafts?.length || 0, syncing: false, online: navigator.onLine } }))
+      .then(([pending, drafts]) => handleLocalDataSyncStatus({ detail: { pending, scoreDrafts: drafts?.length || 0, syncing: false, online: true } }))
       .catch(() => {});
     document.addEventListener("dblclick", (event) => {
       const image = event.target?.closest?.("img");

@@ -20,8 +20,12 @@ function clearSessionCookie(request) {
 
 function sendSession(response, payload, request) {
   const { token, ...publicPayload } = payload;
+  const revision = publicPayload.revision;
+  const extraHeaders = Number.isSafeInteger(revision)
+    ? { ETag: `"root-${revision}"`, Vary: "Cookie" }
+    : {};
   response.setHeader("Set-Cookie", sessionCookie(token, request));
-  sendJson(response, 200, publicPayload);
+  sendJson(response, 200, publicPayload, extraHeaders);
 }
 
 class AuthController {

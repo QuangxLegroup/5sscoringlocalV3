@@ -324,4 +324,217 @@ test("5S Server Authorization: enforces countermeasure permissions on backend", 
       }
     );
   }, "Admin can create new finding with countermeasure fields directly");
+
+  // 7. Dual-role user (Zone 1 manager + AT5S) must ONLY edit countermeasures on Zone 1, NOT Zone 2
+  const dualRoleRoot = {
+    ...root,
+    periods: {
+      p0: { id: "p0", type: "5s", year: 2026, month: 10, archived: false },
+      p1: { id: "p1", type: "5s", year: 2026, month: 11, archived: false },
+    },
+    managers: {
+      "mgr-z1": { id: "mgr-z1", name: "Mr An", employeeCode: "101" },
+      "mgr-z2": { id: "mgr-z2", name: "Mr Binh", employeeCode: "202" },
+    },
+    at5sMembers: {
+      "at5s-an": { id: "at5s-an", name: "Mr An", employeeCode: "101" },
+    },
+    fiveSFindings: {
+      ...root.fiveSFindings,
+      "sheet-z2": {
+        id: "sheet-z2",
+        periodId: "p1",
+        areaId: "z2",
+        area: "Zone 02",
+        inspectionDate: "2026-11-03",
+        inspector: "Tester",
+        rows: [
+          {
+            problem: "Dây điện bừa bộn",
+            location: "Kệ",
+            fiveS: "S2",
+            shift: "1",
+            countermeasure: "",
+            countermeasureUpdatedBy: "",
+            countermeasureUpdatedAt: "",
+            dueDate: "",
+            progress: "0",
+            photoDataUrl: "",
+            afterPhotoDataUrl: "",
+          },
+        ],
+      },
+      "sheet-p0-z1": {
+        id: "sheet-p0-z1",
+        periodId: "p0",
+        areaId: "z1",
+        area: "Zone 01",
+        inspectionDate: "2026-10-15",
+        inspector: "Tester",
+        rows: [
+          {
+            problem: "Tồn đọng tháng trước",
+            location: "Xưởng",
+            fiveS: "S1",
+            shift: "1",
+            countermeasure: "",
+            countermeasureUpdatedBy: "",
+            countermeasureUpdatedAt: "",
+            dueDate: "",
+            progress: "0",
+            photoDataUrl: "",
+            afterPhotoDataUrl: "",
+          },
+        ],
+      },
+    },
+  };
+  const dualRoleAccount = {
+    id: "dual-an",
+    name: "Mr An",
+    employeeCode: "101",
+    role: "at5s",
+    at5sMemberId: "at5s-an",
+    accessTypes: ["5s", "safety"],
+    fiveSAreaIds: ["z1", "z2"],
+  };
+
+  // Dual-role CAN update countermeasure in Zone 1 (their managed zone)
+  assert.doesNotThrow(() => {
+    authService.assertFiveSFindingWriteAllowed(
+      dualRoleRoot,
+      dualRoleAccount,
+      {
+        operation: "update",
+        path: "fiveSFindings/sheet-1",
+        value: {
+          ...dualRoleRoot.fiveSFindings["sheet-1"],
+          rows: [
+            {
+              ...dualRoleRoot.fiveSFindings["sheet-1"].rows[0],
+              countermeasure: "Quản lý Zone 1 tự cập nhật đối sách",
+              countermeasureUpdatedBy: "dual-an",
+              countermeasureUpdatedAt: "2026-11-04T08:00:00.000Z",
+              progress: "75",
+            },
+          ],
+        },
+      }
+    );
+  }, "Dual-role AT5S + Zone 1 manager can update countermeasure in Zone 1");
+
+  // Dual-role CANNOT update countermeasure in Zone 2 (managed by someone else) -> REJECTED (403)
+  assert.throws(
+    () => {
+      authService.assertFiveSFindingWriteAllowed(
+        dualRoleRoot,
+        dualRoleAccount,
+        {
+          operation: "update",
+          path: "fiveSFindings/sheet-z2",
+          value: {
+            ...dualRoleRoot.fiveSFindings["sheet-z2"],
+            rows: [
+              {
+                ...dualRoleRoot.fiveSFindings["sheet-z2"].rows[0],
+                countermeasure: "Sửa đối sách Zone 2 trái phép",
+                countermeasureUpdatedBy: "dual-an",
+                countermeasureUpdatedAt: "2026-11-04T08:00:00.000Z",
+                progress: "100",
+              },
+            ],
+          },
+        }
+      );
+    },
+    (err) => err.statusCode === 403 && err.message.includes("Chỉ người quản lý ở Zone đó và admin"),
+    "Dual-role AT5S + Zone 1 manager MUST NOT update countermeasure in Zone 2"
+  );
+
+  // Dual-role CAN still edit issue details in Zone 2 (because they are AT5S)
+  assert.doesNotThrow(() => {
+    authService.assertFiveSFindingWriteAllowed(
+      dualRoleRoot,
+      dualRoleAccount,
+      {
+        operation: "update",
+        path: "fiveSFindings/sheet-z2",
+        value: {
+          ...dualRoleRoot.fiveSFindings["sheet-z2"],
+          rows: [
+            {
+              ...dualRoleRoot.fiveSFindings["sheet-z2"].rows[0],
+              problem: "Cập nhật mô tả vấn đề Zone 2",
+            },
+          ],
+        },
+      }
+    );
+  }, "Dual-role AT5S + Zone 1 manager can edit issue description in Zone 2");
+
+  // Dual-role CAN reply countermeasure on past unarchived period for Zone 1, but CANNOT change issue problem
+  assert.doesNotThrow(() => {
+    authService.assertFiveSFindingWriteAllowed(
+      dualRoleRoot,
+      dualRoleAccount,
+      {
+        operation: "update",
+        path: "fiveSFindings/sheet-p0-z1",
+        value: {
+          ...dualRoleRoot.fiveSFindings["sheet-p0-z1"],
+          rows: [
+            {
+              ...dualRoleRoot.fiveSFindings["sheet-p0-z1"].rows[0],
+              countermeasure: "Đã khắc phục tồn đọng tháng 10",
+              countermeasureUpdatedBy: "dual-an",
+              countermeasureUpdatedAt: "2026-11-04T08:00:00.000Z",
+              progress: "100",
+            },
+          ],
+        },
+      }
+    );
+  }, "Dual-role Zone 1 manager can update countermeasure on past unarchived period in Zone 1");
+
+  assert.throws(
+    () => {
+      authService.assertFiveSFindingWriteAllowed(
+        dualRoleRoot,
+        dualRoleAccount,
+        {
+          operation: "update",
+          path: "fiveSFindings/sheet-p0-z1",
+          value: {
+            ...dualRoleRoot.fiveSFindings["sheet-p0-z1"],
+            rows: [
+              {
+                ...dualRoleRoot.fiveSFindings["sheet-p0-z1"].rows[0],
+                problem: "Sửa đề mục kỳ cũ trái phép",
+              },
+            ],
+          },
+        }
+      );
+    },
+    (err) => err.statusCode === 403,
+    "Dual-role user cannot edit issue description on past unarchived period"
+  );
+});
+
+test("5S Frontend Permissions: canManageFiveSFindingCountermeasure does not over-grant via getAllowedAreaIds and dual-role canEditSheet stays writable", () => {
+  const appCode = fs.readFileSync(path.resolve("app.js"), "utf8");
+  const pageCode = fs.readFileSync(path.resolve("modules/pages/five-s-findings-page.js"), "utf8");
+
+  const funcMatch = /function canManageFiveSFindingCountermeasure\(sheet, account = currentUser\) \{([\s\S]*?)\n {2}\}/.exec(appCode);
+  assert.ok(funcMatch, "canManageFiveSFindingCountermeasure must exist in app.js");
+  assert.ok(
+    !funcMatch[1].includes("getAllowedAreaIds("),
+    "canManageFiveSFindingCountermeasure must NOT shortcut via getAllowedAreaIds (which grants assessor/at5s all zones)"
+  );
+
+  assert.match(
+    pageCode,
+    /if \(canManageFindingCountermeasure\(ctx, sheet\) && !isAssessorOrAt5s\) return false;/,
+    "canEditSheet must allow dual-role AT5S/Assessor + Zone manager to edit issue details while keeping pure Zone managers countermeasure-only"
+  );
 });

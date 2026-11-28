@@ -108,7 +108,7 @@ function fixture() {
   return { root, authService, dataService, accounts: { utnt, assessor, admin }, getRecord: (id) => root.safetyRecords[id] };
 }
 
-test("Backend permission: utnt (zoneOwner) is rejected from creating a new safety record", async () => {
+test("Backend permission: utnt (zoneOwner) IS allowed to create a new safety record", async () => {
   const { authService, root, accounts } = fixture();
 
   const newSafetyRecord = {
@@ -128,17 +128,10 @@ test("Backend permission: utnt (zoneOwner) is rejected from creating a new safet
     value: newSafetyRecord,
   };
 
-  // utnt should be rejected with 403
-  await assert.rejects(
-    async () => {
-      authService.assertSafetyRecordWriteAllowed(root, accounts.utnt, command);
-    },
-    (err) => {
-      assert.equal(err.statusCode || err.status, 403);
-      assert.match(err.message, /không có quyền tạo mới báo cáo đánh giá an toàn/);
-      return true;
-    }
-  );
+  // utnt (Zone Owner) is allowed to create new safety records
+  assert.doesNotThrow(() => {
+    authService.assertSafetyRecordWriteAllowed(root, accounts.utnt, command);
+  });
 
   // Safety Assessor is allowed to create new safety records
   const assessorRecord = { ...newSafetyRecord, accountUsername: "assessor1" };
@@ -243,8 +236,8 @@ test("Desktop & Mobile permissions: canAddSafetyEvaluation and isSafetyAssessor 
   assert.ok(canAddMatch, "canAddSafetyEvaluation function found in app.js");
   vm.runInContext(canAddMatch[0], context);
 
-  // utnt: Zone Owner only -> CANNOT add safety evaluations, NOT safety assessor
-  assert.equal(vm.runInContext("canAddSafetyEvaluation(utnt)", context), false, "utnt cannot add safety evaluation");
+  // utnt: Zone Owner -> CAN add safety evaluations, NOT safety assessor
+  assert.equal(vm.runInContext("canAddSafetyEvaluation(utnt)", context), true, "utnt (zoneOwner) can add safety evaluation");
   assert.equal(vm.runInContext("isSafetyAssessor(utnt)", context), false, "utnt is not a safety assessor");
 
   // Assessor AT -> CAN add

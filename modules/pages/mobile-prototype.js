@@ -1249,16 +1249,18 @@
             foundChannel,
             issueFoundBy,
             employeeCode,
-            improvementContent,
-            actionOwner,
-            actionPlan,
-            completionDate, countermeasureDate, completedDate,
+            improvementContent: canEditCountermeasure ? improvementContent : (originalItem.improvementContent || ""),
+            actionOwner: canEditCountermeasure ? actionOwner : (originalItem.actionOwner || ""),
+            actionPlan: canEditCountermeasure ? actionPlan : (originalItem.actionPlan || ""),
+            completionDate: canEditCountermeasure ? completionDate : (cleanDateStr(originalItem.completionDate) || ""),
+            countermeasureDate: canEditCountermeasure ? countermeasureDate : (cleanDateStr(originalItem.countermeasureDate) || ""),
+            completedDate: canEditCountermeasure ? completedDate : (cleanDateStr(originalItem.completedDate) || ""),
             photoDataUrl: finalPhotoDataUrl,
             photoName: finalPhotoName,
             photoAnnotations: modalPhotoAnnotations,
-            afterPhotoDataUrl: finalAfterPhotoDataUrl,
-            afterPhotoName: finalAfterPhotoName,
-            afterPhotoAnnotations: modalAfterPhotoAnnotations,
+            afterPhotoDataUrl: canEditCountermeasure ? finalAfterPhotoDataUrl : (originalItem.afterPhotoDataUrl || ""),
+            afterPhotoName: canEditCountermeasure ? finalAfterPhotoName : (originalItem.afterPhotoName || ""),
+            afterPhotoAnnotations: canEditCountermeasure ? modalAfterPhotoAnnotations : (originalItem.afterPhotoAnnotations || []),
             updatedAt: now.toISOString(),
           };
 
@@ -1957,7 +1959,7 @@
     const canCreateOrEditSafety = checkSafetyPermission(context);
     const canEditSafetyCountermeasure = editingRecord
       ? (isAdmin || canManageSafetyCountermeasure(context, editingRecord))
-      : (isAdmin || (canCreateOrEditSafety && availableSafetyAreas.some((area) => canManageSafetyCountermeasure(context, { periodId: safetyPeriodId, areaId: area.id }))));
+      : isAdmin;
     const safetyIssueLockedAttr = canCreateOrEditSafety ? "" : "disabled";
     const safetyCountermeasureLockedAttr = canEditSafetyCountermeasure ? "" : "disabled";
 
@@ -2994,10 +2996,16 @@
           }
         }
 
-        let finalAfterPhotoDataUrl = uploadedSafetyAfterPhotoData;
-        let finalAfterPhotoName = "anh-sau-cai-tien.jpg";
-        const afterFile = afterFileInput?.files?.[0];
-        if ((afterFile || String(finalAfterPhotoDataUrl || "").startsWith("data:image/")) && typeof context?.prepareScorePhoto === "function") {
+        const canManageSubmittedCountermeasure = Boolean(
+          context?.isAdminAccount?.(user)
+          || (isEditing && existingRecord && canManageSafetyCountermeasure(context, existingRecord))
+        );
+        let finalAfterPhotoDataUrl = canManageSubmittedCountermeasure
+          ? uploadedSafetyAfterPhotoData
+          : (existingRecord?.afterPhotoDataUrl || "");
+        let finalAfterPhotoName = existingRecord?.afterPhotoName || "anh-sau-cai-tien.jpg";
+        const afterFile = canManageSubmittedCountermeasure ? afterFileInput?.files?.[0] : null;
+        if (canManageSubmittedCountermeasure && (afterFile || String(finalAfterPhotoDataUrl || "").startsWith("data:image/")) && typeof context?.prepareScorePhoto === "function") {
           try {
             const preparedAfter = await context.prepareScorePhoto(
               afterFile || null,
@@ -3048,15 +3056,15 @@
           employeeCode,
           issueItemLabel,
           foundChannel,
-          improvementContent,
-          afterPhotoDataUrl: finalAfterPhotoDataUrl,
-          afterPhotoName: finalAfterPhotoName,
-          afterPhotoAnnotations: pendingSafetyAfterPhotoAnnotations,
-          actionOwner,
-          actionPlan,
-          completionDate,
-          countermeasureDate,
-          completedDate,
+          improvementContent: canManageSubmittedCountermeasure ? improvementContent : (existingRecord?.improvementContent || ""),
+          afterPhotoDataUrl: canManageSubmittedCountermeasure ? finalAfterPhotoDataUrl : (existingRecord?.afterPhotoDataUrl || ""),
+          afterPhotoName: canManageSubmittedCountermeasure ? (finalAfterPhotoDataUrl ? finalAfterPhotoName : "") : (existingRecord?.afterPhotoName || ""),
+          afterPhotoAnnotations: canManageSubmittedCountermeasure ? pendingSafetyAfterPhotoAnnotations : (existingRecord?.afterPhotoAnnotations || []),
+          actionOwner: canManageSubmittedCountermeasure ? actionOwner : (existingRecord?.actionOwner || ""),
+          actionPlan: canManageSubmittedCountermeasure ? actionPlan : (existingRecord?.actionPlan || ""),
+          completionDate: canManageSubmittedCountermeasure ? completionDate : (cleanDateStr(existingRecord?.completionDate) || ""),
+          countermeasureDate: canManageSubmittedCountermeasure ? countermeasureDate : (cleanDateStr(existingRecord?.countermeasureDate) || ""),
+          completedDate: canManageSubmittedCountermeasure ? completedDate : (cleanDateStr(existingRecord?.completedDate) || ""),
           completionLevelConfirm: context?.getSafetyLevelConfirm?.({ issueLevel: level }) || "",
           completionStop6Confirm: context?.getSafetyStop6Confirm?.({ issueType: stop6 }) || "",
           scorerName: existingRecord?.scorerName || ownerName,

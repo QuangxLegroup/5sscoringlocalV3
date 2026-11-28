@@ -4,7 +4,7 @@
  * Khi mất mạng sẽ hiển thị trang offline thay vì lỗi trắng.
  */
 
-const CACHE_NAME = "legroup-5s-v179";
+const CACHE_NAME = "legroup-5s-v192";
 
 const STATIC_ASSETS = [
   "/",
@@ -63,16 +63,51 @@ self.addEventListener("activate", (event) => {
   self.clients.claim();
 });
 
-// Chiến lược: Network First (ưu tiên mạng, dùng cache khi offline)
-// API calls và non-GET requests luôn đi qua mạng, không cache
+// Chiến lược:
+// - Bỏ qua cross-origin (CDN font/icon) để máy mạng nội bộ không bị treo chờ SW.
+// - File ảnh tĩnh và file .js/.css có phiên bản ?v= ưu tiên trả từ cache ngay lập tức.
+// - Trang HTML và file không có ?v= ưu tiên mạng (Network First) để luôn nhận bản mới.
 self.addEventListener("fetch", (event) => {
   if (event.request.method !== "GET") {
     return;
   }
   const url = new URL(event.request.url);
+  if (url.origin !== self.location.origin) {
+    return;
+  }
 
   // Không cache API calls và file tải về (APK)
   if (url.pathname.startsWith("/api/") || url.pathname.startsWith("/downloads/")) {
+    return;
+  }
+
+  const isStaticImage = url.pathname.startsWith("/images/");
+  const isVersionedAsset = url.searchParams.has("v") && /\.(?:js|css)$/i.test(url.pathname);
+  if (isStaticImage || isVersionedAsset) {
+    event.respondWith(
+      caches.match(event.request).then((cached) => {
+        const networkFetch = fetch(event.request)
+          .then((response) => {
+            if (response.ok) {
+              const clone = response.clone();
+              caches.open(CACHE_NAME).then((cache) => cache.put(event.request, clone));
+            }
+            return response;
+          })
+          .catch(() => cached);
+        if (cached) {
+          if (isStaticImage) {
+            event.waitUntil(networkFetch);
+          }
+          return cached;
+        }
+        return networkFetch.then((response) => response || new Response("Offline", {
+          status: 503,
+          statusText: "Offline",
+          headers: { "Content-Type": "text/plain; charset=utf-8" },
+        }));
+      })
+    );
     return;
   }
 

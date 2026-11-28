@@ -324,6 +324,20 @@ class PostgresRepository {
   async readRootSnapshot({ cloneRoot = true } = {}) {
     if (!this.initialized) throw new Error("PostgreSQL repository chưa được khởi tạo.");
     for (let attempt = 0; attempt < 2; attempt += 1) {
+      if (this.rootCache !== null && this.rootRevision !== null) {
+        try {
+          const fastRevision = await this.pool.query("SELECT revision FROM app_revision WHERE singleton = true");
+          const revision = Number(fastRevision.rows[0]?.revision || 0);
+          if (this.rootCache && this.rootRevision === revision) {
+            return { root: cloneRoot ? clone(this.rootCache) : this.rootCache, revision };
+          }
+        } catch (error) {
+          if (isTransientPgConnectionError(error) && attempt === 0) {
+            continue;
+          }
+          throw error;
+        }
+      }
       const client = await this.pool.connect();
       let brokenClient = false;
       try {
@@ -454,7 +468,13 @@ class PostgresRepository {
   }
 
   async updateRootTransaction(mutator, options = {}) {
-    const { touchedRootKeys = null, touchedRecords = null, touchedRecordFields = null, immutableMutator = false } = options;
+    const {
+      touchedRootKeys = null,
+      touchedRecords = null,
+      touchedRecordFields = null,
+      immutableMutator = false,
+      cloneResult = true,
+    } = options;
     if (!this.initialized) throw new Error("PostgreSQL repository chưa được khởi tạo.");
     for (let attempt = 0; attempt < 2; attempt += 1) {
       const client = await this.pool.connect();
@@ -481,7 +501,7 @@ class PostgresRepository {
           this.rootCache = immutableMutator ? currentRoot : clone(currentRoot);
           this.rootRevision = currentRevision;
           if (options.compactResult) return { revision: currentRevision };
-          const root = clone(currentRoot);
+          const root = cloneResult ? clone(currentRoot) : this.rootCache;
           return options.includeRevision ? { root, revision: currentRevision } : root;
         }
 
@@ -493,7 +513,7 @@ class PostgresRepository {
         this.rootCache = nextRoot;
         this.rootRevision = revision;
         if (options.compactResult) return { revision };
-        const root = clone(nextRoot);
+        const root = cloneResult ? clone(nextRoot) : nextRoot;
         return options.includeRevision ? { root, revision } : root;
       } catch (error) {
         brokenClient = isTransientPgConnectionError(error);
@@ -519,8 +539,10 @@ class PostgresRepository {
     }
     const previousKeys = new Set(Object.keys(previousRoot || {}).filter((key) => !keysToPersist || keysToPersist.has(key)));
     const nextKeys = new Set(Object.keys(nextRoot || {}).filter((key) => !keysToPersist || keysToPersist.has(key)));
-    const periodsChanged = stableJson(previousRoot?.periods) !== stableJson(nextRoot?.periods);
-    const periodsById = periodIndexes(nextRoot);
+    const periodsChanged = (!keysToPersist || keysToPersist.has("periods"))
+      && stableJson(previousRoot?.periods) !== stableJson(nextRoot?.periods);
+    const needsPeriodIndex = [...nextKeys].some((key) => STRUCTURED_COLLECTIONS[key]?.periodAware);
+    const periodsById = needsPeriodIndex ? periodIndexes(nextRoot) : new Map();
 
     for (const key of previousKeys) {
       if (nextKeys.has(key)) continue;
@@ -536,16 +558,21 @@ class PostgresRepository {
       const structuredSpec = STRUCTURED_COLLECTIONS[key];
       const canStoreStructured = structuredSpec && (Array.isArray(value) || isPlainObject(value));
       if (canStoreStructured) {
-        await client.query("DELETE FROM app_root_values WHERE root_key = $1", [key]);
         const shape = Array.isArray(value) ? "array" : "object";
-        await client.query(
-          "INSERT INTO app_collection_shapes (collection, shape) VALUES ($1, $2) ON CONFLICT (collection) DO UPDATE SET shape = EXCLUDED.shape",
-          [key, shape],
-        );
+        const previousValue = previousRoot?.[key];
+        const previousShape = Array.isArray(previousValue) ? "array" : isPlainObject(previousValue) ? "object" : "";
+        const canSkipMetadataRefresh = previousShape === shape && Array.isArray(touchedRecords?.[key]) && !periodsChanged;
+        if (!canSkipMetadataRefresh) {
+          await client.query("DELETE FROM app_root_values WHERE root_key = $1", [key]);
+          await client.query(
+            "INSERT INTO app_collection_shapes (collection, shape) VALUES ($1, $2) ON CONFLICT (collection) DO UPDATE SET shape = EXCLUDED.shape",
+            [key, shape],
+          );
+        }
         await this.persistStructuredCollectionWithClient(
           client,
           key,
-          previousRoot?.[key],
+          previousValue,
           value,
           periodsChanged,
           periodsById,
@@ -601,6 +628,16 @@ class PostgresRepository {
     const spec = STRUCTURED_COLLECTIONS[collection];
     const record = asObject(entry.payload);
     const fieldSet = Array.isArray(changedFields) ? new Set(changedFields) : null;
+    if (previousPayload && fieldSet?.size && collection === "accounts"
+      && [...fieldSet].every((field) => ["activeSessionId", "activeSessionAt", "activeSessionExpiresAt", "activeSessionStartedAt"].includes(field))) {
+      const removedFields = [...fieldSet].filter((field) => !Object.prototype.hasOwnProperty.call(record, field) || record[field] === undefined);
+      const dataPatch = Object.fromEntries([...fieldSet].filter((field) => !removedFields.includes(field)).map((field) => [field, record[field]]));
+      await client.query(
+        "UPDATE accounts SET data = (data - $2::text[]) || $3::jsonb WHERE id = $1",
+        [entry.key, removedFields, JSON.stringify(dataPatch)],
+      );
+      return;
+    }
     if (previousPayload && fieldSet?.size && collection === "safetyRecords"
       && [...fieldSet].every((field) => ["photoAnnotations", "afterPhotoAnnotations", "updatedAt"].includes(field))) {
       const removedFields = [...fieldSet].filter((field) => !Object.prototype.hasOwnProperty.call(record, field) || record[field] === undefined);

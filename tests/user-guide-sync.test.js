@@ -69,3 +69,10 @@ test("styles.css includes styling for header-guide-btn and user-guide-viewer", (
   assert.match(css, /\.guide-viewer-tabs\s*\{[^}]*min-height:/, ".guide-viewer-tabs must have min-height to ensure tab buttons remain fully visible");
   assert.match(css, /\.user-guide-viewer-body\s*\{[^}]*min-height:\s*0/, ".user-guide-viewer-body must have min-height: 0 so flexbox allows internal scrolling");
 });
+
+test("admin-home-page.js opens desktop user guide viewer modal directly from home so closing returns to home", () => {
+  const homeJs = fs.readFileSync("modules/pages/admin-home-page.js", "utf8");
+  const guideBlock = homeJs.slice(homeJs.indexOf("#cyberHomeGuideBtn"), homeJs.indexOf("#cyberNavLinks"));
+  assert.ok(guideBlock.includes("openUserGuideViewerModal"), "Home guide button must call openUserGuideViewerModal");
+  assert.ok(!guideBlock.includes("openMobilePrototype"), "Home guide button must NOT launch Mobile Prototype");
+});

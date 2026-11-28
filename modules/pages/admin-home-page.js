@@ -294,9 +294,18 @@
 
     const homeGuideBtn = elements.adminHomeCards.querySelector("#cyberHomeGuideBtn");
     if (homeGuideBtn) {
-      homeGuideBtn.addEventListener("click", () => {
-        if (typeof window.openMobilePrototype === "function") {
-          window.openMobilePrototype("5s", context, { openHelp: true });
+      const openHomeGuide = () => {
+        if (typeof context?.openUserGuideViewerModal === "function") {
+          context.openUserGuideViewerModal("safety");
+        } else if (typeof window.openUserGuideViewerModal === "function") {
+          window.openUserGuideViewerModal("safety");
+        }
+      };
+      homeGuideBtn.addEventListener("click", openHomeGuide);
+      homeGuideBtn.addEventListener("keydown", (event) => {
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          openHomeGuide();
         }
       });
     }

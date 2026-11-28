@@ -58,3 +58,38 @@ test("App: Ban AT - 5S logic and synchronization", () => {
   // Verify updateCatalogPersonIdentity updates at5sMembers
   assert.match(appJs, /updates\[`at5sMembers\/\$\{member\.id\}`\] = member;/, "updateCatalogPersonIdentity must update at5sMembers");
 });
+
+test("Accounts tab: shows create account form directly on top, account list with permissions below, and hides employees who already have an account", () => {
+  const html = fs.readFileSync(path.join(__dirname, "..", "index.html"), "utf8");
+  const appJs = fs.readFileSync(path.join(__dirname, "..", "app.js"), "utf8");
+
+  const tabAccountsIdx = html.indexOf('id="tab-accounts"');
+  const tabGuideIdx = html.indexOf('id="tab-guide-setup"');
+  const accountsSection = html.slice(tabAccountsIdx, tabGuideIdx);
+
+  // 1. #account-scope-detail is directly visible (not hidden) with #account-form on top and #account-list below
+  assert.match(
+    accountsSection,
+    /id="account-scope-detail"[^>]*aria-label="Cấp tài khoản"(?![^>]*\bhidden\b)/,
+    "#account-scope-detail must be visible by default when entering #tab-accounts"
+  );
+  const formIdx = accountsSection.indexOf('id="account-form"');
+  const listIdx = accountsSection.indexOf('id="account-list"');
+  assert.ok(formIdx > 0 && listIdx > formIdx, "#account-form (Tạo tài khoản) must appear above #account-list (Danh sách tài khoản)");
+
+  // 2. populateAccountPersonOptions filters out employees who already have an account
+  assert.ok(
+    appJs.includes("function findExistingAccountForCatalogProfile("),
+    "app.js must define findExistingAccountForCatalogProfile"
+  );
+  assert.ok(
+    appJs.includes("!findExistingAccountForCatalogProfile(profile, allProfiles)"),
+    "populateAccountPersonOptions must exclude employees who already have an account"
+  );
+
+  // 3. Account list displays each account and its full permissions
+  assert.ok(
+    appJs.includes("function describeUnifiedAccountRolesAndZones("),
+    "app.js must define describeUnifiedAccountRolesAndZones to show all permissions of each account"
+  );
+});

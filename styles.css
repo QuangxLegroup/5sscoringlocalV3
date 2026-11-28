@@ -12739,10 +12739,6 @@ body.mobile-proto-open {
   line-height: 1.2;
 }
 
-#mobileSafetyForm .mobile-safety-issue-date-label {
-  color: #000 !important;
-}
-
 .required-star {
   color: #f43f5e;
 }
@@ -16817,10 +16813,6 @@ dialog.mobile-image-modal-fullscreen::backdrop {
   user-select: none;
 }
 
-.safety-vertical-form .safety-detected-date-label {
-  color: #000;
-}
-
 :is(.findings-vertical-form, .safety-vertical-form) .finding-form-label .required-star {
   color: #ef4444;
   font-weight: 700;
@@ -17003,6 +16995,16 @@ dialog.mobile-image-modal-fullscreen::backdrop {
 
 .findings-issue-modal.is-mobile-dark,
 .findings-issue-modal.is-mobile-dark :is(.modal-header, .modal-body, .modal-actions) { background: #0f172a; color: #f1f5f9; border-color: #334155; }
+.findings-issue-modal.is-mobile-dark .modal-header .icon-button {
+  background: #1e293b;
+  border-color: #334155;
+  color: #cbd5e1;
+}
+.findings-issue-modal.is-mobile-dark .modal-header .icon-button:hover {
+  background: #334155;
+  border-color: #475569;
+  color: #ffffff;
+}
 .findings-issue-modal.is-mobile-dark .modal-context { background: #1e293b; color: #cbd5e1; border-color: #334155; }
 .findings-issue-modal.is-mobile-dark .modal-context strong { color: #e2e8f0; }
 .findings-issue-modal.is-mobile-dark .findings-countermeasure-permission-note { border-color: #1d4ed8; background: #172554; color: #bfdbfe; }
@@ -17350,12 +17352,10 @@ dialog.mobile-image-modal-fullscreen::backdrop {
 .mobile-responsive-overlay.is-light-theme .findings-photo-editor,
 .mobile-responsive-overlay.is-light-theme .findings-mobile-photo-upload,
 .mobile-responsive-overlay.is-light-theme .findings-page .photo-edit-widget,
-body.theme-light .findings-photo-editor,
-[data-theme="light"] .findings-photo-editor,
-body.theme-light .findings-mobile-photo-upload,
-[data-theme="light"] .findings-mobile-photo-upload,
-body.theme-light .findings-issue-modal .photo-edit-widget,
-[data-theme="light"] .findings-issue-modal .photo-edit-widget {
+body.theme-light .findings-issue-modal:not(.is-mobile-dark) .photo-edit-widget,
+[data-theme="light"] .findings-issue-modal:not(.is-mobile-dark) .photo-edit-widget,
+body.theme-light #tab-five-s-findings .findings-photo-editor,
+[data-theme="light"] #tab-five-s-findings .findings-photo-editor {
   background: #ffffff !important;
   border: 2px dashed #cbd5e1 !important;
 }
@@ -17369,12 +17369,10 @@ body.theme-light .findings-issue-modal .photo-edit-widget,
 .mobile-responsive-overlay.is-light-theme .findings-photo-editor:hover,
 .mobile-responsive-overlay.is-light-theme .findings-mobile-photo-upload:hover,
 .mobile-responsive-overlay.is-light-theme .findings-page .photo-edit-widget:hover,
-body.theme-light .findings-photo-editor:hover,
-[data-theme="light"] .findings-photo-editor:hover,
-body.theme-light .findings-mobile-photo-upload:hover,
-[data-theme="light"] .findings-mobile-photo-upload:hover,
-body.theme-light .findings-issue-modal .photo-edit-widget:hover,
-[data-theme="light"] .findings-issue-modal .photo-edit-widget:hover {
+body.theme-light .findings-issue-modal:not(.is-mobile-dark) .photo-edit-widget:hover,
+[data-theme="light"] .findings-issue-modal:not(.is-mobile-dark) .photo-edit-widget:hover,
+body.theme-light #tab-five-s-findings .findings-photo-editor:hover,
+[data-theme="light"] #tab-five-s-findings .findings-photo-editor:hover {
   background: #f8fafc !important;
   border-color: #2563eb !important;
 }
@@ -17388,10 +17386,8 @@ body.theme-light .findings-issue-modal .photo-edit-widget:hover,
 .mobile-responsive-overlay.is-light-theme .findings-photo-editor .photo-icon-circle,
 .mobile-responsive-overlay.is-light-theme .findings-mobile-photo-upload .photo-icon-circle,
 .mobile-responsive-overlay.is-light-theme .findings-page .photo-edit-widget .photo-icon-circle,
-body.theme-light .findings-photo-editor .photo-icon-circle,
-[data-theme="light"] .findings-photo-editor .photo-icon-circle,
-body.theme-light .findings-mobile-photo-upload .photo-icon-circle,
-[data-theme="light"] .findings-mobile-photo-upload .photo-icon-circle {
+body.theme-light #tab-five-s-findings .findings-photo-editor .photo-icon-circle,
+[data-theme="light"] #tab-five-s-findings .findings-photo-editor .photo-icon-circle {
   background: #dbeafe !important;
   color: #2563eb !important;
 }
@@ -17405,10 +17401,8 @@ body.theme-light .findings-mobile-photo-upload .photo-icon-circle,
 .mobile-responsive-overlay.is-light-theme .findings-photo-editor .photo-primary-prompt,
 .mobile-responsive-overlay.is-light-theme .findings-mobile-photo-upload .photo-primary-prompt,
 .mobile-responsive-overlay.is-light-theme .findings-page .photo-edit-widget .photo-primary-prompt,
-body.theme-light .findings-photo-editor .photo-primary-prompt,
-[data-theme="light"] .findings-photo-editor .photo-primary-prompt,
-body.theme-light .findings-mobile-photo-upload .photo-primary-prompt,
-[data-theme="light"] .findings-mobile-photo-upload .photo-primary-prompt {
+body.theme-light #tab-five-s-findings .findings-photo-editor .photo-primary-prompt,
+[data-theme="light"] #tab-five-s-findings .findings-photo-editor .photo-primary-prompt {
   color: #1d4ed8 !important;
 }
 
@@ -17421,10 +17415,8 @@ body.theme-light .findings-mobile-photo-upload .photo-primary-prompt,
 .mobile-responsive-overlay.is-light-theme .findings-photo-editor .photo-sub-prompt,
 .mobile-responsive-overlay.is-light-theme .findings-mobile-photo-upload .photo-sub-prompt,
 .mobile-responsive-overlay.is-light-theme .findings-page .photo-edit-widget .photo-sub-prompt,
-body.theme-light .findings-photo-editor .photo-sub-prompt,
-[data-theme="light"] .findings-photo-editor .photo-sub-prompt,
-body.theme-light .findings-mobile-photo-upload .photo-sub-prompt,
-[data-theme="light"] .findings-mobile-photo-upload .photo-sub-prompt {
+body.theme-light #tab-five-s-findings .findings-photo-editor .photo-sub-prompt,
+[data-theme="light"] #tab-five-s-findings .findings-photo-editor .photo-sub-prompt {
   color: #64748b !important;
 }
 
@@ -17437,10 +17429,8 @@ body.theme-light .findings-mobile-photo-upload .photo-sub-prompt,
 .mobile-responsive-overlay.is-light-theme .findings-photo-editor .photo-action-chip,
 .mobile-responsive-overlay.is-light-theme .findings-mobile-photo-upload .photo-action-chip,
 .mobile-responsive-overlay.is-light-theme .findings-page .photo-edit-widget .photo-action-chip,
-body.theme-light .findings-photo-editor .photo-action-chip,
-[data-theme="light"] .findings-photo-editor .photo-action-chip,
-body.theme-light .findings-mobile-photo-upload .photo-action-chip,
-[data-theme="light"] .findings-mobile-photo-upload .photo-action-chip {
+body.theme-light #tab-five-s-findings .findings-photo-editor .photo-action-chip,
+[data-theme="light"] #tab-five-s-findings .findings-photo-editor .photo-action-chip {
   background: #e0f2fe !important;
   color: #0369a1 !important;
   border: 1px solid #bae6fd !important;
@@ -17455,10 +17445,8 @@ body.theme-light .findings-mobile-photo-upload .photo-action-chip,
 .mobile-responsive-overlay.is-light-theme .findings-photo-editor .photo-action-chip:hover,
 .mobile-responsive-overlay.is-light-theme .findings-mobile-photo-upload .photo-action-chip:hover,
 .mobile-responsive-overlay.is-light-theme .findings-page .photo-edit-widget .photo-action-chip:hover,
-body.theme-light .findings-photo-editor .photo-action-chip:hover,
-[data-theme="light"] .findings-photo-editor .photo-action-chip:hover,
-body.theme-light .findings-mobile-photo-upload .photo-action-chip:hover,
-[data-theme="light"] .findings-mobile-photo-upload .photo-action-chip:hover {
+body.theme-light #tab-five-s-findings .findings-photo-editor .photo-action-chip:hover,
+[data-theme="light"] #tab-five-s-findings .findings-photo-editor .photo-action-chip:hover {
   background: #2563eb !important;
   color: #ffffff !important;
   border-color: #2563eb !important;
@@ -17473,10 +17461,8 @@ body.theme-light .findings-mobile-photo-upload .photo-action-chip:hover,
 .mobile-responsive-overlay.is-light-theme .findings-photo-editor .photo-preview-wrap,
 .mobile-responsive-overlay.is-light-theme .findings-mobile-photo-upload .photo-preview-wrap,
 .mobile-responsive-overlay.is-light-theme .findings-page .photo-edit-widget .photo-preview-wrap,
-body.theme-light .findings-photo-editor .photo-preview-wrap,
-[data-theme="light"] .findings-photo-editor .photo-preview-wrap,
-body.theme-light .findings-mobile-photo-upload .photo-preview-wrap,
-[data-theme="light"] .findings-mobile-photo-upload .photo-preview-wrap {
+body.theme-light #tab-five-s-findings .findings-photo-editor .photo-preview-wrap,
+[data-theme="light"] #tab-five-s-findings .findings-photo-editor .photo-preview-wrap {
   background: transparent !important;
   border-color: transparent !important;
 }
@@ -17490,10 +17476,8 @@ body.theme-light .findings-mobile-photo-upload .photo-preview-wrap,
 .mobile-responsive-overlay.is-light-theme .findings-photo-editor .photo-preview-img,
 .mobile-responsive-overlay.is-light-theme .findings-mobile-photo-upload .photo-preview-img,
 .mobile-responsive-overlay.is-light-theme .findings-page .photo-edit-widget .photo-preview-img,
-body.theme-light .findings-photo-editor .photo-preview-img,
-[data-theme="light"] .findings-photo-editor .photo-preview-img,
-body.theme-light .findings-mobile-photo-upload .photo-preview-img,
-[data-theme="light"] .findings-mobile-photo-upload .photo-preview-img {
+body.theme-light #tab-five-s-findings .findings-photo-editor .photo-preview-img,
+[data-theme="light"] #tab-five-s-findings .findings-photo-editor .photo-preview-img {
   background: #ffffff !important;
   border: 1px solid #cbd5e1 !important;
 }
@@ -26108,4 +26092,275 @@ body.theme-dark:has(#tab-home.is-active) .user-guide-viewer-backdrop .mobile-use
 body.theme-dark:has(#tab-home.is-active) .user-guide-viewer-backdrop .user-guide-viewer-footer {
   background: #081330 !important;
   border-top: 1px solid rgba(56, 189, 248, 0.2) !important;
+}
+
+/* ==========================================================================
+   OFFLINE-ONLY LAN ICON FALLBACKS (ACTIVATED ONLY IF FONT AWESOME CDN FAILS)
+   Never overrides Font Awesome 6.4.0 when loaded; prevents blank boxes offline.
+   ========================================================================== */
+html.fa-offline .fa-solid,
+html.fa-offline .fa-regular,
+html.fa-offline .fas,
+html.fa-offline .far {
+  font-style: normal;
+  font-weight: 700;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+}
+
+html.fa-offline .fa-xmark::before { content: "\00D7"; }
+html.fa-offline .fa-plus::before { content: "+"; }
+html.fa-offline .fa-minus::before { content: "\2212"; }
+html.fa-offline .fa-check::before,
+html.fa-offline .fa-circle-check::before { content: "\2713"; }
+html.fa-offline .fa-chevron-down::before { content: "\25BE"; }
+html.fa-offline .fa-chevron-right::before { content: "\25B8"; }
+html.fa-offline .fa-arrow-up::before { content: "\2191"; }
+html.fa-offline .fa-arrow-down::before { content: "\2193"; }
+html.fa-offline .fa-arrow-right::before { content: "\2192"; }
+html.fa-offline .fa-arrow-right-from-bracket::before { content: "\21B3"; }
+html.fa-offline .fa-arrows-rotate::before,
+html.fa-offline .fa-spinner::before { content: "\21BB"; }
+html.fa-offline .fa-rotate-left::before { content: "\21BA"; }
+html.fa-offline .fa-arrow-trend-up::before { content: "\2197"; }
+html.fa-offline .fa-arrow-pointer::before { content: "\25B9"; }
+html.fa-offline .fa-play::before { content: "\25B6"; }
+html.fa-offline .fa-pause::before { content: "\23F8"; }
+html.fa-offline .fa-backward-step::before { content: "\23EE"; }
+html.fa-offline .fa-forward-step::before { content: "\23ED"; }
+html.fa-offline .fa-circle::before { content: "\25CF"; }
+html.fa-offline .fa-circle-dot::before { content: "\25C9"; }
+html.fa-offline .fa-square::before { content: "\25A1"; }
+html.fa-offline .fa-grip-vertical::before { content: "\22EE"; }
+html.fa-offline .fa-percent::before { content: "%"; }
+html.fa-offline .fa-font::before { content: "T"; font-family: Georgia, serif; }
+html.fa-offline .fa-circle-question::before { content: "?"; }
+html.fa-offline .fa-circle-exclamation::before,
+html.fa-offline .fa-triangle-exclamation::before { content: "!"; }
+html.fa-offline .fa-circle-half-stroke::before { content: "\25D0"; font-weight: 400; }
+html.fa-offline .fa-sun::before { content: "\2600"; font-weight: 400; }
+html.fa-offline .fa-moon::before { content: "\263E"; font-weight: 400; }
+html.fa-offline .fa-envelope::before { content: "\2709"; font-weight: 400; }
+html.fa-offline .fa-pen::before,
+html.fa-offline .fa-pen-to-square::before { content: "\270E"; font-weight: 400; }
+html.fa-offline .fa-paper-plane::before { content: "\27A4"; font-weight: 400; }
+html.fa-offline .fa-wrench::before,
+html.fa-offline .fa-sliders::before { content: "\2699"; font-weight: 400; }
+html.fa-offline .fa-expand::before { content: "\26F6"; font-weight: 400; }
+html.fa-offline .fa-compress::before { content: "\2922"; font-weight: 400; }
+html.fa-offline .fa-bell::before { content: "\1F514"; font-weight: 400; }
+html.fa-offline .fa-camera::before { content: "\1F4F7"; font-weight: 400; }
+html.fa-offline .fa-image::before { content: "\1F5BC"; font-weight: 400; }
+html.fa-offline .fa-trash-can::before { content: "\1F5D1"; font-weight: 400; }
+html.fa-offline .fa-floppy-disk::before { content: "\1F4BE"; font-weight: 400; }
+html.fa-offline .fa-lock::before { content: "\1F512"; font-weight: 400; }
+html.fa-offline .fa-eye::before { content: "\1F441"; font-weight: 400; }
+html.fa-offline .fa-magnifying-glass::before { content: "\1F50D"; font-weight: 400; }
+html.fa-offline .fa-calendar::before,
+html.fa-offline .fa-calendar-days::before,
+html.fa-offline .fa-calendar-check::before { content: "\1F4C5"; font-weight: 400; }
+html.fa-offline .fa-clock::before,
+html.fa-offline .fa-clock-rotate-left::before { content: "\23F0"; font-weight: 400; }
+html.fa-offline .fa-clipboard-check::before,
+html.fa-offline .fa-clipboard-list::before,
+html.fa-offline .fa-list-check::before { content: "\1F4CB"; font-weight: 400; }
+html.fa-offline .fa-shield-check::before,
+html.fa-offline .fa-shield-halved::before,
+html.fa-offline .fa-shield-virus::before { content: "\1F6E1"; font-weight: 400; }
+html.fa-offline .fa-file-excel::before,
+html.fa-offline .fa-file-pdf::before { content: "\1F4C4"; font-weight: 400; }
+html.fa-offline .fa-folder-tree::before,
+html.fa-offline .fa-sitemap::before { content: "\1F4C2"; font-weight: 400; }
+html.fa-offline .fa-tv::before { content: "\1F4FA"; font-weight: 400; }
+html.fa-offline .fa-mobile-screen-button::before { content: "\1F4F1"; font-weight: 400; }
+html.fa-offline .fa-user-plus::before,
+html.fa-offline .fa-user-gear::before,
+html.fa-offline .fa-user-check::before,
+html.fa-offline .fa-user-shield::before { content: "\1F464"; font-weight: 400; }
+html.fa-offline .fa-building::before,
+html.fa-offline .fa-building-user::before { content: "\1F3E2"; font-weight: 400; }
+html.fa-offline .fa-industry::before { content: "\1F3ED"; font-weight: 400; }
+html.fa-offline .fa-bullseye::before { content: "\1F3AF"; font-weight: 400; }
+html.fa-offline .fa-chart-column::before,
+html.fa-offline .fa-chart-line::before,
+html.fa-offline .fa-chart-pie::before,
+html.fa-offline .fa-chart-simple::before { content: "\1F4CA"; font-weight: 400; }
+html.fa-offline .fa-location-dot::before { content: "\1F4CD"; font-weight: 400; }
+html.fa-offline .fa-copy::before { content: "\1F4C4"; font-weight: 400; }
+html.fa-offline .fa-eraser::before { content: "\232B"; font-weight: 400; }
+html.fa-offline .fa-hand::before,
+html.fa-offline .fa-hand-pointer::before { content: "\270B"; font-weight: 400; }
+html.fa-offline .fa-table-cells::before,
+html.fa-offline .fa-layer-group::before,
+html.fa-offline .fa-cubes-stacked::before { content: "\25A6"; font-weight: 400; }
+html.fa-offline .fa-gauge-high::before,
+html.fa-offline .fa-compass::before { content: "\25CE"; font-weight: 400; }
+html.fa-offline .fa-ranking-star::before { content: "\2605"; font-weight: 400; }
+
+
+/* ==========================================================================
+   DARK MOBILE MODAL & PHOTO BOX ISOLATION (PREVENTS LIGHT-THEME LEAKS)
+   Ensures dark mobile photo upload boxes (editable & disabled) and modal close
+   buttons always stay dark even when the desktop app shell uses data-theme="light".
+   ========================================================================== */
+:root[data-theme="light"] .findings-issue-modal.is-mobile-dark .modal-header .icon-button,
+body.theme-light .findings-issue-modal.is-mobile-dark .modal-header .icon-button {
+  background: #1e293b !important;
+  border-color: #334155 !important;
+  color: #cbd5e1 !important;
+}
+
+:root[data-theme="light"] .findings-issue-modal.is-mobile-dark .modal-header .icon-button:hover,
+body.theme-light .findings-issue-modal.is-mobile-dark .modal-header .icon-button:hover {
+  background: #334155 !important;
+  border-color: #475569 !important;
+  color: #ffffff !important;
+}
+
+:root[data-theme="light"] .findings-issue-modal.is-mobile-dark .photo-edit-widget,
+body.theme-light .findings-issue-modal.is-mobile-dark .photo-edit-widget,
+:root[data-theme="light"] .findings-issue-modal.is-mobile-dark .findings-mobile-photo-upload,
+body.theme-light .findings-issue-modal.is-mobile-dark .findings-mobile-photo-upload,
+:root[data-theme="light"] .mobile-responsive-overlay:not(.is-light-theme) .photo-edit-widget,
+body.theme-light .mobile-responsive-overlay:not(.is-light-theme) .photo-edit-widget,
+:root[data-theme="light"] .mobile-responsive-overlay:not(.is-light-theme) .findings-mobile-photo-upload,
+body.theme-light .mobile-responsive-overlay:not(.is-light-theme) .findings-mobile-photo-upload {
+  background: rgba(15, 23, 42, 0.72) !important;
+  border: 2px dashed #334155 !important;
+}
+
+:root[data-theme="light"] .findings-issue-modal.is-mobile-dark .photo-edit-widget:hover,
+body.theme-light .findings-issue-modal.is-mobile-dark .photo-edit-widget:hover,
+:root[data-theme="light"] .mobile-responsive-overlay:not(.is-light-theme) .photo-edit-widget:hover,
+body.theme-light .mobile-responsive-overlay:not(.is-light-theme) .photo-edit-widget:hover {
+  background: rgba(30, 41, 59, 0.78) !important;
+  border-color: #3b82f6 !important;
+}
+
+:root[data-theme="light"] .findings-issue-modal.is-mobile-dark .photo-edit-widget .photo-icon-circle,
+body.theme-light .findings-issue-modal.is-mobile-dark .photo-edit-widget .photo-icon-circle,
+:root[data-theme="light"] .mobile-responsive-overlay:not(.is-light-theme) .photo-edit-widget .photo-icon-circle,
+body.theme-light .mobile-responsive-overlay:not(.is-light-theme) .photo-edit-widget .photo-icon-circle {
+  background: rgba(59, 130, 246, 0.16) !important;
+  color: #60a5fa !important;
+}
+
+:root[data-theme="light"] .findings-issue-modal.is-mobile-dark .photo-edit-widget .photo-primary-prompt,
+body.theme-light .findings-issue-modal.is-mobile-dark .photo-edit-widget .photo-primary-prompt,
+:root[data-theme="light"] .mobile-responsive-overlay:not(.is-light-theme) .photo-edit-widget .photo-primary-prompt,
+body.theme-light .mobile-responsive-overlay:not(.is-light-theme) .photo-edit-widget .photo-primary-prompt {
+  color: #e2e8f0 !important;
+}
+
+:root[data-theme="light"] .findings-issue-modal.is-mobile-dark .photo-edit-widget .photo-sub-prompt,
+body.theme-light .findings-issue-modal.is-mobile-dark .photo-edit-widget .photo-sub-prompt,
+:root[data-theme="light"] .mobile-responsive-overlay:not(.is-light-theme) .photo-edit-widget .photo-sub-prompt,
+body.theme-light .mobile-responsive-overlay:not(.is-light-theme) .photo-edit-widget .photo-sub-prompt {
+  color: #94a3b8 !important;
+}
+
+:root[data-theme="light"] .findings-issue-modal.is-mobile-dark .photo-edit-widget .photo-action-chip,
+body.theme-light .findings-issue-modal.is-mobile-dark .photo-edit-widget .photo-action-chip,
+:root[data-theme="light"] .mobile-responsive-overlay:not(.is-light-theme) .photo-edit-widget .photo-action-chip,
+body.theme-light .mobile-responsive-overlay:not(.is-light-theme) .photo-edit-widget .photo-action-chip {
+  background: #1e293b !important;
+  color: #60a5fa !important;
+  border: 1px solid #334155 !important;
+}
+
+:root[data-theme="light"] .findings-issue-modal.is-mobile-dark .photo-edit-widget .photo-preview-img,
+body.theme-light .findings-issue-modal.is-mobile-dark .photo-edit-widget .photo-preview-img,
+:root[data-theme="light"] .mobile-responsive-overlay:not(.is-light-theme) .photo-edit-widget .photo-preview-img,
+body.theme-light .mobile-responsive-overlay:not(.is-light-theme) .photo-edit-widget .photo-preview-img {
+  background: #0f172a !important;
+  border: 1px solid #334155 !important;
+}
+
+:root[data-theme="light"] .findings-issue-modal.is-mobile-dark .photo-upload-box.is-disabled,
+:root[data-theme="light"] .findings-issue-modal.is-mobile-dark .photo-upload-box:has(.photo-file-input:disabled),
+body.theme-light .findings-issue-modal.is-mobile-dark .photo-upload-box.is-disabled,
+body.theme-light .findings-issue-modal.is-mobile-dark .photo-upload-box:has(.photo-file-input:disabled),
+:root[data-theme="light"] .mobile-responsive-overlay:not(.is-light-theme) .photo-upload-box.is-disabled,
+:root[data-theme="light"] .mobile-responsive-overlay:not(.is-light-theme) .photo-upload-box:has(.photo-file-input:disabled),
+body.theme-light .mobile-responsive-overlay:not(.is-light-theme) .photo-upload-box.is-disabled,
+body.theme-light .mobile-responsive-overlay:not(.is-light-theme) .photo-upload-box:has(.photo-file-input:disabled),
+.findings-issue-modal.is-mobile-dark .photo-upload-box.is-disabled,
+.findings-issue-modal.is-mobile-dark .photo-upload-box:has(.photo-file-input:disabled),
+.mobile-responsive-overlay:not(.is-light-theme) .photo-upload-box.is-disabled,
+.mobile-responsive-overlay:not(.is-light-theme) .photo-upload-box:has(.photo-file-input:disabled) {
+  background: rgba(15, 23, 42, 0.45) !important;
+  border: 2px dashed #1e293b !important;
+  cursor: not-allowed !important;
+  opacity: 0.78 !important;
+}
+
+:root[data-theme="light"] .findings-issue-modal.is-mobile-dark .photo-upload-box.is-disabled .photo-icon-circle,
+:root[data-theme="light"] .findings-issue-modal.is-mobile-dark .photo-upload-box:has(.photo-file-input:disabled) .photo-icon-circle,
+body.theme-light .findings-issue-modal.is-mobile-dark .photo-upload-box.is-disabled .photo-icon-circle,
+body.theme-light .findings-issue-modal.is-mobile-dark .photo-upload-box:has(.photo-file-input:disabled) .photo-icon-circle,
+:root[data-theme="light"] .mobile-responsive-overlay:not(.is-light-theme) .photo-upload-box.is-disabled .photo-icon-circle,
+:root[data-theme="light"] .mobile-responsive-overlay:not(.is-light-theme) .photo-upload-box:has(.photo-file-input:disabled) .photo-icon-circle,
+body.theme-light .mobile-responsive-overlay:not(.is-light-theme) .photo-upload-box.is-disabled .photo-icon-circle,
+body.theme-light .mobile-responsive-overlay:not(.is-light-theme) .photo-upload-box:has(.photo-file-input:disabled) .photo-icon-circle {
+  background: rgba(51, 65, 85, 0.45) !important;
+  color: #64748b !important;
+}
+
+:root[data-theme="light"] .findings-issue-modal.is-mobile-dark .photo-upload-box.is-disabled .photo-primary-prompt,
+:root[data-theme="light"] .findings-issue-modal.is-mobile-dark .photo-upload-box:has(.photo-file-input:disabled) .photo-primary-prompt,
+body.theme-light .findings-issue-modal.is-mobile-dark .photo-upload-box.is-disabled .photo-primary-prompt,
+body.theme-light .findings-issue-modal.is-mobile-dark .photo-upload-box:has(.photo-file-input:disabled) .photo-primary-prompt,
+:root[data-theme="light"] .mobile-responsive-overlay:not(.is-light-theme) .photo-upload-box.is-disabled .photo-primary-prompt,
+:root[data-theme="light"] .mobile-responsive-overlay:not(.is-light-theme) .photo-upload-box:has(.photo-file-input:disabled) .photo-primary-prompt,
+body.theme-light .mobile-responsive-overlay:not(.is-light-theme) .photo-upload-box.is-disabled .photo-primary-prompt,
+body.theme-light .mobile-responsive-overlay:not(.is-light-theme) .photo-upload-box:has(.photo-file-input:disabled) .photo-primary-prompt {
+  color: #64748b !important;
+}
+
+:root[data-theme="light"] .findings-issue-modal.is-mobile-dark .photo-upload-box.is-disabled .photo-action-chip,
+:root[data-theme="light"] .findings-issue-modal.is-mobile-dark .photo-upload-box:has(.photo-file-input:disabled) .photo-action-chip,
+body.theme-light .findings-issue-modal.is-mobile-dark .photo-upload-box.is-disabled .photo-action-chip,
+body.theme-light .findings-issue-modal.is-mobile-dark .photo-upload-box:has(.photo-file-input:disabled) .photo-action-chip,
+:root[data-theme="light"] .mobile-responsive-overlay:not(.is-light-theme) .photo-upload-box.is-disabled .photo-action-chip,
+:root[data-theme="light"] .mobile-responsive-overlay:not(.is-light-theme) .photo-upload-box:has(.photo-file-input:disabled) .photo-action-chip,
+body.theme-light .mobile-responsive-overlay:not(.is-light-theme) .photo-upload-box.is-disabled .photo-action-chip,
+body.theme-light .mobile-responsive-overlay:not(.is-light-theme) .photo-upload-box:has(.photo-file-input:disabled) .photo-action-chip {
+  background: rgba(30, 41, 59, 0.65) !important;
+  border-color: #334155 !important;
+  color: #64748b !important;
+}
+
+.findings-issue-modal.is-readonly .modal-actions-right > [type="submit"] {
+  display: none !important;
+}
+
+/* Unified top-to-bottom layout on #tab-accounts: Create form on top, Account list below */
+#tab-accounts .accounts-stacked-layout {
+  display: grid;
+  grid-template-columns: 1fr !important;
+  gap: 16px;
+}
+
+#tab-accounts .account-create-panel #account-form {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(240px, 1fr));
+  gap: 12px 16px;
+  align-items: end;
+}
+
+#tab-accounts .account-create-panel #account-form > button[type="submit"] {
+  grid-column: 1 / -1;
+  justify-self: start;
+  min-width: 180px;
+}
+
+@media (max-width: 768px) {
+  #tab-accounts .account-create-panel #account-form {
+    grid-template-columns: 1fr;
+  }
+  #tab-accounts .account-create-panel #account-form > button[type="submit"] {
+    width: 100%;
+  }
 }

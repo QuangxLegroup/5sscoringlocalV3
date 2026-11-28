@@ -258,6 +258,7 @@ public class MainActivity extends AppCompatActivity {
         CookieManager cookieManager = CookieManager.getInstance();
         cookieManager.setAcceptCookie(true);
         cookieManager.setAcceptThirdPartyCookies(webView, true);
+        webView.setNetworkAvailable(true);
 
         webView.addJavascriptInterface(new AndroidBridge(), "LeGroupAndroid");
 
@@ -850,6 +851,14 @@ public class MainActivity extends AppCompatActivity {
     protected void onSaveInstanceState(@NonNull Bundle outState) {
         super.onSaveInstanceState(outState);
         webView.saveState(outState);
+    }
+
+    @Override
+    protected void onResume() {
+        super.onResume();
+        if (webView != null) {
+            webView.setNetworkAvailable(true);
+        }
     }
 
     @Override

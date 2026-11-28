@@ -85,7 +85,12 @@
     if (ctx.isAdminAccount(ctx.currentUser)) return true;
     const periodId = resolvePeriodId(sheet, ctx.getPeriodsByType(ctx.FIVE_S_PERIOD_TYPE));
     if (!periodId || !ctx.getPeriod(periodId)) return false;
-    if (canManageFindingCountermeasure(ctx, sheet)) return false;
+    const isAssessorOrAt5s = Boolean(
+      ctx.hasAt5sRole?.(ctx.currentUser)
+      || (ctx.hasAccountAccessType?.(ctx.currentUser, ctx.FIVE_S_PERIOD_TYPE)
+        && ctx.getAccountRolesForType?.(ctx.currentUser, ctx.FIVE_S_PERIOD_TYPE, periodId)?.includes?.("assessor5s"))
+    );
+    if (canManageFindingCountermeasure(ctx, sheet) && !isAssessorOrAt5s) return false;
     if (!canEditPeriod(ctx, periodId)) return false;
     const areas = editableAreas(ctx, periodId);
     return Boolean(ctx.hasAt5sRole?.(ctx.currentUser)) || Boolean(resolveAreaId(sheet, areas));
@@ -976,7 +981,11 @@
       if (!data.rows.some((row) => row.problem)) return message(host, "Vui lòng nhập ít nhất một vấn đề phát hiện.", true);
       if (data.rows.some((row) => !row.problem && fields.some((key) => key !== "progress" && row[key]))) return message(host, "Vui lòng nhập vấn đề cho các dòng đã có thông tin.", true);
       if (view.addingIssues) {
-        const target = findMatchingSheet(ctx, data.periodId, data.areaId, data.inspector, data.inspectionDate);
+        const targetCandidate = findMatchingSheet(ctx, data.periodId, data.areaId, data.inspector, data.inspectionDate);
+        const managerCannotEditExistingSheet = targetCandidate
+          && canManageFindingCountermeasure(ctx, targetCandidate)
+          && !canEditSheet(ctx, targetCandidate);
+        const target = managerCannotEditExistingSheet ? null : targetCandidate;
         if (target) {
           if (!canEditSheet(ctx, target)) return message(host, "Bạn chỉ được thêm vấn đề cho Zone được phân công.", true);
           data = { ...clone(target), periodId: data.periodId, areaId: data.areaId, area: data.area, rows: defaultRows([...(target.rows || []).filter(rowHasContent), ...data.rows.filter(rowHasContent)]) };
@@ -1593,14 +1602,11 @@
     };
 
     let saving = false;
-    const isLightModal = Boolean(
+    const isMobileLight = Boolean(
       host?.closest?.(".is-light-theme") ||
-      document.querySelector(".mobile-responsive-overlay")?.classList?.contains("is-light-theme") ||
-      document.documentElement.classList.contains("theme-light") ||
-      document.body.classList.contains("theme-light") ||
-      document.documentElement.getAttribute("data-theme") === "light" ||
-      (typeof window.getAppTheme === "function" && window.getAppTheme() === "light")
+      document.querySelector(".mobile-responsive-overlay")?.classList?.contains("is-light-theme")
     );
+    const isMobileDark = mobile && !isMobileLight;
     const beforePhotoEditable = fullWritable;
     const beforePhotoHtml = mobile
       ? mobilePhotoEditor(row, beforePhotoEditable, esc, { sheetId: record?.id, rowIndex, editable: beforePhotoEditable })
@@ -1623,8 +1629,9 @@
       getDraftSnapshot: captureFindingSnapshot,
       isDraftDirty: isFindingModalDirty,
       extraRightActions: mobile && editing && fullWritable ? '<button type="button" class="danger-button" data-delete-issue-modal>Xóa vấn đề</button>' : "",
-      modalClass: `findings-issue-modal${mobile ? " is-mobile-detail" : ""}${mobile ? (isMobileDark ? " is-mobile-dark" : " is-light-theme") : " is-light-theme"}`,
+      modalClass: `findings-issue-modal${mobile ? " is-mobile-detail" : ""}${!writable ? " is-readonly" : ""}${mobile ? (isMobileDark ? " is-mobile-dark" : " is-light-theme") : " is-light-theme"}`,
       html: `<div class="modal-context"><span><strong>Kỳ:</strong> ${esc(ctx.periodLabel(ctx.getPeriod(periodId)))}</span><span><strong>Nguồn:</strong> Vấn đề 5S</span></div>
+        ${!writable ? '<p class="findings-readonly" role="status">Chỉ xem — bạn có thể xem chi tiết và đối sách nhưng không có quyền chỉnh sửa vấn đề 5S của Zone này.</p>' : ""}
         ${countermeasureOnly ? '<p class="findings-countermeasure-permission-note">Bạn được cập nhật biện pháp khắc phục, ảnh sau xử lý, hạn hoàn thành và tiến độ của Zone này.</p>' : ""}
         ${!editing && !isAdmin ? '<p class="findings-countermeasure-permission-note">Đối sách khắc phục, ảnh sau xử lý, hạn và tiến độ sẽ do quản lý Zone hoặc Admin cập nhật sau khi tiếp nhận.</p>' : ""}
         <div class="findings-page">

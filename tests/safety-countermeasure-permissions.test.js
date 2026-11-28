@@ -112,3 +112,70 @@ test("an assessor who owns the report can edit issue details but cannot change i
     value: { note: "Updated issue description" },
   }, { account, rawAccount: account });
 });
+
+test("non-admin cannot fill countermeasure fields when creating a new safety evaluation, while Zone manager can reply after creation", async () => {
+  const { service, accounts } = fixture();
+  const assessor = accounts.assessorNga;
+  const manager10 = accounts.manager10;
+
+  // 1. Assessor creating new safety record WITH countermeasure fields -> REJECTED (403)
+  await assert.rejects(
+    service.writeData({
+      operation: "set",
+      path: "safetyRecords/new-with-cm",
+      value: {
+        id: "new-with-cm",
+        periodId,
+        areaId: "zone10",
+        note: "Dầu tràn sàn",
+        issueStatus: "open",
+        issueCount: 1,
+        accountUsername: assessor.username,
+        improvementContent: "Tự điền đối sách khi tạo",
+        actionOwner: "PIC A",
+        actionPlan: "Lau ngay",
+        completionDate: "2026-10-25",
+      },
+    }, { account: assessor, rawAccount: assessor }),
+    { statusCode: 403 }
+  );
+
+  // 2. Assessor creating new safety record WITHOUT countermeasure fields -> ALLOWED
+  await service.writeData({
+    operation: "set",
+    path: "safetyRecords/new-clean",
+    value: {
+      id: "new-clean",
+      periodId,
+      areaId: "zone10",
+      note: "Dầu tràn sàn",
+      issueStatus: "open",
+      issueCount: 1,
+      accountUsername: assessor.username,
+      improvementContent: "",
+      afterPhotoDataUrl: "",
+      actionOwner: "",
+      actionPlan: "",
+      completionDate: "",
+    },
+  }, { account: assessor, rawAccount: assessor });
+
+  // 3. Zone 10 Manager can now answer all 5 countermeasure fields on that record
+  await service.writeData({
+    operation: "update",
+    path: "safetyRecords/new-clean",
+    value: {
+      improvementContent: "Đã vệ sinh sạch và đặt khay hứng dầu",
+      improvementResponseBy: manager10.id,
+      improvementResponseAt: "2026-10-22T09:00:00.000Z",
+      improvementResponsePreviousStatus: "open",
+      issueStatus: "closed",
+      afterPhotoDataUrl: "data:image/png;base64,after",
+      afterPhotoName: "after.png",
+      actionOwner: "Mr Cuong",
+      actionPlan: "Kiểm tra hàng ngày",
+      completionDate: "2026-10-23",
+      updatedAt: "2026-10-22T09:00:00.000Z",
+    },
+  }, { account: manager10, rawAccount: manager10 });
+});

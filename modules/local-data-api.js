@@ -13,12 +13,6 @@
   const OFFLINE_ROOT_KEY = "root";
   const OFFLINE_SYNC_INTERVAL_MS = 12000;
   const CONNECTION_LOST_MESSAGE = "Mất kết nối máy chủ. Dữ liệu đã lưu trên thiết bị và sẽ tự đồng bộ khi có mạng.";
-  const VOLATILE_ACCOUNT_FIELDS = new Set([
-    "activeSessionId",
-    "activeSessionAt",
-    "activeSessionExpiresAt",
-    "activeSessionStartedAt",
-  ]);
 
   let rootCache = null;
   let rootSignature = "";
@@ -32,6 +26,12 @@
   let pollAgainRequested = false;
   let consecutivePollFailures = 0;
   let activePollController = null;
+  let lastPollAt = 0;
+  let lastRootFetchedAt = 0;
+  let streamHadError = false;
+  let serverReachable = true;
+  let hiddenSince = 0;
+  let resumeSettleTimer = 0;
   let offlineSyncing = false;
   let onlineWriteInProgress = false;
   const recentOwnDataWriteIds = new Map();
@@ -320,6 +320,15 @@
     if (shouldNotify) notifyAll();
   }
 
+  async function restoreLocalRoot(fallbackRoot) {
+    const pendingCommands = await getQueuedCommands().catch(() => []);
+    rememberRoot(applyQueuedWritesToRoot(fallbackRoot || {}, pendingCommands), {
+      signature: false,
+      persist: !pendingCommands.length,
+    });
+    notifyAll();
+  }
+
   async function restoreAfterRejectedWrite(fallbackRoot) {
     const pendingCommands = await getQueuedCommands();
     try {
@@ -381,10 +390,35 @@
     return String(text.length) + ":" + (hash >>> 0).toString(36);
   }
 
+  function stripVolatileAccountFields(account) {
+    if (!account || typeof account !== "object") {
+      return account;
+    }
+    const {
+      activeSessionId,
+      activeSessionAt,
+      activeSessionExpiresAt,
+      activeSessionStartedAt,
+      ...stableAccount
+    } = account;
+    return stableAccount;
+  }
+
   function signatureForRoot(root) {
-    return signatureForText(JSON.stringify(root && typeof root === "object" ? root : null, (key, value) => (
-      VOLATILE_ACCOUNT_FIELDS.has(key) ? undefined : value
-    )));
+    if (!root || typeof root !== "object") {
+      return signatureForText("null");
+    }
+    let normalized = root;
+    if (Array.isArray(root.accounts)) {
+      normalized = { ...root, accounts: root.accounts.map(stripVolatileAccountFields) };
+    } else if (isPlainObject(root.accounts)) {
+      const accounts = {};
+      Object.entries(root.accounts).forEach(([id, account]) => {
+        accounts[id] = stripVolatileAccountFields(account);
+      });
+      normalized = { ...root, accounts };
+    }
+    return signatureForText(JSON.stringify(normalized));
   }
 
   function rememberDataRevision(revision) {
@@ -478,7 +512,7 @@
     }
 
     await withOfflineStore(OFFLINE_META_STORE, "readwrite", (store) => {
-      store.put({ key: OFFLINE_ROOT_KEY, value: clone(root), savedAt: new Date().toISOString() });
+      store.put({ key: OFFLINE_ROOT_KEY, value: root, savedAt: new Date().toISOString() });
     });
   }
 
@@ -568,7 +602,7 @@
     if (stored === null || !entry) {
       throw new Error("Trình duyệt không hỗ trợ bộ nhớ offline. Vui lòng dùng Chrome/Edge và thử lại.");
     }
-    await dispatchOfflineStatus({ pending: await getOfflineQueueCount(), online: navigator.onLine });
+    await dispatchOfflineStatus({ pending: await getOfflineQueueCount(), online: serverReachable });
     if (scheduleSync) scheduleOfflineSync();
     return entry;
   }
@@ -603,13 +637,11 @@
     if (!error) {
       return true;
     }
-    if (!navigator.onLine) {
-      return true;
+    const status = Number(error.status);
+    if (Number.isFinite(status) && status > 0) {
+      return [502, 503, 504].includes(status);
     }
-    if (!error.status) {
-      return true;
-    }
-    return [502, 503, 504].includes(Number(error.status));
+    return true;
   }
 
   async function requestWithNetworkRetry(path, options = {}, maxAttempts = 5) {
@@ -635,7 +667,7 @@
       pending,
       scoreDrafts: Number(scoreDrafts || 0),
       syncing: offlineSyncing,
-      online: navigator.onLine,
+      online: serverReachable,
       lastError: "",
       ...(lastOfflineStatus || {}),
       ...overrides,
@@ -760,6 +792,10 @@
           ...(options.headers || {}),
         },
       });
+      serverReachable = ![502, 503, 504].includes(response.status);
+    } catch (fetchError) {
+      serverReachable = false;
+      throw fetchError;
     } finally {
       if (timeoutId) window.clearTimeout(timeoutId);
     }
@@ -796,17 +832,24 @@
 
   function dataWriteRequest(entry, value = entry.value) {
     rememberOwnDataWrite(entry.id);
-    return request("/api/data/write", {
-      method: "POST",
-      body: JSON.stringify({
-        commandId: entry.id,
-        operation: entry.operation,
-        path: entry.path || "",
-        value,
-        allowZoneManagerReassignment: entry.allowZoneManagerReassignment === true,
-        ...(entry.scoreConflict ? { scoreConflict: entry.scoreConflict } : {}),
-      }),
+    const body = JSON.stringify({
+      commandId: entry.id,
+      operation: entry.operation,
+      path: entry.path || "",
+      value,
+      allowZoneManagerReassignment: entry.allowZoneManagerReassignment === true,
+      ...(entry.scoreConflict ? { scoreConflict: entry.scoreConflict } : {}),
     });
+    const isLargePayload = body.length > 32768 || body.includes("data:image/");
+    const requestOptions = {
+      method: "POST",
+      timeoutMs: isLargePayload ? 45000 : 10000,
+      body,
+    };
+    if (entry.scoreConflict) {
+      return request("/api/data/write", requestOptions);
+    }
+    return requestWithNetworkRetry("/api/data/write", requestOptions, 3);
   }
 
   function rememberOwnDataWrite(commandId) {
@@ -847,20 +890,16 @@
       return true;
     }
     if (!initialEntries.length) {
-      await dispatchOfflineStatus({ pending: 0, syncing: false, online: navigator.onLine, lastError: "" });
+      await dispatchOfflineStatus({ pending: 0, syncing: false, online: serverReachable, lastError: "" });
       return true;
     }
     if (demoMode) {
       return false;
     }
-    if (!navigator.onLine) {
-      await dispatchOfflineStatus({ online: false, syncing: false, lastError: CONNECTION_LOST_MESSAGE });
-      return false;
-    }
     if (!authSession) {
       await dispatchOfflineStatus({
         pending: initialEntries.length,
-        online: true,
+        online: serverReachable,
         syncing: false,
         lastError: "Phiên đăng nhập chưa được xác nhận. Vui lòng đăng nhập lại để đồng bộ các thay đổi đang chờ.",
       });
@@ -872,7 +911,7 @@
     if (!entries.length) {
       await dispatchOfflineStatus({
         pending: allEntries.length,
-        online: navigator.onLine,
+        online: serverReachable,
         syncing: false,
         lastError: allEntries.length
           ? "Một số dữ liệu chờ đồng bộ thuộc tài khoản khác. Đăng nhập tài khoản đã tạo dữ liệu đó để tiếp tục đồng bộ."
@@ -884,8 +923,8 @@
     offlineSyncing = true;
     let activeEntry = null;
     try {
-      await dispatchOfflineStatus({ pending: entries.length, syncing: true, online: navigator.onLine, lastError: "" });
-      await request("/api/health");
+      await dispatchOfflineStatus({ pending: entries.length, syncing: true, online: true, lastError: "" });
+      await requestWithNetworkRetry("/api/health", { timeoutMs: 8000 }, 2);
       let photoMap = await getPhotoMappings();
 
       for (const entry of entries) {
@@ -893,19 +932,21 @@
         if (entry.type === "photo-save") {
           const signature = entry.localSignature || signatureForText(entry.photo?.dataUrl || "");
           if (!photoMap.has(signature)) {
-            const savedPhoto = await request("/api/photos", {
+            const savedPhoto = await requestWithNetworkRetry("/api/photos", {
               method: "POST",
+              timeoutMs: 45000,
               body: JSON.stringify(entry.photo || {}),
-            });
+            }, 3);
             await savePhotoMapping(signature, savedPhoto);
             photoMap = await getPhotoMappings();
           }
         } else if (entry.type === "photo-delete") {
           const photo = transformOfflinePhotoRefs(entry.photo, photoMap);
-          await request("/api/photos/delete", {
+          await requestWithNetworkRetry("/api/photos/delete", {
             method: "POST",
+            timeoutMs: 12000,
             body: JSON.stringify(photo || {}),
-          });
+          }, 2);
         } else if (entry.type === "data-write") {
           const value = transformOfflinePhotoRefs(entry.value, photoMap);
           const acknowledgement = await dataWriteRequest(entry, value);
@@ -934,7 +975,7 @@
         await dispatchOfflineStatus({
           pending: await getOfflineQueueCount(),
           syncing: false,
-          online: navigator.onLine,
+          online: serverReachable,
           lastError: error.message || "Máy chủ từ chối một thay đổi đang chờ đồng bộ.",
         });
         return false;
@@ -942,8 +983,8 @@
       await dispatchOfflineStatus({
         pending: await getOfflineQueueCount(),
         syncing: false,
-        online: navigator.onLine,
-        lastError: "Không đồng bộ được dữ liệu lưu tạm. Vui lòng thử lại.",
+        online: serverReachable,
+        lastError: isNetworkLikeError(error) ? CONNECTION_LOST_MESSAGE : "Không đồng bộ được dữ liệu lưu tạm. Vui lòng thử lại.",
       });
       return false;
     } finally {
@@ -954,14 +995,14 @@
       await dispatchOfflineStatus({
         pending,
         syncing: false,
-        online: navigator.onLine,
+        online: serverReachable,
         lastError: currentAccountPending
           ? lastOfflineStatus?.lastError || ""
           : pending
             ? "Một số dữ liệu chờ đồng bộ thuộc tài khoản khác. Đăng nhập tài khoản đã tạo dữ liệu đó để tiếp tục đồng bộ."
             : "",
       });
-      if (currentAccountPending && authSession && !demoMode && navigator.onLine) {
+      if (currentAccountPending && authSession && !demoMode) {
         scheduleOfflineSync(OFFLINE_SYNC_INTERVAL_MS);
       }
     }
@@ -970,9 +1011,6 @@
   async function waitForQueuedWritesToDrain() {
     let transientSyncRetries = 0;
     while (true) {
-      if (!navigator.onLine) {
-        throw new Error(CONNECTION_LOST_MESSAGE);
-      }
       if (onlineWriteInProgress || offlineSyncing) {
         await new Promise((resolve) => window.setTimeout(resolve, 30));
         continue;
@@ -986,7 +1024,7 @@
         if (lastOfflineStatus?.lastError) {
           throw new Error(lastOfflineStatus.lastError);
         }
-        if (navigator.onLine && authSession && transientSyncRetries < 10) {
+        if (serverReachable && authSession && transientSyncRetries < 10) {
           transientSyncRetries += 1;
           await new Promise((resolve) => window.setTimeout(resolve, 50));
           continue;
@@ -1030,6 +1068,7 @@
   }
 
   async function notifyConnectionLost() {
+    serverReachable = false;
     await dispatchOfflineStatus({
       pending: await getOfflineQueueCount().catch(() => 0),
       syncing: false,
@@ -1039,13 +1078,14 @@
   }
 
   async function notifyConnectionRestored({ retryPending = false } = {}) {
+    serverReachable = true;
     const wasOffline = lastOfflineStatus?.online === false || Boolean(lastOfflineStatus?.lastError);
-    await dispatchOfflineStatus({
+    const detail = await dispatchOfflineStatus({
       pending: await getOfflineQueueCount().catch(() => 0),
       online: true,
       lastError: "",
     });
-    if (retryPending && wasOffline) {
+    if (retryPending && (wasOffline || detail.scoreDrafts > 0)) {
       window.dispatchEvent(new CustomEvent("local-data-network-restored"));
     }
     if (retryPending) {
@@ -1055,7 +1095,11 @@
 
   function applyAuthPayload(payload) {
     setAuthSession(payload);
+    if (payload?.revision !== undefined && payload?.revision !== null) {
+      rememberDataRevision(payload.revision);
+    }
     if (payload?.root) {
+      lastRootFetchedAt = Date.now();
       rememberRoot(payload.root);
       notifyAll();
       getQueuedCommands().then((queuedCommands) => {
@@ -1106,8 +1150,9 @@
     try {
       return applyAuthPayload(await requestWithNetworkRetry("/api/auth/login", {
         method: "POST",
+        timeoutMs: 15000,
         body: JSON.stringify({ username, password }),
-      }));
+      }, 2));
     } catch (error) {
       if (isAuthError(error) || error.status === 409) {
         throw error;
@@ -1191,8 +1236,13 @@
     if (offlineRootPersistTimer) return;
     offlineRootPersistTimer = window.setTimeout(() => {
       offlineRootPersistTimer = 0;
-      persistOfflineRoot(rootCache).catch(() => {});
-    }, 750);
+      const runPersist = () => persistOfflineRoot(rootCache).catch(() => {});
+      if (typeof window.requestIdleCallback === "function") {
+        window.requestIdleCallback(runPersist, { timeout: 2500 });
+      } else {
+        runPersist();
+      }
+    }, 1500);
   }
 
   async function loadRoot() {
@@ -1202,6 +1252,7 @@
 
     try {
       const root = await request("/api/data");
+      lastRootFetchedAt = Date.now();
       const queuedCommands = await getQueuedCommands();
       const currentAccountCommands = queuedCommandsForCurrentAccount(queuedCommands);
       if (currentAccountCommands.length) {
@@ -1245,11 +1296,21 @@
     if (!listeners.size) {
       return;
     }
+    if (typeof document !== "undefined" && document.hidden && !retryIfBusy) {
+      return;
+    }
+    if (!retryIfBusy && (onlineWriteInProgress || offlineSyncing)) {
+      return;
+    }
+    if (!retryIfBusy && stream && typeof EventSource !== "undefined" && stream.readyState === EventSource.OPEN && (Date.now() - lastPollAt) < 15000) {
+      return;
+    }
     if (polling) {
       pollAgainRequested = pollAgainRequested || retryIfBusy;
       return;
     }
 
+    lastPollAt = Date.now();
     polling = true;
     const pollController = new AbortController();
     activePollController = pollController;
@@ -1257,7 +1318,7 @@
     try {
       const queuedCommands = queuedCommandsForCurrentAccount(await getQueuedCommands());
       if (queuedCommands.length) {
-        if (navigator.onLine && authSession) {
+        if (authSession) {
           await flushOfflineQueue();
         }
         if (queuedCommandsForCurrentAccount(await getQueuedCommands()).length) {
@@ -1271,12 +1332,15 @@
       });
       if (root?.notModified) {
         consecutivePollFailures = 0;
-        if (lastOfflineStatus?.online === false) {
+        lastRootFetchedAt = Date.now();
+        const pendingScoreDrafts = await withOfflineStore(OFFLINE_SCORE_DRAFT_STORE, "readonly", (store) => idbRequest(store.count())).catch(() => 0);
+        if (lastOfflineStatus?.online === false || pendingScoreDrafts > 0) {
           await notifyConnectionRestored({ retryPending: true });
         }
         return;
       }
       consecutivePollFailures = 0;
+      lastRootFetchedAt = Date.now();
       const latestQueuedCommands = queuedCommandsForCurrentAccount(await getQueuedCommands());
       const mergedRoot = applyQueuedWritesToRoot(root, latestQueuedCommands);
       const signature = signatureForRoot(mergedRoot);
@@ -1292,11 +1356,18 @@
         clearAuthSession();
         notifyAuthRevoked();
       } else if (isNetworkLikeError(error)) {
+        if (typeof document !== "undefined" && document.hidden) {
+          return;
+        }
         consecutivePollFailures += 1;
-        if (consecutivePollFailures >= 2 || !navigator.onLine) {
+        if (consecutivePollFailures >= 3) {
           await notifyConnectionLost(error);
         } else {
-          window.setTimeout(() => pollRoot({ retryIfBusy: true }), 800);
+          const retryDelayMs = consecutivePollFailures === 1 ? 1000 : 1800;
+          window.setTimeout(() => {
+            if (typeof document !== "undefined" && document.hidden) return;
+            pollRoot({ retryIfBusy: true });
+          }, retryDelayMs);
         }
       }
     } finally {
@@ -1363,9 +1434,17 @@
         notifyAuthRevoked();
       });
       stream.onopen = () => {
-        pollRoot({ retryIfBusy: true });
+        const shouldSkipInitialPoll = !streamHadError
+          && Boolean(rootCache)
+          && lastDataRevision !== null
+          && (Date.now() - lastRootFetchedAt) < 5000;
+        streamHadError = false;
+        if (!shouldSkipInitialPoll) {
+          pollRoot({ retryIfBusy: true });
+        }
       };
       stream.onerror = () => {
+        streamHadError = true;
         if (stream && typeof EventSource !== "undefined" && stream.readyState === EventSource.CLOSED) {
           stream.close();
           stream = null;
@@ -1389,7 +1468,7 @@
     const requiresServerAcknowledgement = writeOptions.requireServerAcknowledgement === true;
     let queuedCommands = queuedCommandsForCurrentAccount(await getQueuedCommands().catch(() => []));
     while ((writeOptions.scoreConflict || requiresServerAcknowledgement)
-      && (!navigator.onLine || offlineSyncing || onlineWriteInProgress || queuedCommands.length)) {
+      && (offlineSyncing || onlineWriteInProgress || queuedCommands.length)) {
       try {
         await waitForQueuedWritesToDrain();
       } catch (waitError) {
@@ -1398,7 +1477,7 @@
       }
       queuedCommands = queuedCommandsForCurrentAccount(await getQueuedCommands().catch(() => []));
     }
-    if (!navigator.onLine || offlineSyncing || onlineWriteInProgress || queuedCommands.length) {
+    if (offlineSyncing || onlineWriteInProgress || queuedCommands.length) {
       if (requiresServerAcknowledgement) {
         throw new Error("Máy chủ chưa xác nhận thao tác. Hãy chờ đồng bộ hoàn tất hoặc kiểm tra kết nối rồi thử lại.");
       }
@@ -1414,7 +1493,6 @@
       try {
         entry = await stageOptimisticWrite(operation, path, value, writeOptions);
       } catch (storageError) {
-        if (!navigator.onLine) throw storageError;
         entry = {
           type: "data-write",
           id: `online-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
@@ -1451,18 +1529,18 @@
         await dispatchOfflineStatus({
           pending: await getOfflineQueueCount(),
           syncing: false,
-          online: navigator.onLine,
+          online: serverReachable,
           lastError: error.message,
         });
         throw error;
       }
       if (requiresServerAcknowledgement && isNetworkLikeError(error)) {
         if (entry && !ephemeralEntry) await deleteQueuedCommand(entry.id);
-        if (entry) await restoreAfterRejectedWrite(fallbackRoot);
+        if (entry) await restoreLocalRoot(fallbackRoot);
         await dispatchOfflineStatus({
           pending: await getOfflineQueueCount(),
           syncing: false,
-          online: navigator.onLine,
+          online: serverReachable,
           lastError: "Máy chủ chưa xác nhận thao tác.",
         });
         throw new Error("Máy chủ chưa xác nhận thao tác. Hãy tải lại danh sách và thử lại.", { cause: error });
@@ -1471,7 +1549,7 @@
         await dispatchOfflineStatus({
           pending: await getOfflineQueueCount(),
           syncing: false,
-          online: navigator.onLine,
+          online: serverReachable,
           lastError: error.message || "Không lưu được thay đổi trên thiết bị.",
         });
         throw error;
@@ -1479,16 +1557,16 @@
       if (isNetworkLikeError(error)) {
         if (entry.scoreConflict) {
           if (!ephemeralEntry) await deleteQueuedCommand(entry.id);
-          await restoreAfterRejectedWrite(fallbackRoot);
+          await restoreLocalRoot(fallbackRoot);
           error.offlineDraftSaved = true;
           throw error;
         }
         if (ephemeralEntry) {
-          await restoreAfterRejectedWrite(fallbackRoot);
+          await restoreLocalRoot(fallbackRoot);
           await dispatchOfflineStatus({
             pending: await getOfflineQueueCount(),
             syncing: false,
-            online: navigator.onLine,
+            online: serverReachable,
             lastError: error.message || "Không thể lưu thay đổi khi máy chủ mất kết nối.",
           });
           throw error;
@@ -1502,7 +1580,7 @@
         await dispatchOfflineStatus({
           pending: await getOfflineQueueCount(),
           syncing: false,
-          online: navigator.onLine,
+          online: serverReachable,
           lastError: error.message,
         });
         throw error;
@@ -1513,7 +1591,7 @@
         await dispatchOfflineStatus({
           pending: await getOfflineQueueCount(),
           syncing: false,
-          online: navigator.onLine,
+          online: serverReachable,
           lastError: "Máy chủ chưa xác nhận thao tác.",
         });
         throw new Error("Máy chủ chưa xác nhận thao tác. Hãy tải lại danh sách và thử lại.", { cause: error });
@@ -1523,7 +1601,7 @@
     } finally {
       onlineWriteInProgress = false;
       const pending = queuedCommandsForCurrentAccount(await getQueuedCommands().catch(() => [])).length;
-      if (pending && authSession && !demoMode && navigator.onLine) scheduleOfflineSync(0);
+      if (pending && authSession && !demoMode) scheduleOfflineSync(0);
     }
 
     return rootCache;
@@ -1611,7 +1689,7 @@
   }
 
   async function loadCollectionPage(filters = {}) {
-    if (demoMode || !navigator.onLine) return loadLocalCollectionPage(filters);
+    if (demoMode) return loadLocalCollectionPage(filters);
     const params = new URLSearchParams();
     Object.entries(filters || {}).forEach(([key, value]) => {
       if (value !== undefined && value !== null && String(value).trim() !== "") params.set(key, String(value));
@@ -1683,27 +1761,51 @@
       persistOfflineRoot(rootCache).catch(() => {});
     };
     window.addEventListener("offline", () => {
-      activePollController?.abort();
-      notifyConnectionLost().catch(() => {});
+      // On internal factory Wi-Fi without Internet, Android may fire 'offline' while the LAN server is still reachable.
+      // Verify actual LAN server reachability via pollRoot instead of falsely blocking writes.
+      window.setTimeout(() => {
+        if (typeof document !== "undefined" && document.hidden) return;
+        pollRoot({ retryIfBusy: true });
+      }, 400);
     });
     window.addEventListener("pagehide", persistBeforePageLeave);
     window.addEventListener("online", () => {
       scheduleOfflineSync(0);
       pollRoot({ retryIfBusy: true });
     });
+    const scheduleResumeReconnect = (forceRestartStream = false) => {
+      if (resumeSettleTimer) {
+        window.clearTimeout(resumeSettleTimer);
+        resumeSettleTimer = 0;
+      }
+      consecutivePollFailures = 0;
+      resumeSettleTimer = window.setTimeout(() => {
+        resumeSettleTimer = 0;
+        if (typeof document !== "undefined" && document.hidden) return;
+        if (forceRestartStream) stopDataStream();
+        startDataStream();
+        scheduleOfflineSync(200);
+        pollRoot({ retryIfBusy: true });
+      }, 450);
+    };
     document.addEventListener("visibilitychange", () => {
-      if (document.hidden) persistBeforePageLeave();
-      if (!document.hidden) {
-        window.setTimeout(() => {
-          if (document.hidden) return;
-          startDataStream();
-          scheduleOfflineSync(0);
-          pollRoot({ retryIfBusy: true });
-        }, 300);
+      if (document.hidden) {
+        hiddenSince = Date.now();
+        activePollController?.abort();
+        persistBeforePageLeave();
+        return;
+      }
+      const wasHiddenMs = hiddenSince ? (Date.now() - hiddenSince) : 0;
+      hiddenSince = 0;
+      scheduleResumeReconnect(wasHiddenMs >= 30000);
+    });
+    window.addEventListener("pageshow", (event) => {
+      if (event?.persisted) {
+        scheduleResumeReconnect(true);
       }
     });
     getOfflineQueueCount()
-      .then((pending) => dispatchOfflineStatus({ pending, syncing: false, online: navigator.onLine }))
+      .then((pending) => dispatchOfflineStatus({ pending, syncing: false, online: serverReachable }))
       .catch(() => {});
   }
 

@@ -10,7 +10,7 @@
     <link rel="manifest" href="/manifest.json">
     <meta name="theme-color" content="#0b7f87">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" media="print" onload="this.media='all'">
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" media="print" onload="this.media='all'">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" media="print" onload="this.media='all';document.documentElement.classList.remove('fa-offline')" onerror="document.documentElement.classList.add('fa-offline')">
     <script>
       (function() {
         try {
@@ -20,7 +20,7 @@
         } catch (e) {}
       })();
     </script>
-    <link rel="stylesheet" href="styles.css?v=2026112607">
+    <link rel="stylesheet" href="styles.css?v=2026112711">
   </head>
   <body>
     <section class="loading-screen" id="loading-screen">
@@ -659,12 +659,15 @@
           <!-- TAB ACCOUNTS -->
           <section class="tab-panel admin-only" id="tab-accounts">
             <div class="scope-card-layout">
-              <div class="scope-card-row" id="account-scope-switch"></div>
-              <section class="scope-detail-card" id="account-scope-detail" aria-label="Cấp tài khoản đang chọn" hidden>
-                <div class="accounts-grid">
-                  <section class="panel">
+              <div class="scope-card-row" id="account-scope-switch" hidden></div>
+              <section class="scope-detail-card" id="account-scope-detail" aria-label="Cấp tài khoản">
+                <div class="accounts-grid accounts-stacked-layout">
+                  <section class="panel account-create-panel">
                     <div class="section-heading">
-                      <h2>Tạo tài khoản</h2>
+                      <div>
+                        <h2>Tạo tài khoản</h2>
+                        <p class="field-hint">Chọn nhân viên trong danh mục để cấp tài khoản và mật khẩu. Mỗi nhân viên chỉ có 1 tài khoản (nhân viên đã có tài khoản sẽ không hiển thị trong danh sách chọn).</p>
+                      </div>
                     </div>
                     <form class="stacked-form" id="account-form">
                       <label>
@@ -673,24 +676,27 @@
                         <datalist id="account-person-search-options"></datalist>
                       </label>
                       <label>
-                        <span>Tài khoản</span>
-                        <input id="account-username" type="text" autocomplete="off" required>
-                      </label>
-                      <label>
-                        <span>Nhân viên / tên hiển thị (Mã NV · Họ tên)</span>
+                        <span>Nhân viên trong danh mục (Mã NV · Họ tên · Quyền)</span>
                         <select id="account-display-name" required></select>
                       </label>
                       <label>
-                        <span>Mật khẩu</span>
-                        <input id="account-password" type="password" autocomplete="new-password" required minlength="4">
+                        <span>Tài khoản</span>
+                        <input id="account-username" type="text" autocomplete="off" required placeholder="Nhập tên đăng nhập">
                       </label>
-                      <button class="primary-button" type="submit">Thêm tài khoản</button>
+                      <label>
+                        <span>Mật khẩu</span>
+                        <input id="account-password" type="password" autocomplete="new-password" required minlength="4" placeholder="Nhập mật khẩu (tối thiểu 4 ký tự)">
+                      </label>
+                      <button class="primary-button" type="submit">Cấp tài khoản</button>
                     </form>
                   </section>
 
-                  <section class="panel">
+                  <section class="panel account-list-panel">
                     <div class="section-heading">
-                      <h2>Danh sách tài khoản</h2>
+                      <div>
+                        <h2>Danh sách tài khoản và phân quyền</h2>
+                        <p class="field-hint">Danh sách toàn bộ tài khoản đã cấp và các quyền theo danh mục của từng nhân viên.</p>
+                      </div>
                     </div>
                     <div class="account-list" id="account-list"></div>
                   </section>
@@ -800,13 +806,13 @@
     </div>
 
     <div class="toast" id="toast" popover="manual" role="status" aria-live="polite"></div>
-    <script src="modules/local-data-api.js?v=2026112601"></script>
+    <script src="modules/local-data-api.js?v=2026112801"></script>
     <script src="modules/core/page-registry.js"></script>
     <script src="modules/core/safety-timeline.js?v=2026103101"></script>
       <script src="modules/core/image-circle-annotator.js?v=2026110201"></script>
       <script src="modules/core/form-draft-manager.js?v=2026102903"></script>
     <script src="modules/core/custom-dropdown.js?v=2026112602"></script>
-    <script src="modules/pages/admin-home-page.js?v=2026112604"></script>
+    <script src="modules/pages/admin-home-page.js?v=2026112709"></script>
     <script src="modules/pages/assessor-page.js"></script>
     <script src="modules/pages/summary-page.js?v=2026110402"></script>
     <script src="modules/pages/safety-page.js?v=2026110402"></script>
@@ -815,13 +821,13 @@
     <script src="modules/pages/catalog-page.js"></script>
     <script src="modules/pages/accounts-page.js"></script>
     <script src="modules/pages/data-page.js"></script>
-    <script src="modules/pages/five-s-findings-page.js?v=2026110908"></script>
+    <script src="modules/pages/five-s-findings-page.js?v=2026112707"></script>
     <script src="modules/pages/user-guide-content.js?v=2026103001"></script>
-    <script src="modules/pages/mobile-prototype.js?v=2026112605"></script>
+    <script src="modules/pages/mobile-prototype.js?v=2026112706"></script>
     <script src="modules/pages/guide-setup-page.js?v=2026102903"></script>
     <script src="modules/pages/audit-log-page.js?v=2026102801"></script>
     <script src="standards.js"></script>
-    <script src="app.js?v=2026112602"></script>
+    <script src="app.js?v=2026112801"></script>
   
     <script>
       (() => {

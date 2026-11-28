@@ -22,6 +22,13 @@ const TOKEN_COOKIE_NAME = "legroup_session";
 // Sliding session window: keep users signed in between workdays while the active-session ID
 // still lets a new device or explicit logout revoke the previous session immediately.
 const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+const SESSION_TOUCH_MIN_INTERVAL_MS = 5 * 60 * 1000;
+const SESSION_FIELDS = Object.freeze([
+  "activeSessionId",
+  "activeSessionAt",
+  "activeSessionExpiresAt",
+  "activeSessionStartedAt",
+]);
 const PASSWORD_HASH_VERSION = "pbkdf2-sha256";
 const PASSWORD_ITERATIONS = 210000;
 const PASSWORD_KEY_BYTES = 32;
@@ -72,6 +79,24 @@ function verifyPasswordHash(password, storedHash) {
 
   const candidate = crypto.pbkdf2Sync(String(password || ""), salt, iterations, PASSWORD_KEY_BYTES, "sha256").toString("base64url");
   return safeEqualText(candidate, hash);
+}
+
+function verifyPasswordHashAsync(password, storedHash) {
+  const [version, iterationsText, salt, hash] = String(storedHash || "").split("$");
+  const iterations = Number(iterationsText);
+  if (version !== PASSWORD_HASH_VERSION || !Number.isInteger(iterations) || !salt || !hash) {
+    return Promise.resolve(false);
+  }
+
+  return new Promise((resolve, reject) => {
+    crypto.pbkdf2(String(password || ""), salt, iterations, PASSWORD_KEY_BYTES, "sha256", (error, derivedKey) => {
+      if (error) {
+        reject(error);
+        return;
+      }
+      resolve(safeEqualText(derivedKey.toString("base64url"), hash));
+    });
+  });
 }
 
 function pathParts(input) {
@@ -409,10 +434,14 @@ class AuthService {
   }
 
   sanitizeRoot(root, viewerAccount = null) {
-    const safeRoot = clone(root);
-    if (!safeRoot || typeof safeRoot !== "object") {
-      return safeRoot;
+    if (root === undefined) {
+      return null;
     }
+    if (!root || typeof root !== "object") {
+      return root;
+    }
+
+    const safeRoot = { ...root };
 
     // Audit history is an admin-only view. Keep it out of every non-admin
     // response (including login, polling and write acknowledgements).
@@ -503,6 +532,45 @@ class AuthService {
     return collectionValues(root?.accounts).find(predicate) || null;
   }
 
+  findAccountEntry(root, predicate) {
+    const accounts = root?.accounts;
+    if (Array.isArray(accounts)) {
+      for (let index = 0; index < accounts.length; index += 1) {
+        const item = accounts[index];
+        if (item && predicate(item)) {
+          return { key: String(item.id || index), index, account: item, containerType: "array" };
+        }
+      }
+      return null;
+    }
+    if (isPlainObject(accounts)) {
+      for (const [key, item] of Object.entries(accounts)) {
+        if (item && predicate(item)) {
+          return { key, index: -1, account: item, containerType: "object" };
+        }
+      }
+    }
+    return null;
+  }
+
+  replaceAccountEntry(root, entry, nextAccount) {
+    const baseRoot = isPlainObject(root) ? root : {};
+    if (entry.containerType === "array" && Array.isArray(baseRoot.accounts)) {
+      const nextAccounts = baseRoot.accounts.slice();
+      nextAccounts[entry.index] = nextAccount;
+      return { ...baseRoot, accounts: nextAccounts };
+    }
+    const nextAccounts = isPlainObject(baseRoot.accounts) ? { ...baseRoot.accounts } : {};
+    nextAccounts[entry.key] = nextAccount;
+    return { ...baseRoot, accounts: nextAccounts };
+  }
+
+  isAccountInactive(account) {
+    return account?.active === false
+      || (typeof account?.active === "string"
+        && ["false", "0", "no", "inactive"].includes(account.active.trim().toLowerCase()));
+  }
+
   isSessionFresh(account) {
     const expiresAt = Date.parse(account?.activeSessionExpiresAt || "");
     return Number.isFinite(expiresAt) && expiresAt > Date.now();
@@ -524,6 +592,24 @@ class AuthService {
         return true;
       }
       if (trimmedCandidate && trimmedCandidate !== rawCandidate && verifyPasswordHash(trimmedCandidate, account.passwordHash)) {
+        return true;
+      }
+      return false;
+    }
+    return typeof account?.password === "string" && (
+      safeEqualText(account.password, rawCandidate) ||
+      (trimmedCandidate ? safeEqualText(account.password, trimmedCandidate) : false)
+    );
+  }
+
+  async verifyAccountPasswordAsync(account, password) {
+    const rawCandidate = String(password || "");
+    const trimmedCandidate = rawCandidate.trim();
+    if (account?.passwordHash) {
+      if (await verifyPasswordHashAsync(rawCandidate, account.passwordHash)) {
+        return true;
+      }
+      if (trimmedCandidate && trimmedCandidate !== rawCandidate && await verifyPasswordHashAsync(trimmedCandidate, account.passwordHash)) {
         return true;
       }
       return false;
@@ -599,45 +685,100 @@ class AuthService {
       throw createHttpError("Vui lòng nhập tài khoản và mật khẩu.", 400);
     }
 
+    const initialSnapshot = typeof this.repository.readRootSnapshot === "function"
+      ? await this.repository.readRootSnapshot({ cloneRoot: false })
+      : { root: await this.repository.readRoot(), revision: null };
+    const initialEntry = this.findAccountEntry(initialSnapshot?.root || {}, (item) => item.username === cleanUsername);
+    if (!initialEntry?.account || !(await this.verifyAccountPasswordAsync(initialEntry.account, candidatePassword))) {
+      throw createHttpError("Sai tài khoản hoặc mật khẩu.", 401);
+    }
+    if (this.isAccountInactive(initialEntry.account)) {
+      throw createHttpError("Tài khoản đã bị khóa hoặc ngừng kích hoạt.", 403);
+    }
+
+    const initialAccount = initialEntry.account;
+    const initialPasswordHash = initialAccount.passwordHash || "";
+    const initialPlainPassword = typeof initialAccount.password === "string" ? initialAccount.password : "";
+    const hasLegacySecrets = typeof initialAccount.password === "string"
+      || Object.prototype.hasOwnProperty.call(initialAccount, "passwordSalt");
+    const touchedRecords = { accounts: [initialEntry.key] };
+    const touchedRecordFields = hasLegacySecrets
+      ? null
+      : { accounts: { [initialEntry.key]: SESSION_FIELDS } };
+
     let result = null;
-    const nextRoot = await this.repository.updateRoot((currentRoot) => {
-      const preparedRoot = this.prepareRootForStorage(currentRoot || {}, currentRoot || {}, {
-        collections: new Set(["accounts"]),
-      });
-      const account = this.findAccount(preparedRoot, (item) => item.username === cleanUsername);
-      if (!account || !this.verifyAccountPassword(account, candidatePassword)) {
+    let updatedAccount = null;
+    const updateResult = await this.repository.updateRoot((currentRoot) => {
+      const entry = this.findAccountEntry(currentRoot || {}, (item) => item.username === cleanUsername);
+      if (!entry?.account) {
         throw createHttpError("Sai tài khoản hoặc mật khẩu.", 401);
       }
-      if (account.active === false || (typeof account.active === "string" && ["false", "0", "no", "inactive"].includes(account.active.trim().toLowerCase()))) {
+      const currentAccount = entry.account;
+      const credentialsChanged = (currentAccount.passwordHash || "") !== initialPasswordHash
+        || (typeof currentAccount.password === "string" ? currentAccount.password : "") !== initialPlainPassword;
+      if (credentialsChanged && !this.verifyAccountPassword(currentAccount, candidatePassword)) {
+        throw createHttpError("Sai tài khoản hoặc mật khẩu.", 401);
+      }
+      if (this.isAccountInactive(currentAccount)) {
         throw createHttpError("Tài khoản đã bị khóa hoặc ngừng kích hoạt.", 403);
       }
 
-      const previousSessionId = String(account.activeSessionId || "");
-      const replacedSessionId = previousSessionId && this.isSessionFresh(account) ? previousSessionId : "";
+      const currentHasLegacySecrets = typeof currentAccount.password === "string"
+        || Object.prototype.hasOwnProperty.call(currentAccount, "passwordSalt");
+      const preparedAccount = currentHasLegacySecrets
+        ? this.prepareAccountForStorage(currentAccount, currentAccount)
+        : { ...currentAccount };
+
+      const previousSessionId = String(preparedAccount.activeSessionId || "");
+      const replacedSessionId = previousSessionId && this.isSessionFresh(preparedAccount) ? previousSessionId : "";
       const sessionId = crypto.randomUUID();
       const now = new Date();
       const expiresAt = new Date(now.getTime() + SESSION_TTL_MS).toISOString();
-      account.activeSessionId = sessionId;
-      account.activeSessionAt = now.toISOString();
-      account.activeSessionExpiresAt = expiresAt;
-      account.activeSessionStartedAt = now.toISOString();
-      const token = this.createToken(account, sessionId, expiresAt);
+      preparedAccount.activeSessionId = sessionId;
+      preparedAccount.activeSessionAt = now.toISOString();
+      preparedAccount.activeSessionExpiresAt = expiresAt;
+      preparedAccount.activeSessionStartedAt = now.toISOString();
+      const token = this.createToken(preparedAccount, sessionId, expiresAt);
+      updatedAccount = preparedAccount;
       result = {
         token,
         sessionId,
         replacedSessionId,
-        sessionStartedAt: account.activeSessionStartedAt,
+        sessionStartedAt: preparedAccount.activeSessionStartedAt,
         expiresAt,
-        accountId: account.id || "",
-        username: account.username || "",
+        accountId: preparedAccount.id || "",
+        username: preparedAccount.username || "",
       };
-      return preparedRoot;
-    }, { touchedRootKeys: ["accounts"] });
+      if (entry.key !== initialEntry.key) {
+        touchedRecords.accounts = [entry.key];
+        if (touchedRecordFields) {
+          delete touchedRecordFields.accounts[initialEntry.key];
+          if (!currentHasLegacySecrets) {
+            touchedRecordFields.accounts[entry.key] = SESSION_FIELDS;
+          }
+        }
+      } else if (currentHasLegacySecrets && touchedRecordFields) {
+        delete touchedRecordFields.accounts[entry.key];
+      }
+      return this.replaceAccountEntry(currentRoot || {}, entry, preparedAccount);
+    }, {
+      touchedRootKeys: ["accounts"],
+      touchedRecords,
+      touchedRecordFields,
+      immutableMutator: true,
+      includeRevision: true,
+      cloneResult: false,
+    });
 
-    const account = this.findAccount(nextRoot, (item) => item.id === result.accountId)
+    const hasRevisionResult = isPlainObject(updateResult) && Object.prototype.hasOwnProperty.call(updateResult, "root");
+    const nextRoot = hasRevisionResult ? updateResult.root : updateResult;
+    const revision = hasRevisionResult && Number.isSafeInteger(updateResult.revision) ? updateResult.revision : null;
+    const account = updatedAccount
+      || this.findAccount(nextRoot, (item) => item.id === result.accountId)
       || this.findAccount(nextRoot, (item) => item.username === result.username);
     return {
       ...result,
+      ...(revision !== null ? { revision } : {}),
       account: this.sanitizeAccount(account),
       root: this.sanitizeRoot(nextRoot, account),
     };
@@ -656,7 +797,7 @@ class AuthService {
     if (!account) {
       throw createHttpError("Tài khoản không còn tồn tại.", 401);
     }
-    if (account.active === false || (typeof account.active === "string" && ["false", "0", "no", "inactive"].includes(account.active.trim().toLowerCase()))) {
+    if (this.isAccountInactive(account)) {
       throw createHttpError("Tài khoản đã bị khóa hoặc ngừng kích hoạt.", 403);
     }
     if (String(account.activeSessionId || "") !== String(payload.sid || "")) {
@@ -677,41 +818,114 @@ class AuthService {
     const includeRoot = options.includeRoot !== false;
     const token = this.extractToken(request);
     const payload = this.verifyToken(token);
-    let result = null;
-    const nextRoot = await this.repository.updateRoot((currentRoot) => {
-      const root = this.prepareRootForStorage(currentRoot || {}, currentRoot || {}, {
-        collections: new Set(["accounts"]),
-      });
-      const account = this.findAccount(root, (item) => item.id === payload.sub)
-        || this.findAccount(root, (item) => item.username === payload.username);
-      if (!account || String(account.activeSessionId || "") !== String(payload.sid || "")) {
-        throw createHttpError("Phiên đăng nhập đã bị thay thế.", 401);
-      }
-      if (account.active === false || (typeof account.active === "string" && ["false", "0", "no", "inactive"].includes(account.active.trim().toLowerCase()))) {
-        throw createHttpError("Tài khoản đã bị khóa hoặc ngừng kích hoạt.", 403);
-      }
+    const initialSnapshot = typeof this.repository.readRootSnapshot === "function"
+      ? await this.repository.readRootSnapshot({ cloneRoot: false })
+      : { root: await this.repository.readRoot(), revision: null };
+    const initialRoot = initialSnapshot?.root || {};
+    const initialEntry = this.findAccountEntry(initialRoot, (item) => item.id === payload.sub)
+      || this.findAccountEntry(initialRoot, (item) => item.username === payload.username);
+    const initialAccount = initialEntry?.account || null;
+    if (!initialAccount || String(initialAccount.activeSessionId || "") !== String(payload.sid || "")) {
+      throw createHttpError("Phiên đăng nhập đã bị thay thế.", 401);
+    }
+    if (this.isAccountInactive(initialAccount)) {
+      throw createHttpError("Tài khoản đã bị khóa hoặc ngừng kích hoạt.", 403);
+    }
 
-      const now = new Date();
-      const expiresAt = new Date(now.getTime() + SESSION_TTL_MS).toISOString();
-      const sessionStartedAt = account.activeSessionStartedAt || account.activeSessionAt || now.toISOString();
-      account.activeSessionAt = now.toISOString();
-      account.activeSessionExpiresAt = expiresAt;
-      account.activeSessionStartedAt = sessionStartedAt;
+    const nowMs = Date.now();
+    const lastTouchMs = Date.parse(initialAccount.activeSessionAt || "");
+    const currentExpiresMs = Date.parse(initialAccount.activeSessionExpiresAt || "");
+    const hasLegacySecrets = typeof initialAccount.password === "string"
+      || Object.prototype.hasOwnProperty.call(initialAccount, "passwordSalt");
+    const sessionTouchIsFresh = !hasLegacySecrets
+      && Boolean(initialAccount.activeSessionStartedAt)
+      && Number.isFinite(lastTouchMs) && (nowMs - lastTouchMs) < SESSION_TOUCH_MIN_INTERVAL_MS
+      && Number.isFinite(currentExpiresMs) && (currentExpiresMs - nowMs) > (SESSION_TTL_MS - 24 * 60 * 60 * 1000);
 
-      result = {
-        token: this.createToken(account, payload.sid, expiresAt),
+    if (sessionTouchIsFresh) {
+      const expiresAt = initialAccount.activeSessionExpiresAt;
+      const sessionStartedAt = initialAccount.activeSessionStartedAt;
+      const safeAccount = this.sanitizeAccount(initialAccount);
+      const revision = Number.isSafeInteger(initialSnapshot?.revision) ? initialSnapshot.revision : null;
+      return {
+        token: this.createToken(initialAccount, payload.sid, expiresAt),
         sessionId: payload.sid,
         sessionStartedAt,
         expiresAt,
-        accountId: account.id || "",
-        username: account.username || "",
-        account: this.sanitizeAccount(account),
+        accountId: initialAccount.id || "",
+        username: initialAccount.username || "",
+        account: safeAccount,
+        ...(revision !== null ? { revision } : {}),
+        ...(includeRoot ? { root: this.sanitizeRoot(initialRoot, initialAccount) } : {}),
       };
-      return root;
-    }, { touchedRootKeys: ["accounts"] });
+    }
 
+    const touchedRecords = { accounts: [initialEntry.key] };
+    const touchedRecordFields = hasLegacySecrets
+      ? null
+      : { accounts: { [initialEntry.key]: SESSION_FIELDS } };
+    let result = null;
+    const updateResult = await this.repository.updateRoot((currentRoot) => {
+      const entry = this.findAccountEntry(currentRoot || {}, (item) => item.id === payload.sub)
+        || this.findAccountEntry(currentRoot || {}, (item) => item.username === payload.username);
+      const currentAccount = entry?.account || null;
+      if (!currentAccount || String(currentAccount.activeSessionId || "") !== String(payload.sid || "")) {
+        throw createHttpError("Phiên đăng nhập đã bị thay thế.", 401);
+      }
+      if (this.isAccountInactive(currentAccount)) {
+        throw createHttpError("Tài khoản đã bị khóa hoặc ngừng kích hoạt.", 403);
+      }
+
+      const currentHasLegacySecrets = typeof currentAccount.password === "string"
+        || Object.prototype.hasOwnProperty.call(currentAccount, "passwordSalt");
+      const preparedAccount = currentHasLegacySecrets
+        ? this.prepareAccountForStorage(currentAccount, currentAccount)
+        : { ...currentAccount };
+
+      const now = new Date();
+      const expiresAt = new Date(now.getTime() + SESSION_TTL_MS).toISOString();
+      const sessionStartedAt = preparedAccount.activeSessionStartedAt || preparedAccount.activeSessionAt || now.toISOString();
+      preparedAccount.activeSessionAt = now.toISOString();
+      preparedAccount.activeSessionExpiresAt = expiresAt;
+      preparedAccount.activeSessionStartedAt = sessionStartedAt;
+
+      result = {
+        token: this.createToken(preparedAccount, payload.sid, expiresAt),
+        sessionId: payload.sid,
+        sessionStartedAt,
+        expiresAt,
+        accountId: preparedAccount.id || "",
+        username: preparedAccount.username || "",
+        account: this.sanitizeAccount(preparedAccount),
+      };
+      if (entry.key !== initialEntry.key) {
+        touchedRecords.accounts = [entry.key];
+        if (touchedRecordFields) {
+          delete touchedRecordFields.accounts[initialEntry.key];
+          if (!currentHasLegacySecrets) {
+            touchedRecordFields.accounts[entry.key] = SESSION_FIELDS;
+          }
+        }
+      } else if (currentHasLegacySecrets && touchedRecordFields) {
+        delete touchedRecordFields.accounts[entry.key];
+      }
+      return this.replaceAccountEntry(currentRoot || {}, entry, preparedAccount);
+    }, {
+      touchedRootKeys: ["accounts"],
+      touchedRecords,
+      touchedRecordFields,
+      immutableMutator: true,
+      includeRevision: true,
+      compactResult: !includeRoot,
+      cloneResult: false,
+    });
+
+    const hasRevisionResult = isPlainObject(updateResult) && Object.prototype.hasOwnProperty.call(updateResult, "root");
+    const nextRoot = hasRevisionResult ? updateResult.root : updateResult;
+    const revision = Number.isSafeInteger(updateResult?.revision) ? updateResult.revision : null;
     return {
       ...result,
+      ...(revision !== null ? { revision } : {}),
       ...(includeRoot ? { root: this.sanitizeRoot(nextRoot, result?.account) } : {}),
     };
   }
@@ -729,19 +943,56 @@ class AuthService {
       return { ok: true };
     }
 
+    const initialSnapshot = typeof this.repository.readRootSnapshot === "function"
+      ? await this.repository.readRootSnapshot({ cloneRoot: false })
+      : { root: await this.repository.readRoot(), revision: null };
+    const initialEntry = this.findAccountEntry(initialSnapshot?.root || {}, (item) => item.id === payload.sub)
+      || this.findAccountEntry(initialSnapshot?.root || {}, (item) => item.username === payload.username);
+    if (!initialEntry?.account || String(initialEntry.account.activeSessionId || "") !== String(payload.sid || "")) {
+      return { ok: true };
+    }
+
+    const hasLegacySecrets = typeof initialEntry.account.password === "string"
+      || Object.prototype.hasOwnProperty.call(initialEntry.account, "passwordSalt");
+    const touchedRecords = { accounts: [initialEntry.key] };
+    const touchedRecordFields = hasLegacySecrets
+      ? null
+      : { accounts: { [initialEntry.key]: SESSION_FIELDS } };
+
     await this.repository.updateRoot((currentRoot) => {
-      const account = this.findAccount(currentRoot, (item) => item.id === payload.sub)
-        || this.findAccount(currentRoot, (item) => item.username === payload.username);
-      if (account && String(account.activeSessionId || "") === String(payload.sid || "")) {
-        account.activeSessionId = "";
-        account.activeSessionAt = "";
-        account.activeSessionExpiresAt = "";
-        account.activeSessionStartedAt = "";
+      const entry = this.findAccountEntry(currentRoot || {}, (item) => item.id === payload.sub)
+        || this.findAccountEntry(currentRoot || {}, (item) => item.username === payload.username);
+      if (!entry?.account || String(entry.account.activeSessionId || "") !== String(payload.sid || "")) {
+        return currentRoot;
       }
-      return this.prepareRootForStorage(currentRoot || {}, currentRoot || {}, {
-        collections: new Set(["accounts"]),
-      });
-    }, { touchedRootKeys: ["accounts"] });
+      const currentHasLegacySecrets = typeof entry.account.password === "string"
+        || Object.prototype.hasOwnProperty.call(entry.account, "passwordSalt");
+      const preparedAccount = currentHasLegacySecrets
+        ? this.prepareAccountForStorage(entry.account, entry.account)
+        : { ...entry.account };
+      preparedAccount.activeSessionId = "";
+      preparedAccount.activeSessionAt = "";
+      preparedAccount.activeSessionExpiresAt = "";
+      preparedAccount.activeSessionStartedAt = "";
+      if (entry.key !== initialEntry.key) {
+        touchedRecords.accounts = [entry.key];
+        if (touchedRecordFields) {
+          delete touchedRecordFields.accounts[initialEntry.key];
+          if (!currentHasLegacySecrets) {
+            touchedRecordFields.accounts[entry.key] = SESSION_FIELDS;
+          }
+        }
+      } else if (currentHasLegacySecrets && touchedRecordFields) {
+        delete touchedRecordFields.accounts[entry.key];
+      }
+      return this.replaceAccountEntry(currentRoot || {}, entry, preparedAccount);
+    }, {
+      touchedRootKeys: ["accounts"],
+      touchedRecords,
+      touchedRecordFields,
+      immutableMutator: true,
+      compactResult: true,
+    });
 
     return { ok: true };
   }
@@ -1076,7 +1327,9 @@ class AuthService {
             if (primaryManagerId) managerIds.add(primaryManagerId);
           }
           if (fiveSArea.scorerId && managerIds.has(fiveSArea.scorerId)) return true;
-          if (getAccountAreaIds(account, FIVE_S_PERIOD_TYPE).includes(fiveSArea.id)) return true;
+          if (!managerIds.size
+            && getAccountRoleForType(account, FIVE_S_PERIOD_TYPE) === ROLE_ZONE_OWNER
+            && getAccountAreaIds(account, FIVE_S_PERIOD_TYPE).includes(fiveSArea.id)) return true;
         }
       }
     }
@@ -1263,6 +1516,18 @@ class AuthService {
         throw createHttpError("Không thể thay đổi người tạo báo cáo an toàn.", 403);
       }
       this.assertSafetyResponseAuthor(existingRecord || {}, record, account);
+      if (!existingRecord && !isAdminAccount(account)) {
+        const hasInitialCountermeasure = Boolean(
+          String(record.improvementContent || "").trim()
+          || String(record.afterPhotoDataUrl || "").trim()
+          || String(record.actionOwner || "").trim()
+          || String(record.actionPlan || "").trim()
+          || String(record.completionDate || "").trim()
+        );
+        if (hasInitialCountermeasure) {
+          throw createHttpError("Chỉ admin mới được thêm đối sách, ảnh sau cải tiến, PIC, kế hoạch và ngày dự kiến hoàn thành khi tạo mới đánh giá an toàn.", 403);
+        }
+      }
       if (existingRecord
         && this.hasSafetyCountermeasureChanges(existingRecord, record)
         && !this.isSafetyCountermeasureRoleAssigned(root, account, existingRecord)) {
@@ -1287,10 +1552,21 @@ class AuthService {
       if (String(record.id || "") !== recordId) {
         throw createHttpError("Dữ liệu đánh giá an toàn không hợp lệ.", 400);
       }
+      const fiveSPeriodId = this.getFiveSPeriodForSafetyPeriod(root, record.periodId, record.issueDate);
+      const fiveSAssignments = fiveSPeriodId
+        ? getAccountRoleAssignments(root, account, fiveSPeriodId, FIVE_S_PERIOD_TYPE)
+        : null;
+      const hasZoneOwnerSafetyCreate = (hasAccountAccessType(account, SAFETY_PERIOD_TYPE, root, record.periodId)
+        && safetyAssignments.roles.includes(ROLE_ZONE_OWNER))
+        || Boolean(fiveSAssignments
+          && (hasAccountAccessType(account, FIVE_S_PERIOD_TYPE, root, fiveSPeriodId)
+            || getAccountRoleForType(account, FIVE_S_PERIOD_TYPE) === ROLE_ZONE_OWNER)
+          && fiveSAssignments.roles.includes(ROLE_ZONE_OWNER));
       const canCreateSafety = isAdminAccount(account)
         || safetyAssignments.hasAt5s
         || safetyAssignments.roles.includes(ROLE_ASSESSOR_SAFETY)
-        || safetyAssignments.hasDepartmentHead;
+        || safetyAssignments.hasDepartmentHead
+        || hasZoneOwnerSafetyCreate;
       if (!canCreateSafety) {
         throw createHttpError("Bạn không có quyền tạo mới báo cáo đánh giá an toàn.", 403);
       }
@@ -1349,6 +1625,9 @@ class AuthService {
       const candidateAssignments = getAccountRoleAssignments(root, account, periodId, SAFETY_PERIOD_TYPE);
       if (candidateAssignments.hasDepartmentHead && !candidateAssignments.hasAt5s && !candidateAssignments.roles.includes(ROLE_ASSESSOR_SAFETY)) {
         this.assertDepartmentHeadSafetyScope(root, account, candidate);
+        return;
+      }
+      if (this.isSafetyCountermeasureRoleAssigned(root, account, candidate)) {
         return;
       }
       if (!periodId || !areaId || !hasAccountAccessType(account, SAFETY_PERIOD_TYPE, root, periodId)) {
@@ -1554,6 +1833,34 @@ class AuthService {
     }
   }
 
+  isFiveSZoneManagerForArea(root, account, periodId, area, precomputedAssignments = null) {
+    if (!account || !area) return false;
+    if (isAdminAccount(account)) return true;
+    const assignments = precomputedAssignments || getAccountRoleAssignments(root, account, periodId, FIVE_S_PERIOD_TYPE);
+    if (assignments.hasDepartmentHead && isAreaManagedByDepartmentHead(area, account)) {
+      return true;
+    }
+    const hasZoneOwnerAccess = (hasAccountAccessType(account, FIVE_S_PERIOD_TYPE, root, periodId)
+      || getAccountRoleForType(account, FIVE_S_PERIOD_TYPE) === ROLE_ZONE_OWNER)
+      && assignments.roles.includes(ROLE_ZONE_OWNER);
+    if (!hasZoneOwnerAccess) return false;
+    const managerIds = new Set(assignments.managerIds);
+    if (getAccountRoleForType(account, FIVE_S_PERIOD_TYPE) === ROLE_ZONE_OWNER) {
+      const primaryManagerId = getAccountPersonId(account, FIVE_S_PERIOD_TYPE);
+      if (primaryManagerId) managerIds.add(primaryManagerId);
+    }
+    if (area.scorerId && managerIds.has(area.scorerId)) return true;
+    if (!managerIds.size && getAccountRoleForType(account, FIVE_S_PERIOD_TYPE) === ROLE_ZONE_OWNER) {
+      const assignedAreaIds = new Set(getAccountAreaIds(account, FIVE_S_PERIOD_TYPE));
+      if (assignedAreaIds.has(area.id)
+        || assignedAreaIds.has(String(area.code))
+        || assignedAreaIds.has(`Zone ${area.code}`)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
   assertFiveSFindingWriteAllowed(root, account, command) {
     if (isAdminAccount(account)) return;
     const activePeriodId = String(root?.activeFiveSPeriodId || root?.activePeriodId || "");
@@ -1576,7 +1883,8 @@ class AuthService {
     if (!assignments.hasDepartmentHead && !hasZoneOwnerAccess && !hasFiveSAssessorAccess && !hasAt5sAccess) {
       throw createHttpError("Chỉ assessor 5S, Ban AT - 5S, quản lý Zone, Trưởng bộ phận và admin được thay đổi phiếu 5S.", 403);
     }
-    const assertScope = (record) => {
+    const isDelete = command.operation === "remove" || command.value === null;
+    const assertScope = (record, { allowPastManagerReply = false } = {}) => {
       const periods = collectionValues(root?.periods).filter((period) => normalizePeriodType(period.type) !== SAFETY_PERIOD_TYPE);
       const text = String(record?.inspectionDate || "").trim();
       const isoMatch = /^(\d{4})-(\d{1,2})-(\d{1,2})/.exec(text);
@@ -1588,28 +1896,37 @@ class AuthService {
       if (!period || period.archived) {
         throw createHttpError("Kỳ đánh giá này đã được lưu trữ hoặc không tồn tại.", 403);
       }
-      if (!countermeasureOnly && period.id !== activeId) {
-        throw createHttpError("Chỉ được thay đổi vấn đề 5S trong kỳ đánh giá admin đang mở.", 403);
-      }
       const areas = period ? this.getAreasForPeriod(root, period.id, FIVE_S_PERIOD_TYPE) : [];
       const code = String(record?.area || "").replace(/^zone\s*/i, "").split("·")[0].trim();
       const area = record?.areaId ? areas.find((item) => item.id === record.areaId) : areas.find((item) => String(item.code).trim() === code);
-      if (!period || !area || !this.getAllowedAreaIds(root, account, period.id, FIVE_S_PERIOD_TYPE).has(area.id)) {
+      const scopeAssignments = period.id === targetPeriodId
+        ? assignments
+        : getAccountRoleAssignments(root, account, period.id, FIVE_S_PERIOD_TYPE);
+      const isManagerForArea = Boolean(area && this.isFiveSZoneManagerForArea(root, account, period.id, area, scopeAssignments));
+      if (!countermeasureOnly && period.id !== activeId) {
+        if (!allowPastManagerReply || !isManagerForArea) {
+          throw createHttpError("Chỉ được thay đổi vấn đề 5S trong kỳ đánh giá admin đang mở.", 403);
+        }
+      }
+      if (!period || !area || (!isManagerForArea && !this.getAllowedAreaIds(root, account, period.id, FIVE_S_PERIOD_TYPE).has(area.id))) {
         throw createHttpError("Bạn chỉ được đánh giá Zone được phân công trong kỳ này.", 403);
       }
-      return { period, area };
+      return { period, area, isManagerForArea, activeId };
     };
-    const existingScope = existing ? assertScope(existing) : null;
-    if (command.operation === "remove" || command.value === null) {
-      if (countermeasureOnly) throw createHttpError("Quản lý Zone chỉ được cập nhật đối sách của vấn đề 5S đã có.", 403);
+    const existingScope = existing ? assertScope(existing, { allowPastManagerReply: !isDelete }) : null;
+    if (isDelete) {
+      if (countermeasureOnly || (existingScope && existingScope.period.id !== existingScope.activeId)) {
+        throw createHttpError("Quản lý Zone chỉ được cập nhật đối sách của vấn đề 5S đã có.", 403);
+      }
       return;
     }
     if (!isPlainObject(command.value) || Object.keys(command.value).some((key) => key.includes("/") || ["__proto__", "constructor", "prototype"].includes(key))) {
       throw createHttpError("Dữ liệu phiếu 5S không hợp lệ.", 403);
     }
     const next = command.operation === "update" ? { ...existing, ...command.value } : command.value;
-    const nextScope = assertScope(next);
-    if (countermeasureOnly && existingScope && (existingScope.period.id !== nextScope.period.id || existingScope.area.id !== nextScope.area.id)) {
+    const nextScope = assertScope(next, { allowPastManagerReply: Boolean(existing) });
+    const enforceCountermeasureOnly = countermeasureOnly || Boolean(existingScope && existingScope.period.id !== existingScope.activeId);
+    if (enforceCountermeasureOnly && existingScope && (existingScope.period.id !== nextScope.period.id || existingScope.area.id !== nextScope.area.id)) {
       throw createHttpError("Quản lý Zone chỉ được sửa biện pháp, ảnh sau xử lý, hạn và tiến độ.", 403);
     }
     if (!existing && !isAdminAccount(account)) {
@@ -1625,7 +1942,7 @@ class AuthService {
       }
     }
     if (existing && !isAdminAccount(account)) {
-      const isZoneManager = Boolean(hasZoneOwnerAccess || assignments.hasDepartmentHead);
+      const isZoneManager = Boolean(existingScope?.isManagerForArea && nextScope?.isManagerForArea);
       if (!isZoneManager) {
         const rowsAsEntries = (rows) => Array.isArray(rows)
           ? rows.map((row, index) => [String(index), row])
@@ -1654,7 +1971,7 @@ class AuthService {
         }
       }
     }
-    if (countermeasureOnly) {
+    if (enforceCountermeasureOnly) {
       if (existing) this.assertFiveSFindingCountermeasureOnly(existing, next);
       else if (command.operation !== "set") throw createHttpError("Quản lý Zone chỉ được tạo vấn đề 5S mới trong Zone được phân công.", 403);
       else if (nextScope.period.id !== activePeriodId) throw createHttpError("Chỉ được thay đổi vấn đề 5S trong kỳ đánh giá admin đang mở.", 403);
